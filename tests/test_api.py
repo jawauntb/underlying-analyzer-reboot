@@ -489,6 +489,10 @@ def test_vision_tool_returns_market_memo() -> None:
     assert "Company, Sector, And Business Model" in prompt
     assert "Management And Execution" in prompt
     assert "Research Gaps / Next Diligence" in prompt
+    assert "Final Rating" in prompt
+    assert "Strong Buy, Buy, Hold, Neutral, Sell, Strong Sell" in prompt
+    assert "this must be the final section at the bottom of the memo" in prompt
+    assert "Do not issue a personal buy/sell recommendation" not in prompt
     assert "Jane Analyst" in prompt
     assert "SEC 10-K Item 1 Business" in prompt
     assert "RevenueFromContractWithCustomerExcludingAssessedTax" in prompt
