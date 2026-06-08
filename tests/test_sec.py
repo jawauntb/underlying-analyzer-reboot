@@ -8,12 +8,22 @@ import pytest
 import app.sec as sec_module
 from app.sec import SecClient, SecDataError, extract_filing_sections
 
+TEST_USER_AGENT = "Test Company contact@example.com"
+
 
 class FakeResponse:
-    def __init__(self, *, payload: Any | None = None, text: str = "", status_code: int = 200):
+    def __init__(
+        self,
+        *,
+        payload: Any | None = None,
+        text: str = "",
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.payload = payload
         self.text = text
         self.status_code = status_code
+        self.headers = headers or {}
 
     def json(self) -> Any:
         return self.payload
@@ -46,9 +56,19 @@ class FakeSession:
         return FakeResponse(status_code=404, text="missing")
 
 
+def make_sec_client(session: Any, **options: Any) -> SecClient:
+    return SecClient(
+        session=session,
+        user_agent=TEST_USER_AGENT,
+        request_interval_seconds=0,
+        max_retries=0,
+        **options,
+    )
+
+
 def test_sec_client_builds_source_pack() -> None:
     session = FakeSession()
-    client = SecClient(session=session, user_agent="Test Company contact@example.com")
+    client = make_sec_client(session)
 
     pack = client.get_source_pack("aapl")
 
@@ -62,11 +82,11 @@ def test_sec_client_builds_source_pack() -> None:
         "RevenueFromContractWithCustomerExcludingAssessedTax"
     )
     assert any(citation["Label"] == "SEC 10-K Item 1 Business" for citation in pack["Citations"])
-    assert session.requests[0][1]["User-Agent"] == "Test Company contact@example.com"
+    assert session.requests[0][1]["User-Agent"] == TEST_USER_AGENT
 
 
 def test_sec_client_raises_for_unknown_ticker() -> None:
-    client = SecClient(session=FakeSession(), user_agent="Test Company contact@example.com")
+    client = make_sec_client(FakeSession())
 
     with pytest.raises(SecDataError, match="No SEC CIK found"):
         client.cik_for_ticker("NOPE")
@@ -93,10 +113,7 @@ def test_sec_client_uses_yahoo_filing_fallback_when_sec_is_blocked(
             ]
 
     monkeypatch.setattr(sec_module.yf, "Ticker", FakeTicker)
-    client = SecClient(
-        session=FakeSession(block_sec=True),
-        user_agent="Test Company contact@example.com",
-    )
+    client = make_sec_client(FakeSession(block_sec=True))
 
     pack = client.get_source_pack("AAPL")
 
@@ -106,6 +123,100 @@ def test_sec_client_uses_yahoo_filing_fallback_when_sec_is_blocked(
     assert pack["Filings"]["10-K"]["filing_date"] == "2025-10-31"
     assert "Business" in pack["Filing Sections"]
     assert "SEC direct API was unavailable" in pack["Errors"][1]
+
+
+def test_sec_client_caches_source_packs_and_url_payloads() -> None:
+    session = FakeSession()
+    client = make_sec_client(session)
+
+    first = client.get_source_pack("AAPL")
+    second = client.get_source_pack("AAPL")
+
+    assert first == second
+    assert first is not second
+    assert len(session.requests) == 4
+
+
+def test_sec_request_gate_is_shared_across_client_instances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OpenSession:
+        def __init__(self) -> None:
+            self.requests: list[str] = []
+
+        def get(self, url: str, *, headers: dict[str, str], timeout: int) -> FakeResponse:
+            _ = headers, timeout
+            self.requests.append(url)
+            return FakeResponse(text="ok")
+
+    now = 10.0
+    sleeps: list[float] = []
+
+    def fake_monotonic() -> float:
+        return now
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal now
+        sleeps.append(seconds)
+        now += seconds
+
+    monkeypatch.setattr(sec_module, "_SEC_REQUEST_GATE", sec_module.SecRequestGate())
+    monkeypatch.setattr(sec_module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(sec_module.time, "sleep", fake_sleep)
+
+    first_session = OpenSession()
+    second_session = OpenSession()
+    first = SecClient(
+        session=first_session,
+        user_agent=TEST_USER_AGENT,
+        request_interval_seconds=0.5,
+        response_cache_seconds=0,
+        max_retries=0,
+    )
+    second = SecClient(
+        session=second_session,
+        user_agent=TEST_USER_AGENT,
+        request_interval_seconds=0.5,
+        response_cache_seconds=0,
+        max_retries=0,
+    )
+
+    first.fetch_text("https://www.sec.gov/one")
+    second.fetch_text("https://www.sec.gov/two")
+
+    assert sleeps == [0.5]
+    assert first_session.requests == ["https://www.sec.gov/one"]
+    assert second_session.requests == ["https://www.sec.gov/two"]
+
+
+def test_sec_client_retries_rate_limits_with_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    class RateLimitedSession:
+        def __init__(self) -> None:
+            self.requests = 0
+
+        def get(self, url: str, *, headers: dict[str, str], timeout: int) -> FakeResponse:
+            _ = url, headers, timeout
+            self.requests += 1
+            if self.requests == 1:
+                return FakeResponse(status_code=429, headers={"Retry-After": "1.5"})
+            return FakeResponse(payload={"ok": True})
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(sec_module.time, "sleep", sleeps.append)
+    session = RateLimitedSession()
+    client = SecClient(
+        session=session,
+        user_agent=TEST_USER_AGENT,
+        request_interval_seconds=0,
+        max_retries=1,
+        backoff_max_seconds=2,
+    )
+
+    payload = client.fetch_json("https://data.sec.gov/example.json")
+
+    assert payload == {"ok": True}
+    assert session.requests == 2
+    assert sleeps == [1.5]
 
 
 def test_extract_filing_sections_uses_real_sections_not_table_of_contents() -> None:

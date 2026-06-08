@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import copy
 import html
 import os
 import re
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 
 import requests
@@ -18,7 +21,13 @@ SEC_WEB_BASE = "https://www.sec.gov"
 DEFAULT_SEC_USER_AGENT = (
     "The Underlying Analyzer Reboot research app contact:jawauntb@users.noreply.github.com"
 )
-REQUEST_INTERVAL_SECONDS = 0.12
+DEFAULT_REQUEST_INTERVAL_SECONDS = 0.35
+DEFAULT_RESPONSE_CACHE_SECONDS = 24 * 60 * 60
+DEFAULT_SOURCE_PACK_CACHE_SECONDS = 6 * 60 * 60
+DEFAULT_MAX_RETRIES = 2
+DEFAULT_BACKOFF_BASE_SECONDS = 0.5
+DEFAULT_BACKOFF_MAX_SECONDS = 8.0
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 SECTION_SPECS = {
     "Business": {
@@ -91,6 +100,50 @@ class SecDataError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class CacheEntry:
+    expires_at: float
+    value: Any
+
+
+class SecRequestGate:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._last_request_at = 0.0
+
+    def wait(self, interval_seconds: float) -> None:
+        if interval_seconds <= 0:
+            return
+        with self._lock:
+            elapsed = time.monotonic() - self._last_request_at
+            if elapsed < interval_seconds:
+                time.sleep(interval_seconds - elapsed)
+            self._last_request_at = time.monotonic()
+
+
+_SEC_REQUEST_GATE = SecRequestGate()
+
+
+def float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 class SecClient:
     def __init__(
         self,
@@ -98,22 +151,79 @@ class SecClient:
         session: Any | None = None,
         user_agent: str | None = None,
         timeout: int = 20,
+        request_interval_seconds: float | None = None,
+        response_cache_seconds: float | None = None,
+        source_pack_cache_seconds: float | None = None,
+        max_retries: int | None = None,
+        backoff_base_seconds: float | None = None,
+        backoff_max_seconds: float | None = None,
     ) -> None:
         self.session = session or requests.Session()
         self.user_agent = user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_SEC_USER_AGENT
         self.timeout = timeout
+        self.request_interval_seconds = (
+            request_interval_seconds
+            if request_interval_seconds is not None
+            else float_env("SEC_REQUEST_INTERVAL_SECONDS", DEFAULT_REQUEST_INTERVAL_SECONDS)
+        )
+        self.response_cache_seconds = (
+            response_cache_seconds
+            if response_cache_seconds is not None
+            else float_env("SEC_RESPONSE_CACHE_SECONDS", DEFAULT_RESPONSE_CACHE_SECONDS)
+        )
+        self.source_pack_cache_seconds = (
+            source_pack_cache_seconds
+            if source_pack_cache_seconds is not None
+            else float_env("SEC_SOURCE_PACK_CACHE_SECONDS", DEFAULT_SOURCE_PACK_CACHE_SECONDS)
+        )
+        self.max_retries = (
+            max_retries
+            if max_retries is not None
+            else int_env("SEC_MAX_RETRIES", DEFAULT_MAX_RETRIES)
+        )
+        self.backoff_base_seconds = (
+            backoff_base_seconds
+            if backoff_base_seconds is not None
+            else float_env("SEC_BACKOFF_BASE_SECONDS", DEFAULT_BACKOFF_BASE_SECONDS)
+        )
+        self.backoff_max_seconds = (
+            backoff_max_seconds
+            if backoff_max_seconds is not None
+            else float_env("SEC_BACKOFF_MAX_SECONDS", DEFAULT_BACKOFF_MAX_SECONDS)
+        )
         self._ticker_map: dict[str, dict[str, Any]] | None = None
-        self._last_request_at = 0.0
+        self._json_cache: dict[str, CacheEntry] = {}
+        self._text_cache: dict[str, CacheEntry] = {}
+        self._source_pack_cache: dict[str, CacheEntry] = {}
+        self._cache_lock = Lock()
+        self._source_pack_lock = Lock()
 
     def get_source_pack(self, ticker: str) -> dict[str, Any]:
         symbol = clean_ticker(ticker)
-        try:
-            return self.edgar_source_pack(symbol)
-        except SecDataError as exc:
-            fallback = self.yahoo_source_pack(symbol, reason=str(exc))
-            if fallback["Status"] != "unavailable":
-                return fallback
-            raise
+        cached = self.cached_value(self._source_pack_cache, symbol)
+        if cached is not None:
+            return cached
+
+        with self._source_pack_lock:
+            cached = self.cached_value(self._source_pack_cache, symbol)
+            if cached is not None:
+                return cached
+
+            try:
+                pack = self.edgar_source_pack(symbol)
+            except SecDataError as exc:
+                fallback = self.yahoo_source_pack(symbol, reason=str(exc))
+                if fallback["Status"] == "unavailable":
+                    raise
+                pack = fallback
+
+            self.remember_value(
+                self._source_pack_cache,
+                symbol,
+                pack,
+                ttl_seconds=self.source_pack_cache_seconds,
+            )
+            return copy.deepcopy(pack)
 
     def edgar_source_pack(self, symbol: str) -> dict[str, Any]:
         cik = self.cik_for_ticker(symbol)
@@ -234,16 +344,21 @@ class SecClient:
         return str(cik_value).zfill(10)
 
     def ticker_map(self) -> dict[str, dict[str, Any]]:
-        if self._ticker_map is None:
-            payload = self.fetch_json(f"{SEC_WEB_BASE}/files/company_tickers.json")
-            if not isinstance(payload, dict):
-                raise SecDataError("SEC company ticker map was malformed")
-            rows = {}
-            for value in payload.values():
-                if isinstance(value, dict) and isinstance(value.get("ticker"), str):
-                    rows[value["ticker"].upper()] = value
+        with self._cache_lock:
+            if self._ticker_map is not None:
+                return self._ticker_map
+
+        payload = self.fetch_json(f"{SEC_WEB_BASE}/files/company_tickers.json")
+        if not isinstance(payload, dict):
+            raise SecDataError("SEC company ticker map was malformed")
+        rows = {}
+        for value in payload.values():
+            if isinstance(value, dict) and isinstance(value.get("ticker"), str):
+                rows[value["ticker"].upper()] = value
+
+        with self._cache_lock:
             self._ticker_map = rows
-        return self._ticker_map
+            return self._ticker_map
 
     def submissions(self, cik: str) -> dict[str, Any]:
         payload = self.fetch_json(f"{SEC_DATA_BASE}/submissions/CIK{cik}.json")
@@ -302,25 +417,60 @@ class SecClient:
         return selected, [] if selected else ["No selected SEC XBRL company facts found"]
 
     def fetch_json(self, url: str) -> Any:
+        cached = self.cached_value(self._json_cache, url)
+        if cached is not None:
+            return cached
+
         response = self.fetch(url)
-        return response.json()
+        payload = response.json()
+        self.remember_value(self._json_cache, url, payload, ttl_seconds=self.response_cache_seconds)
+        return copy.deepcopy(payload)
 
     def fetch_text(self, url: str) -> str:
+        cached = self.cached_value(self._text_cache, url)
+        if isinstance(cached, str):
+            return cached
+
         response = self.fetch(url)
-        return response.text
+        self.remember_value(
+            self._text_cache,
+            url,
+            response.text,
+            ttl_seconds=self.response_cache_seconds,
+        )
+        return str(response.text)
 
     def fetch(self, url: str) -> requests.Response:
-        self.throttle()
-        response = self.session.get(url, headers=self.headers(), timeout=self.timeout)
-        if response.status_code >= 400:
+        attempts = max(0, self.max_retries) + 1
+        for attempt in range(attempts):
+            self.throttle()
+            try:
+                response = self.session.get(url, headers=self.headers(), timeout=self.timeout)
+            except requests.RequestException:
+                if attempt + 1 < attempts:
+                    self.backoff(None, attempt)
+                    continue
+                raise
+
+            if response.status_code < 400:
+                return response
+            if response.status_code in RETRYABLE_STATUS_CODES and attempt + 1 < attempts:
+                self.backoff(response, attempt)
+                continue
             raise SecDataError(f"SEC request failed with {response.status_code} for {url}")
-        return response
+
+        raise SecDataError(f"SEC request failed for {url}")
 
     def throttle(self) -> None:
-        elapsed = time.monotonic() - self._last_request_at
-        if elapsed < REQUEST_INTERVAL_SECONDS:
-            time.sleep(REQUEST_INTERVAL_SECONDS - elapsed)
-        self._last_request_at = time.monotonic()
+        _SEC_REQUEST_GATE.wait(self.request_interval_seconds)
+
+    def backoff(self, response: Any | None, attempt: int) -> None:
+        retry_after = retry_after_seconds(response)
+        if retry_after is None:
+            retry_after = self.backoff_base_seconds * (2**attempt)
+        delay = min(max(0.0, retry_after), self.backoff_max_seconds)
+        if delay > 0:
+            time.sleep(delay)
 
     def headers(self) -> dict[str, str]:
         return {
@@ -328,6 +478,45 @@ class SecClient:
             "Accept-Encoding": "gzip, deflate",
             "Accept": "application/json, text/html;q=0.9, */*;q=0.8",
         }
+
+    def cached_value(self, cache: dict[str, CacheEntry], key: str) -> Any | None:
+        with self._cache_lock:
+            entry = cache.get(key)
+            if entry is None:
+                return None
+            if entry.expires_at < time.monotonic():
+                cache.pop(key, None)
+                return None
+            return copy.deepcopy(entry.value)
+
+    def remember_value(
+        self,
+        cache: dict[str, CacheEntry],
+        key: str,
+        value: Any,
+        *,
+        ttl_seconds: float,
+    ) -> None:
+        if ttl_seconds <= 0:
+            return
+        with self._cache_lock:
+            cache[key] = CacheEntry(
+                expires_at=time.monotonic() + ttl_seconds,
+                value=copy.deepcopy(value),
+            )
+
+
+def retry_after_seconds(response: Any | None) -> float | None:
+    headers = getattr(response, "headers", None)
+    if not isinstance(headers, Mapping):
+        return None
+    value = headers.get("Retry-After")
+    if not isinstance(value, str):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def latest_filings(submissions: Mapping[str, Any]) -> dict[str, dict[str, Any]]:

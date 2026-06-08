@@ -27,7 +27,10 @@ Free keyed options worth considering later:
 
 Vision also uses the SEC EDGAR APIs for 10-K/10-Q/8-K metadata, filing excerpts, and XBRL
 company facts. SEC APIs are free and do not require an API key, but automated clients should
-declare a descriptive `SEC_USER_AGENT` and keep request volume modest.
+declare a descriptive `SEC_USER_AGENT` and keep request volume modest. SEC fair-access guidance
+currently caps automated access at 10 requests/second across machines; this app defaults to a
+more conservative per-process interval, retry backoff, and in-memory SEC source-pack/URL caches so
+watchlist and repeated Vision runs do not refetch the same filing payloads.
 If SEC blocks the runtime, the app falls back to Yahoo-hosted SEC filing copies for 10-K/10-Q/8-K
 sections; XBRL company facts are only available from the direct SEC API path.
 
@@ -52,6 +55,10 @@ ANTHROPIC_TEXT_MODEL=claude-opus-4-8
 OPENAI_API_KEY=sk-proj-...
 OPENAI_IMAGE_MODEL=gpt-image-2
 SEC_USER_AGENT="The Underlying Analyzer Reboot contact:jawauntb@users.noreply.github.com"
+SEC_REQUEST_INTERVAL_SECONDS=0.35
+SEC_SOURCE_PACK_CACHE_SECONDS=21600
+SEC_RESPONSE_CACHE_SECONDS=86400
+SEC_MAX_RETRIES=2
 ```
 
 Restart the Flask process after changing `.env`.
