@@ -59,8 +59,11 @@ any skipped-symbol errors.
 ## Railway Deploy
 
 Railway is the production host for this Flask app. The Procfile starts Gunicorn on Railway's
-provided `$PORT`, and `pyproject.toml` pins package discovery to the `app` package so Railway's
-Python installer does not accidentally treat migration folders as import packages.
+provided `$PORT`. `railway.toml` mirrors that start command, configures `/api/health` as the
+deployment healthcheck, and forces the Railpack builder. `requirements.txt` gives Railway's pip
+installer an explicit dependency file, while `.python-version` keeps production on Python 3.12.
+`pyproject.toml` pins package discovery to the `app` package so Railway's Python installer does not
+accidentally treat migration folders as import packages.
 
 ```bash
 railway link
