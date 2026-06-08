@@ -81,6 +81,7 @@ def test_anthropic_text_client_sends_messages_request() -> None:
     assert session.last_json is not None
     assert session.last_json["model"] == DEFAULT_ANTHROPIC_MODEL
     assert session.last_json["messages"] == [{"role": "user", "content": "user prompt"}]
+    assert "temperature" not in session.last_json
 
 
 def test_anthropic_text_client_streams_text_deltas() -> None:
@@ -92,3 +93,17 @@ def test_anthropic_text_client_streams_text_deltas() -> None:
     assert chunks == ["One ", "two."]
     assert session.last_json is not None
     assert session.last_json["stream"] is True
+
+
+def test_anthropic_text_client_keeps_temperature_for_supported_models() -> None:
+    session = FakeAnthropicSession()
+    client = AnthropicTextClient(
+        api_key="sk-ant-test",
+        model="claude-sonnet-4-6",
+        session=cast(requests.Session, session),
+    )
+
+    client.generate_text(system="system prompt", prompt="user prompt")
+
+    assert session.last_json is not None
+    assert session.last_json["temperature"] == 0.2

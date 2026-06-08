@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 import requests
 
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 
@@ -159,10 +159,11 @@ class AnthropicTextClient:
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": system,
             "messages": [{"role": "user", "content": prompt}],
         }
+        if supports_temperature(self.model):
+            payload["temperature"] = temperature
         if stream:
             payload["stream"] = True
         return payload
@@ -214,6 +215,11 @@ def stream_event_text(data: str) -> str:
 
     text = delta.get("text")
     return text if isinstance(text, str) else ""
+
+
+def supports_temperature(model: str) -> bool:
+    unsupported_prefixes = ("claude-opus-4-8", "claude-opus-4-7")
+    return not model.startswith(unsupported_prefixes)
 
 
 def anthropic_error_text(response: requests.Response) -> str:

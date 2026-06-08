@@ -6,7 +6,7 @@ const toolConfig = {
     action: "See The Vision",
     endpoint: "/api/tools/vision",
     fields: ["ticker"],
-    copy: "Generate a compact market memo from the rebuilt stock fax data.",
+    copy: "Generate a professional analyst memo from the rebuilt stock fax data.",
   },
   pixel: {
     title: "Pixel",
