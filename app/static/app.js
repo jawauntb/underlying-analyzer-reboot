@@ -1,3 +1,5 @@
+import { mountResearchLibrary } from "./research.js";
+
 const state = {
   mode: "auction",
   lastExport: null,
@@ -54,6 +56,11 @@ const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const chartViewer = createChartViewer();
+const researchLibrary = mountResearchLibrary({
+  insertAfter: document.querySelector("#chart-form .form-actions"),
+  getRecord: buildResearchRecord,
+  openRecord: openSavedResearch,
+});
 
 document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => {
@@ -171,6 +178,7 @@ async function fetchChart(payload) {
   sourceChip.textContent = data.provider || "provider";
   state.lastExport = data.export || data;
   exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
   renderImages(data.images || []);
   renderSummary(data.meta || {});
   renderWarnings(data.meta?.errors || []);
@@ -189,6 +197,7 @@ async function fetchAnalysis(payload) {
   sourceChip.textContent = data.provider || "provider";
   state.lastExport = data.export || data;
   exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
   renderAnalysis(data);
   renderWarnings(data.meta?.errors || []);
 }
@@ -571,6 +580,7 @@ function clearOutput() {
   sourceChip.textContent = "idle";
   state.lastExport = null;
   exportButton.disabled = true;
+  researchLibrary.setCanSave(false);
 }
 
 function showError(message) {
@@ -601,6 +611,61 @@ function downloadJson(payload, filename) {
 function exportFilename() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${state.mode}-${stamp}.json`;
+}
+
+function buildResearchRecord() {
+  if (!state.lastExport) {
+    return null;
+  }
+  const payload = state.lastExport;
+  const ticker = researchTicker(payload) || payloadFromForm().ticker;
+  return {
+    mode: payload.mode || state.mode,
+    ticker,
+    title: `${modeTitles[state.mode]}${ticker ? ` - ${ticker}` : ""}`,
+    summary: modeContracts[state.mode],
+    source_url: payload.watchlist?.source_url || payload.meta?.watchlist_source_url,
+    payload,
+  };
+}
+
+function openSavedResearch(record) {
+  const payload = record.payload || {};
+  const savedMode = modeTitles[record.mode] ? record.mode : state.mode;
+  state.mode = savedMode;
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === state.mode);
+  });
+  syncModeCopy();
+  syncFields();
+  clearOutput();
+  state.lastExport = payload;
+  exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  sourceChip.textContent = "saved";
+  if (state.mode === "analysis" || payload.summaries || payload["Anthropic Brief"]) {
+    renderAnalysis(payload);
+    renderWarnings(payload.meta?.errors || []);
+    return;
+  }
+  renderImages(payload.images || []);
+  renderSummary(payload.meta || {});
+  renderWarnings(payload.meta?.errors || []);
+}
+
+function researchTicker(payload) {
+  return firstString(
+    payload.ticker,
+    payload.Ticker,
+    payload.meta?.ticker,
+    payload.tickers?.[0],
+    payload.meta?.tickers?.[0],
+    payload.summaries?.[0]?.ticker,
+  );
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === "string" && value.trim()) || "";
 }
 
 boot();
