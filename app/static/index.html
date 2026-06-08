@@ -51,6 +51,19 @@
                 <span>Ticker(s)</span>
                 <input id="tickers" name="tickers" value="AAPL" autocomplete="off" />
               </label>
+              <label data-field="watchlist-url">
+                <span>Watchlist URL</span>
+                <input
+                  id="watchlist-url"
+                  name="watchlist_url"
+                  placeholder="https://www.tradingview.com/watchlists/..."
+                  autocomplete="off"
+                />
+              </label>
+              <label data-field="max-results">
+                <span>Max results</span>
+                <input id="max-results" name="max_results" type="number" min="1" max="50" step="1" value="10" />
+              </label>
               <label data-field="period">
                 <span>Period</span>
                 <select id="period" name="period">
@@ -93,7 +106,10 @@
                 <input id="investment" name="investment_per_stock" type="number" min="1" step="1" value="100" />
               </label>
             </div>
-            <button class="generate-button" id="generate" type="submit">Generate</button>
+            <div class="form-actions">
+              <button class="generate-button" id="generate" type="submit">Generate</button>
+              <button class="export-button" id="export-json" type="button" disabled>Export JSON</button>
+            </div>
           </form>
         </section>
 
@@ -118,4 +134,3 @@
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>
-

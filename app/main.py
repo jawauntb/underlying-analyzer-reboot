@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,14 +18,29 @@ from app.charts import (
     render_volatility_chart,
 )
 from app.market_data import MarketDataClient, MarketDataError, clean_ticker
+from app.watchlists import (
+    TradingViewWatchlistClient,
+    WatchlistError,
+    WatchlistResult,
+    watchlist_payload,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
+DEFAULT_MAX_RESULTS = 10
+MAX_RESULTS_CAP = 50
+
+
+@dataclass(frozen=True)
+class TickerSelection:
+    tickers: list[str]
+    watchlist: WatchlistResult | None = None
 
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
+    app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
 
     @app.get("/")
     def index() -> Response:
@@ -54,19 +71,50 @@ def create_app() -> Flask:
     def chart(chart_type: str) -> Any:
         try:
             payload = request.get_json(silent=True) or {}
-            response = build_chart_response(get_market_client(), chart_type, payload)
+            response = build_chart_response(
+                get_market_client(), get_watchlist_client(), chart_type, payload
+            )
             return jsonify(response)
-        except (ValueError, MarketDataError) as exc:
+        except (ValueError, MarketDataError, WatchlistError) as exc:
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             app.logger.exception("Unexpected chart error")
             return jsonify({"error": f"Unexpected chart error: {exc}"}), 500
+
+    @app.post("/api/analysis")
+    def analysis_batch() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            response = build_analysis_response(
+                get_market_client(), get_watchlist_client(), payload
+            )
+            return jsonify(response)
+        except (ValueError, MarketDataError, WatchlistError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.get("/api/analysis/<ticker>")
     def analysis(ticker: str) -> Any:
         try:
             return jsonify(summarize_stock(get_market_client(), ticker))
         except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/watchlists/resolve")
+    def resolve_watchlist() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            watchlist = get_watchlist_client().get_watchlist(
+                str(payload.get("watchlist_url") or "")
+            )
+            limit = max_results(payload)
+            return jsonify(
+                {
+                    "watchlist": watchlist_payload(watchlist),
+                    "tickers": watchlist.tickers[:limit],
+                    "max_results": limit,
+                }
+            )
+        except WatchlistError as exc:
             return jsonify({"error": str(exc)}), 400
 
     register_compat_routes(app)
@@ -77,69 +125,250 @@ def get_market_client() -> MarketDataClient:
     return current_app.config["MARKET_DATA_CLIENT"]
 
 
+def get_watchlist_client() -> TradingViewWatchlistClient:
+    return current_app.config["WATCHLIST_CLIENT"]
+
+
 def build_chart_response(
-    client: MarketDataClient, chart_type: str, payload: dict[str, Any]
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    chart_type: str,
+    payload: dict[str, Any],
 ) -> dict[str, Any]:
     chart_key = chart_type.replace("_", "-")
     if chart_key == "auction":
-        ticker = clean_ticker(str(payload.get("ticker") or first_ticker(payload)))
+        selection = resolve_ticker_selection(payload, watchlist_client)
         period = str(payload.get("period") or "1y")
-        history = client.get_history(ticker, period=period)
-        image, meta = render_auction_chart(history, period=period)
-        return response_payload([image], history.provider, history.note, meta)
+        images: list[RenderedImage] = []
+        histories = []
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        for ticker in selection.tickers:
+            try:
+                history = client.get_history(ticker, period=period)
+                image, meta = render_auction_chart(history, period=period)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(history)
+            images.append(image)
+            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Batch auction render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
 
     if chart_key == "performance":
-        ticker = clean_ticker(str(payload.get("ticker") or first_ticker(payload)))
+        selection = resolve_ticker_selection(payload, watchlist_client)
         month = int(payload.get("month") or 1)
-        history = client.get_history(ticker, period="10y")
-        image, meta = render_performance_chart(history, month=month)
-        return response_payload([image], history.provider, history.note, meta)
+        images = []
+        histories = []
+        results = []
+        errors = []
+        for ticker in selection.tickers:
+            try:
+                history = client.get_history(ticker, period="10y")
+                image, meta = render_performance_chart(history, month=month)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(history)
+            images.append(image)
+            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Batch monthly performance render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
 
     if chart_key == "regression":
-        ticker = clean_ticker(str(payload.get("ticker") or first_ticker(payload)))
-        history = client.get_history(
-            ticker,
-            period=str(payload.get("period") or "1y"),
-            start=payload.get("start_date"),
-            end=payload.get("end_date"),
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        images = []
+        histories = []
+        results = []
+        errors = []
+        for ticker in selection.tickers:
+            try:
+                history = client.get_history(
+                    ticker,
+                    period=str(payload.get("period") or "1y"),
+                    start=payload.get("start_date"),
+                    end=payload.get("end_date"),
+                )
+                image, meta = render_regression_chart(history)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(history)
+            images.append(image)
+            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Batch regression render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
         )
-        image, meta = render_regression_chart(history)
-        return response_payload([image], history.provider, history.note, meta)
 
     if chart_key == "portfolio":
-        tickers = ticker_list(payload)
-        histories = [
-            client.get_history(
-                ticker, start=payload.get("start_date"), end=payload.get("end_date"), period="1y"
-            )
-            for ticker in tickers
-        ]
-        image, meta = render_portfolio_chart(
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        histories, errors = collect_histories(
+            client,
+            selection.tickers,
+            start=payload.get("start_date"),
+            end=payload.get("end_date"),
+            period="1y",
+        )
+        require_histories(histories, errors)
+        image, portfolio_meta = render_portfolio_chart(
             histories, investment_per_stock=float(payload.get("investment_per_stock") or 100)
         )
+        results = [
+            result_payload(
+                history.ticker,
+                history.provider,
+                history.note,
+                {"final_value": portfolio_meta["final_values"][history.ticker]},
+            )
+            for history in histories
+        ]
+        meta = {
+            **portfolio_meta,
+            **batch_meta(results, errors, selection.watchlist),
+        }
         return response_payload(
-            [image], mixed_provider(histories), "Mixed provider portfolio render", meta
+            [image],
+            mixed_provider(histories),
+            "Mixed provider portfolio render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
         )
 
     if chart_key == "volatility":
-        histories = [client.get_history(ticker, period="1y") for ticker in ticker_list(payload)]
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        histories, errors = collect_histories(client, selection.tickers, period="1y")
+        require_histories(histories, errors)
         image, meta = render_volatility_chart(histories)
+        results = [
+            result_payload(history.ticker, history.provider, history.note, row)
+            for history, row in zip(histories, meta["rows"], strict=False)
+        ]
+        meta = {**meta, **batch_meta(results, errors, selection.watchlist)}
         return response_payload(
-            [image], mixed_provider(histories), "Mixed provider volatility render", meta
+            [image],
+            mixed_provider(histories),
+            "Mixed provider volatility render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
         )
 
     raise ValueError(f"Unsupported chart type: {chart_type}")
 
 
-def response_payload(
-    images: list[RenderedImage], provider: str, note: str, meta: dict[str, Any]
+def build_analysis_response(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    payload: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    selection = resolve_ticker_selection(payload, watchlist_client)
+    summaries: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for ticker in selection.tickers:
+        try:
+            summaries.append(summarize_stock(client, ticker))
+        except (ValueError, MarketDataError) as exc:
+            errors.append({"ticker": ticker, "error": str(exc)})
+
+    require_results(summaries, errors)
+    providers = sorted({str(summary["provider"]) for summary in summaries})
+    provider = "+".join(providers)
+    meta = batch_meta(
+        [
+            result_payload(
+                str(summary["ticker"]),
+                str(summary["provider"]),
+                str(summary["provider_note"]),
+                summary,
+            )
+            for summary in summaries
+        ],
+        errors,
+        selection.watchlist,
+    )
+    response = {
+        "summaries": summaries,
+        "provider": provider,
+        "provider_note": "Batch stock brief",
+        "meta": meta,
+        "watchlist": watchlist_payload(selection.watchlist),
+    }
+    response["export"] = export_payload(
+        mode="analysis",
+        provider=provider,
+        provider_note="Batch stock brief",
+        tickers=[str(summary["ticker"]) for summary in summaries],
+        meta=meta,
+        watchlist=selection.watchlist,
+        image_files=[],
+        summaries=summaries,
+    )
+    return response
+
+
+def response_payload(
+    images: list[RenderedImage],
+    provider: str,
+    note: str,
+    meta: dict[str, Any],
+    *,
+    mode: str,
+    tickers: list[str],
+    watchlist: WatchlistResult | None,
+) -> dict[str, Any]:
+    payload = {
         "images": [image.__dict__ for image in images],
         "provider": provider,
         "provider_note": note,
         "meta": meta,
+        "watchlist": watchlist_payload(watchlist),
     }
+    payload["export"] = export_payload(
+        mode=mode,
+        provider=provider,
+        provider_note=note,
+        tickers=tickers,
+        meta=meta,
+        watchlist=watchlist,
+        image_files=[{"filename": image.filename, "mime": image.mime} for image in images],
+    )
+    return payload
 
 
 def first_ticker(payload: dict[str, Any]) -> str:
@@ -153,10 +382,104 @@ def ticker_list(payload: dict[str, Any]) -> list[str]:
         tickers = [part.strip().upper() for part in raw.split(",")]
     else:
         tickers = [str(part).strip().upper() for part in raw]
-    cleaned = [ticker for ticker in tickers if ticker]
+    cleaned = [clean_ticker(ticker) for ticker in tickers if ticker]
     if not cleaned:
         raise ValueError("At least one ticker is required")
     return cleaned
+
+
+def resolve_ticker_selection(
+    payload: dict[str, Any], watchlist_client: TradingViewWatchlistClient
+) -> TickerSelection:
+    watchlist_url = str(payload.get("watchlist_url") or "").strip()
+    limit = max_results(payload)
+    if watchlist_url:
+        watchlist = watchlist_client.get_watchlist(watchlist_url)
+        return TickerSelection(tickers=watchlist.tickers[:limit], watchlist=watchlist)
+
+    return TickerSelection(tickers=ticker_list(payload)[:limit])
+
+
+def max_results(payload: dict[str, Any]) -> int:
+    raw = payload.get("max_results") or DEFAULT_MAX_RESULTS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_RESULTS
+    return max(1, min(value, MAX_RESULTS_CAP))
+
+
+def collect_histories(
+    client: MarketDataClient, tickers: list[str], **history_options: Any
+) -> tuple[list[Any], list[dict[str, str]]]:
+    histories = []
+    errors = []
+    for ticker in tickers:
+        try:
+            histories.append(client.get_history(ticker, **history_options))
+        except (ValueError, MarketDataError) as exc:
+            errors.append({"ticker": ticker, "error": str(exc)})
+    return histories, errors
+
+
+def result_payload(
+    ticker: str, provider: str, provider_note: str, meta: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "ticker": ticker,
+        "provider": provider,
+        "provider_note": provider_note,
+        "meta": meta,
+    }
+
+
+def batch_meta(
+    results: list[dict[str, Any]],
+    errors: list[dict[str, str]],
+    watchlist: WatchlistResult | None,
+) -> dict[str, Any]:
+    return {
+        "result_count": len(results),
+        "error_count": len(errors),
+        "watchlist_name": watchlist.name if watchlist else "Manual tickers",
+        "results": results,
+        "errors": errors,
+    }
+
+
+def require_results(results: list[Any], errors: list[dict[str, str]]) -> None:
+    if results:
+        return
+    error_text = "; ".join(f"{error['ticker']}: {error['error']}" for error in errors)
+    raise MarketDataError(error_text or "No results could be generated")
+
+
+def require_histories(histories: list[Any], errors: list[dict[str, str]]) -> None:
+    require_results(histories, errors)
+
+
+def export_payload(
+    *,
+    mode: str,
+    provider: str,
+    provider_note: str,
+    tickers: list[str],
+    meta: dict[str, Any],
+    watchlist: WatchlistResult | None,
+    image_files: list[dict[str, str]],
+    summaries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "mode": mode,
+        "provider": provider,
+        "provider_note": provider_note,
+        "tickers": tickers,
+        "watchlist": watchlist_payload(watchlist),
+        "image_files": image_files,
+        "meta": meta,
+        "summaries": summaries or [],
+    }
 
 
 def mixed_provider(histories: list[Any]) -> str:
@@ -193,9 +516,11 @@ def register_compat_routes(app: Flask) -> None:
 def compat_chart(chart_type: str) -> Any:
     payload = request.get_json(silent=True) or {}
     try:
-        response = build_chart_response(get_market_client(), chart_type, payload)
+        response = build_chart_response(
+            get_market_client(), get_watchlist_client(), chart_type, payload
+        )
         return jsonify({"images": [image["data"] for image in response["images"]]})
-    except (ValueError, MarketDataError) as exc:
+    except (ValueError, MarketDataError, WatchlistError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 

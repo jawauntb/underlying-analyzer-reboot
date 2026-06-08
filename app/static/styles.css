@@ -146,7 +146,8 @@ select {
 }
 
 .mode-button,
-.generate-button {
+.generate-button,
+.export-button {
   min-height: 46px;
   border: 2px solid var(--line-soft);
   background: #081523;
@@ -156,7 +157,8 @@ select {
 }
 
 .mode-button:hover,
-.generate-button:hover {
+.generate-button:hover,
+.export-button:hover:not([disabled]) {
   transform: translateY(-1px);
   border-color: var(--amber);
   background: #13253e;
@@ -200,16 +202,29 @@ select:focus {
   box-shadow: 0 0 0 3px rgba(94, 216, 255, 0.16);
 }
 
+.form-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .generate-button {
   width: 100%;
-  margin-top: 18px;
   border-color: var(--amber);
   color: var(--ink);
   background: var(--amber);
   font-weight: 900;
 }
 
-.generate-button[disabled] {
+.export-button {
+  width: 100%;
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 900;
+}
+
+.generate-button[disabled],
+.export-button[disabled] {
   cursor: wait;
   opacity: 0.72;
 }
@@ -303,6 +318,31 @@ select:focus {
   font-size: 18px;
 }
 
+.brief-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.brief-card {
+  border: 1px solid var(--line-soft);
+  background: rgba(8, 21, 35, 0.86);
+  padding: 14px;
+}
+
+.brief-card h3 {
+  margin: 0 0 12px;
+  color: var(--amber);
+  font-family: "Press Start 2P", monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.brief-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .empty-state {
   min-height: 360px;
   display: grid;
@@ -344,7 +384,8 @@ select:focus {
   }
 
   .mode-grid,
-  .summary-grid {
+  .summary-grid,
+  .brief-grid {
     grid-template-columns: 1fr;
   }
 

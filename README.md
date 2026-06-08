@@ -6,6 +6,8 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - Static frontend with the original retro terminal styling
 - `yfinance` as the primary provider, updated to the current package line
 - Nasdaq public historical fallback for daily US equity OHLCV when yfinance fails
+- Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
+- JSON exports for generated ticker/watchlist data
 
 ## Data Provider Notes
 
@@ -32,6 +34,25 @@ python -m flask --app app.main run --port 5050
 ```
 
 Open `http://127.0.0.1:5050`.
+
+## Watchlist Workflow
+
+Paste a public TradingView watchlist URL, set `Max results`, and generate any mode that accepts
+tickers. Portfolio and Volatility combine the resolved symbols into one chart. Auction, Month Map,
+Regression, and Brief generate one result per resolved ticker. The `Export JSON` button downloads
+the structured result data, including resolved tickers, watchlist metadata, per-symbol metrics, and
+any skipped-symbol errors.
+
+## Modal Deploy
+
+Modal is the simplest public host for this Flask app because it can serve the app directly as a WSGI
+web function. The endpoint label is `jawaun-underlying-terminal`, so the deployed URL uses Modal's
+standard `<workspace>--jawaun-underlying-terminal.modal.run` shape.
+
+```bash
+python -m pip install -e ".[deploy]"
+modal deploy modal_app.py
+```
 
 ## Quality Checks
 
