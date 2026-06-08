@@ -6,10 +6,35 @@ import pandas as pd
 from pytest import MonkeyPatch
 
 import app.main as main_module
+from app.anthropic import GeneratedText
 from app.charts import RenderedImage
 from app.main import create_app
 from app.market_data import HistoryResult
 from app.watchlists import WatchlistResult, WatchlistSymbol
+
+
+class FakeTextGenerator:
+    def __init__(self, text: str = "Anthropic generated brief.") -> None:
+        self.text = text
+        self.calls: list[dict[str, object]] = []
+
+    def generate_text(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        max_tokens: int = 700,
+        temperature: float = 0.2,
+    ) -> GeneratedText:
+        self.calls.append(
+            {
+                "system": system,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+        )
+        return GeneratedText(text=self.text, model="claude-test")
 
 
 class FakeMarketDataClient:
@@ -116,6 +141,7 @@ def test_chart_endpoint_returns_image_payload() -> None:
 def test_analysis_endpoint_returns_summary() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["TEXT_GENERATOR"] = FakeTextGenerator()
     client = app.test_client()
 
     response = client.get("/api/analysis/AAPL")
@@ -124,6 +150,8 @@ def test_analysis_endpoint_returns_summary() -> None:
     assert response.status_code == 200
     assert payload["name"] == "AAPL Inc"
     assert payload["provider"] == "fake"
+    assert payload["Anthropic Brief"] == "Anthropic generated brief."
+    assert payload["Text Model"] == "claude-test"
 
 
 def test_watchlist_resolve_endpoint_returns_limited_tickers() -> None:
@@ -174,6 +202,7 @@ def test_portfolio_endpoint_can_use_watchlist_url() -> None:
 def test_analysis_post_endpoint_returns_batch_summaries() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["TEXT_GENERATOR"] = FakeTextGenerator()
     client = app.test_client()
 
     response = client.post("/api/analysis", json={"tickers": ["AAPL", "MSFT"]})
@@ -185,11 +214,14 @@ def test_analysis_post_endpoint_returns_batch_summaries() -> None:
     assert {row["ticker"] for row in payload["scanner"]} == {"AAPL", "MSFT"}
     assert payload["export"]["mode"] == "analysis"
     assert payload["export"]["scanner"] == payload["scanner"]
+    assert payload["Anthropic Brief"] == "Anthropic generated brief."
+    assert payload["export"]["anthropic_brief"] == "Anthropic generated brief."
 
 
 def test_stock_fax_tool_returns_migrated_report() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["TEXT_GENERATOR"] = FakeTextGenerator("Stock Fax narrative.")
     client = app.test_client()
 
     response = client.post("/api/tools/fax", json={"ticker": "AAPL"})
@@ -199,11 +231,14 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
     assert payload["Ticker"] == "AAPL"
     assert payload["Volatility Metrics"]
     assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
+    assert payload["Anthropic Report"] == "Stock Fax narrative."
+    assert payload["Text Provider"] == "anthropic"
 
 
 def test_vision_tool_returns_market_memo() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["TEXT_GENERATOR"] = FakeTextGenerator("### AAPL Vision\n\nAnthropic memo.")
     client = app.test_client()
 
     response = client.post("/api/tools/vision", json={"ticker": "AAPL"})
@@ -213,6 +248,22 @@ def test_vision_tool_returns_market_memo() -> None:
     assert payload["Ticker"] == "AAPL"
     assert "AAPL Vision" in payload["Market Memo"]
     assert payload["Report"]["Ticker"] == "AAPL"
+    assert payload["Text Model"] == "claude-test"
+
+
+def test_text_tool_reports_missing_anthropic_key(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["ANTHROPIC_API_KEY"] = ""
+    client = app.test_client()
+
+    response = client.post("/api/tools/vision", json={"ticker": "AAPL"})
+
+    payload = response.get_json()
+    assert response.status_code == 400
+    assert "ANTHROPIC_API_KEY" in payload["error"]
 
 
 def test_pixel_tool_reports_missing_openai_key(monkeypatch: MonkeyPatch) -> None:

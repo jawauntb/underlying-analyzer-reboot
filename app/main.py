@@ -11,6 +11,7 @@ from flask import Flask, Response, current_app, jsonify, request, send_from_dire
 from flask_cors import CORS
 
 from app.analysis import build_scanner_rows, summarize_stock
+from app.anthropic import DEFAULT_ANTHROPIC_MODEL, AnthropicError
 from app.charts import (
     RenderedImage,
     render_auction_chart,
@@ -24,6 +25,7 @@ from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
     build_stock_fax,
+    generate_analysis_brief,
     generate_pixel_image,
     render_moneyline_chart,
 )
@@ -54,6 +56,11 @@ def create_app() -> Flask:
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
     app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
+    app.config["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
+    app.config["ANTHROPIC_TEXT_MODEL"] = os.getenv(
+        "ANTHROPIC_TEXT_MODEL", DEFAULT_ANTHROPIC_MODEL
+    )
+    app.config["TEXT_GENERATOR"] = None
 
     @app.get("/")
     def index() -> Response:
@@ -106,17 +113,32 @@ def create_app() -> Flask:
         try:
             payload = request.get_json(silent=True) or {}
             response = build_analysis_response(
-                get_market_client(), get_watchlist_client(), payload
+                get_market_client(),
+                get_watchlist_client(),
+                payload,
+                **text_generation_options(),
             )
             return jsonify(response)
-        except (ValueError, MarketDataError, WatchlistError) as exc:
+        except (ValueError, AnthropicError, MarketDataError, WatchlistError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     @app.get("/api/analysis/<ticker>")
     def analysis(ticker: str) -> Any:
         try:
-            return jsonify(summarize_stock(get_market_client(), ticker))
-        except (ValueError, MarketDataError) as exc:
+            summary = summarize_stock(get_market_client(), ticker)
+            scanner = build_scanner_rows([summary])
+            generated = generate_analysis_brief(
+                [summary], scanner, **text_generation_options()
+            )
+            return jsonify(
+                {
+                    **summary,
+                    "Anthropic Brief": generated.text,
+                    "Text Provider": generated.provider,
+                    "Text Model": generated.model,
+                }
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/watchlists/resolve")
@@ -141,16 +163,28 @@ def create_app() -> Flask:
     def stock_fax_tool() -> Any:
         try:
             payload = request.get_json(silent=True) or {}
-            return jsonify(build_stock_fax(get_market_client(), str(payload.get("ticker") or "")))
-        except (ValueError, MarketDataError) as exc:
+            return jsonify(
+                build_stock_fax(
+                    get_market_client(),
+                    str(payload.get("ticker") or ""),
+                    **text_generation_options(),
+                )
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/tools/vision")
     def vision_tool() -> Any:
         try:
             payload = request.get_json(silent=True) or {}
-            return jsonify(build_market_memo(get_market_client(), str(payload.get("ticker") or "")))
-        except (ValueError, MarketDataError) as exc:
+            return jsonify(
+                build_market_memo(
+                    get_market_client(),
+                    str(payload.get("ticker") or ""),
+                    **text_generation_options(),
+                )
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/tools/moneyline")
@@ -195,6 +229,16 @@ def get_market_client() -> MarketDataClient:
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
     return current_app.config["WATCHLIST_CLIENT"]
+
+
+def text_generation_options() -> dict[str, Any]:
+    configured_generator = current_app.config.get("TEXT_GENERATOR")
+    if configured_generator is not None:
+        return {"text_generator": configured_generator}
+    return {
+        "api_key": current_app.config.get("ANTHROPIC_API_KEY"),
+        "text_model": current_app.config.get("ANTHROPIC_TEXT_MODEL"),
+    }
 
 
 def load_env_file(path: Path | None = None) -> None:
@@ -386,11 +430,22 @@ def build_analysis_response(
     client: MarketDataClient,
     watchlist_client: TradingViewWatchlistClient,
     payload: dict[str, Any],
+    *,
+    text_generator: Any | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
 ) -> dict[str, Any]:
     selection = resolve_ticker_selection(payload, watchlist_client)
     summaries, errors = collect_summaries(client, selection.tickers)
     require_results(summaries, errors)
     scanner = build_scanner_rows(summaries)
+    generated = generate_analysis_brief(
+        summaries,
+        scanner,
+        text_generator=text_generator,
+        api_key=api_key,
+        text_model=text_model,
+    )
     providers = sorted({str(summary["provider"]) for summary in summaries})
     provider = "+".join(providers)
     meta = batch_meta(
@@ -407,15 +462,9 @@ def build_analysis_response(
         selection.watchlist,
     )
     meta["scanner_count"] = len(scanner)
-    response = {
-        "summaries": summaries,
-        "scanner": scanner,
-        "provider": provider,
-        "provider_note": "Batch stock brief",
-        "meta": meta,
-        "watchlist": watchlist_payload(selection.watchlist),
-    }
-    response["export"] = export_payload(
+    meta["text_provider"] = generated.provider
+    meta["text_model"] = generated.model
+    export = export_payload(
         mode="analysis",
         provider=provider,
         provider_note="Batch stock brief",
@@ -426,6 +475,21 @@ def build_analysis_response(
         summaries=summaries,
         scanner=scanner,
     )
+    export["anthropic_brief"] = generated.text
+    export["text_provider"] = generated.provider
+    export["text_model"] = generated.model
+    response = {
+        "summaries": summaries,
+        "scanner": scanner,
+        "Anthropic Brief": generated.text,
+        "Text Provider": generated.provider,
+        "Text Model": generated.model,
+        "provider": provider,
+        "provider_note": "Batch stock brief",
+        "meta": meta,
+        "watchlist": watchlist_payload(selection.watchlist),
+        "export": export,
+    }
     return response
 
 
@@ -644,16 +708,18 @@ def register_compat_routes(app: Flask) -> None:
     @app.get("/stock_analysis/<ticker>")
     def compat_stock_fax(ticker: str) -> Any:
         try:
-            return jsonify(build_stock_fax(get_market_client(), ticker))
-        except (ValueError, MarketDataError) as exc:
+            return jsonify(
+                build_stock_fax(get_market_client(), ticker, **text_generation_options())
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
 
     @app.get("/micro_memo/<ticker>")
     def compat_micro_memo(ticker: str) -> Any:
         try:
-            memo = build_market_memo(get_market_client(), ticker)
+            memo = build_market_memo(get_market_client(), ticker, **text_generation_options())
             return jsonify({"Ticker": memo["Ticker"], "Market Memo": memo["Market Memo"]})
-        except (ValueError, MarketDataError) as exc:
+        except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
 
     @app.post("/generate-image")

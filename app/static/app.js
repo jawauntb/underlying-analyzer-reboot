@@ -231,11 +231,32 @@ function renderAnalysis(data) {
 
   const stack = document.createElement("div");
   stack.className = "brief-stack";
+  if (data["Anthropic Brief"]) {
+    stack.append(markdownPanel("Anthropic Brief", data["Anthropic Brief"]));
+  }
   if (data.scanner?.length > 1) {
     stack.append(scannerTable(data.scanner));
   }
   summaries.forEach((summary) => stack.append(briefCard(summary)));
   imagesEl.append(stack);
+}
+
+function markdownPanel(title, markdown) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  panel.append(heading);
+  String(markdown || "")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .forEach((block) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = block.replaceAll("**", "").replace(/^#+\s*/, "");
+      panel.append(paragraph);
+    });
+  return panel;
 }
 
 function scannerTable(rows) {

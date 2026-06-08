@@ -10,3 +10,4 @@ stock_analysis.log
 .env
 .env.*
 !.env.example
+.worktrees
