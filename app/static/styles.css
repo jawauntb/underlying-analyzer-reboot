@@ -748,23 +748,116 @@ body.is-loading .source-chip::after {
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 16px;
+  gap: 12px;
   color: var(--muted);
+  text-align: center;
 }
 
-.empty-state img {
-  width: 82px;
-  height: 82px;
+.empty-visual {
+  position: relative;
+  width: min(100%, 270px);
+  aspect-ratio: 1.55;
+  overflow: hidden;
+  border: 1px solid rgba(245, 200, 75, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 244, 194, 0.06), transparent 44%),
+    rgba(5, 11, 15, 0.86);
+  box-shadow:
+    0 20px 44px var(--hard-shadow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 0 42px rgba(87, 217, 255, 0.06);
+}
+
+.empty-visual::before,
+.empty-visual::after,
+.empty-grid,
+.empty-scan,
+.empty-sparkline {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+}
+
+.empty-visual::before {
+  inset: 12px;
+  border: 1px solid rgba(121, 255, 156, 0.32);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 201, 74, 0.12),
+    0 0 20px rgba(121, 255, 156, 0.08);
+}
+
+.empty-visual::after {
+  inset: 0;
+  border-top: 1px solid rgba(255, 244, 194, 0.18);
+  border-bottom: 1px solid rgba(255, 244, 194, 0.1);
+}
+
+.empty-grid {
+  inset: 0;
+  opacity: 0.74;
+  background-image:
+    linear-gradient(rgba(121, 255, 156, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(87, 217, 255, 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.empty-scan {
+  inset: 0;
+  height: 46px;
+  background:
+    linear-gradient(180deg, transparent, rgba(87, 217, 255, 0.14), transparent),
+    linear-gradient(90deg, transparent, rgba(255, 201, 74, 0.2), transparent);
+  animation: scope-scan 3.6s cubic-bezier(0.48, 0, 0.18, 1) infinite;
+}
+
+.empty-sparkline {
+  left: 20px;
+  right: 20px;
+  bottom: 28px;
+  height: 42px;
+  opacity: 0.72;
+  background:
+    linear-gradient(143deg, transparent 0 22%, var(--green) 23% 25%, transparent 26%),
+    linear-gradient(33deg, transparent 0 35%, var(--amber) 36% 38%, transparent 39%),
+    linear-gradient(153deg, transparent 0 52%, var(--cyan) 53% 55%, transparent 56%),
+    linear-gradient(25deg, transparent 0 69%, var(--green) 70% 72%, transparent 73%);
+  filter: drop-shadow(0 0 7px rgba(121, 255, 156, 0.2));
+}
+
+.empty-sparkline-b {
+  bottom: 14px;
+  opacity: 0.38;
+  transform: scaleX(-1);
+}
+
+.empty-visual img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: 86px;
+  height: 86px;
+  object-fit: contain;
+  image-rendering: pixelated;
   filter:
     drop-shadow(0 0 18px rgba(255, 201, 74, 0.26))
     drop-shadow(0 0 34px rgba(121, 255, 156, 0.1));
-  animation: idle-float 4s ease-in-out infinite;
+  animation: idle-float-centered 4s ease-in-out infinite;
 }
 
-.empty-state span {
+.empty-state > span {
   font-family: var(--pixel-font);
   font-size: 0.68rem;
   letter-spacing: 0;
+}
+
+.empty-state strong {
+  color: var(--green);
+  font-family: var(--pixel-font);
+  font-size: 0.56rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .legacy-shell {
@@ -928,6 +1021,35 @@ body.is-loading .source-chip::after {
 
   50% {
     transform: translateY(-5px);
+  }
+}
+
+@keyframes idle-float-centered {
+  0%,
+  100% {
+    transform: translate(-50%, -50%);
+  }
+
+  50% {
+    transform: translate(-50%, calc(-50% - 6px));
+  }
+}
+
+@keyframes scope-scan {
+  0%,
+  18% {
+    opacity: 0;
+    transform: translateY(-60px);
+  }
+
+  40%,
+  62% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(190px);
   }
 }
 
@@ -1115,6 +1237,15 @@ body.is-loading .source-chip::after {
   .output-head h2,
   .tool-form h2 {
     font-size: 0.86rem;
+  }
+
+  .empty-visual {
+    width: min(100%, 210px);
+  }
+
+  .empty-visual img {
+    width: 72px;
+    height: 72px;
   }
 
   label span,
