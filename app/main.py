@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, current_app, jsonify, request, send_from_directory
+from flask import (
+    Flask,
+    Response,
+    current_app,
+    jsonify,
+    request,
+    send_from_directory,
+    stream_with_context,
+)
 from flask_cors import CORS
 
 from app.analysis import build_scanner_rows, summarize_stock
@@ -25,9 +35,11 @@ from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
     build_stock_fax,
+    build_stock_fax_data,
     generate_analysis_brief,
     generate_pixel_image,
     render_moneyline_chart,
+    stream_market_memo_text,
 )
 from app.watchlists import (
     TradingViewWatchlistClient,
@@ -187,6 +199,20 @@ def create_app() -> Flask:
         except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.post("/api/tools/vision/stream")
+    def vision_tool_stream() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            report = build_stock_fax_data(get_market_client(), str(payload.get("ticker") or ""))
+            options = text_generation_options()
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        return Response(
+            stream_with_context(vision_stream_events(report, options)),
+            mimetype="application/x-ndjson",
+        )
+
     @app.post("/api/tools/moneyline")
     def moneyline_tool() -> Any:
         try:
@@ -239,6 +265,79 @@ def text_generation_options() -> dict[str, Any]:
         "api_key": current_app.config.get("ANTHROPIC_API_KEY"),
         "text_model": current_app.config.get("ANTHROPIC_TEXT_MODEL"),
     }
+
+
+def vision_stream_events(report: dict[str, Any], options: dict[str, Any]) -> Iterator[str]:
+    text_provider, text_model = text_generation_identity(options)
+    meta = vision_stream_meta(report, text_provider, text_model)
+    yield ndjson({"type": "meta", **meta})
+
+    chunks: list[str] = []
+    try:
+        for chunk in stream_market_memo_text(report, **options):
+            chunks.append(chunk)
+            yield ndjson({"type": "token", "text": chunk})
+    except (AnthropicError, ValueError, MarketDataError) as exc:
+        yield ndjson({"type": "error", "error": str(exc)})
+        return
+    except Exception as exc:
+        current_app.logger.exception("Unexpected Vision stream error")
+        yield ndjson({"type": "error", "error": f"Unexpected Vision stream error: {exc}"})
+        return
+
+    memo_text = "".join(chunks)
+    export = export_payload(
+        mode="vision",
+        provider=str(report.get("Provider") or "market data"),
+        provider_note=str(report.get("Provider Note") or "Vision market memo"),
+        tickers=[str(report["Ticker"])],
+        meta=meta,
+        watchlist=None,
+        image_files=[],
+    )
+    export["market_memo"] = memo_text
+    export["report"] = report
+    export["text_provider"] = text_provider
+    export["text_model"] = text_model
+    yield ndjson({"type": "done", "text": memo_text, "export": export, **meta})
+
+
+def vision_stream_meta(
+    report: dict[str, Any], text_provider: str, text_model: str
+) -> dict[str, Any]:
+    report_preview = vision_report_preview(report)
+    return {
+        "Ticker": report["Ticker"],
+        "Report": report_preview,
+        "Text Provider": text_provider,
+        "Text Model": text_model,
+        "provider": str(report.get("Provider") or "market data"),
+        "provider_note": str(report.get("Provider Note") or "Vision market memo"),
+        "meta": {
+            "ticker": report["Ticker"],
+            "name": report.get("Name"),
+            "text_provider": text_provider,
+            "text_model": text_model,
+            "streamed": True,
+        },
+    }
+
+
+def vision_report_preview(report: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in report.items() if key != "Export Rows"}
+
+
+def text_generation_identity(options: dict[str, Any]) -> tuple[str, str]:
+    generator = options.get("text_generator")
+    if generator is not None:
+        provider = str(getattr(generator, "provider", "anthropic"))
+        model = str(getattr(generator, "model", DEFAULT_ANTHROPIC_MODEL))
+        return provider, model
+    return "anthropic", str(options.get("text_model") or DEFAULT_ANTHROPIC_MODEL)
+
+
+def ndjson(payload: dict[str, Any]) -> str:
+    return f"{json.dumps(payload, default=str, separators=(',', ':'))}\n"
 
 
 def load_env_file(path: Path | None = None) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,7 +14,7 @@ import requests
 import yfinance as yf
 
 from app.analysis import summarize_stock
-from app.anthropic import AnthropicTextClient, GeneratedText, TextGenerator
+from app.anthropic import AnthropicTextClient, GeneratedText, StreamingTextGenerator, TextGenerator
 from app.charts import (
     AMBER,
     AX_BG,
@@ -272,14 +273,69 @@ def generate_market_memo_text(
     )
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
-        prompt=(
-            f"Write a market memo for {report['Ticker']} in markdown. Start with "
-            f"'### {report['Ticker']} Vision'. Keep it under 180 words. Focus on "
-            "the setup, price map, trend, and what to watch next.\n\n"
-            f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
-        ),
-        max_tokens=550,
+        prompt=market_memo_prompt(report),
+        max_tokens=2400,
         temperature=0.2,
+    )
+
+
+def stream_market_memo_text(
+    report: dict[str, Any],
+    *,
+    text_generator: TextGenerator | StreamingTextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> Iterator[str]:
+    generator = text_generator or AnthropicTextClient(
+        api_key=api_key,
+        model=text_model,
+        session=session,
+    )
+    stream_text = getattr(generator, "stream_text", None)
+    if callable(stream_text):
+        yield from stream_text(
+            system=MARKET_TEXT_SYSTEM,
+            prompt=market_memo_prompt(report),
+            max_tokens=2400,
+            temperature=0.2,
+        )
+        return
+
+    generated = generator.generate_text(
+        system=MARKET_TEXT_SYSTEM,
+        prompt=market_memo_prompt(report),
+        max_tokens=2400,
+        temperature=0.2,
+    )
+    yield generated.text
+
+
+def market_memo_prompt(report: dict[str, Any]) -> str:
+    return (
+        f"Write a professional buyside-style analyst memo for {report['Ticker']} in "
+        "markdown. Start with exactly "
+        f"'### {report['Ticker']} Vision'. Target 700-1,000 words and use a sober, "
+        "institutional voice. Do not sound like a newsletter teaser. Use only the "
+        "provided structured data; do not invent news, earnings details, catalysts, "
+        "guidance, products, macro facts, or valuation history that is not present.\n\n"
+        "Use exactly these sections:\n"
+        "1. **Executive Read** - 2-3 dense paragraphs on the current setup, directional "
+        "bias, and confidence level.\n"
+        "2. **Price Map** - a markdown table covering current price, 52-week high/low, "
+        "VAH, VAL, POC, EMA21, EMA55, and regression channel bounds when present.\n"
+        "3. **Trend And Volatility Regime** - discuss slope, EMA structure, volatility "
+        "by window, average daily move, and whether the tape looks stretched, balanced, "
+        "or deteriorating.\n"
+        "4. **Scenario Framework** - bullet bullish, neutral, and bearish cases with "
+        "specific levels that would confirm or invalidate each case.\n"
+        "5. **What To Watch Next** - practical monitoring checklist for the next several "
+        "sessions.\n"
+        "6. **Data Caveats** - note what the data can and cannot prove. Include uncertainty "
+        "when the setup is mixed.\n\n"
+        "Avoid investment advice promises. Make the memo useful to a serious trader or "
+        "analyst who wants a price/volatility read, not a short summary.\n\n"
+        f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
     )
 
 
