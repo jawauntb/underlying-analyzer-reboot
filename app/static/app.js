@@ -13,6 +13,21 @@ const modeTitles = {
   analysis: "Stock Brief",
 };
 
+const modeContracts = {
+  auction:
+    "Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.",
+  performance:
+    "Compares historical month behavior; use the current period against typical drift, hit rate, and range.",
+  regression:
+    "Shows trend channel and EMA structure; use slope, band position, and average reclaim/loss to judge trend health.",
+  portfolio:
+    "Builds a watchlist portfolio run; compare return, drawdown, volatility, and benchmark alpha before sizing ideas.",
+  volatility:
+    "Ranks realized volatility and expected range; use it to size risk and spot regime changes across the list.",
+  analysis:
+    "Generates an equity brief and scanner pass; use ranks, sector context, and data gaps as diligence starters.",
+};
+
 const sharedFields = ["watchlist-url", "max-results"];
 
 const fieldRules = {
@@ -26,6 +41,8 @@ const fieldRules = {
 
 const form = document.querySelector("#chart-form");
 const outputTitle = document.querySelector("#output-title");
+const modeContractEl = document.querySelector("#mode-contract");
+const outputContractEl = document.querySelector("#output-contract");
 const imagesEl = document.querySelector("#images");
 const errorEl = document.querySelector("#error");
 const warningsEl = document.querySelector("#warnings");
@@ -43,7 +60,7 @@ document.querySelectorAll(".mode-button").forEach((button) => {
     state.mode = button.dataset.mode;
     document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
-    outputTitle.textContent = modeTitles[state.mode];
+    syncModeCopy();
     syncFields();
     clearOutput();
   });
@@ -83,6 +100,7 @@ form.addEventListener("submit", async (event) => {
 
 async function boot() {
   setDefaultDates();
+  syncModeCopy();
   syncFields();
   try {
     const health = await fetch("/api/health").then((response) => response.json());
@@ -110,6 +128,13 @@ function syncFields() {
   document.querySelectorAll("[data-field]").forEach((field) => {
     field.hidden = !visible.has(field.dataset.field);
   });
+}
+
+function syncModeCopy() {
+  const contract = modeContracts[state.mode];
+  outputTitle.textContent = modeTitles[state.mode];
+  modeContractEl.textContent = contract;
+  outputContractEl.textContent = contract;
 }
 
 function payloadFromForm() {
