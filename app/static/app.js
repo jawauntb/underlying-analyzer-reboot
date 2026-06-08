@@ -1,4 +1,4 @@
-import { mountResearchLibrary } from "./research.js";
+import { mountAccountControls, mountResearchLibrary } from "./research.js";
 
 const state = {
   mode: "auction",
@@ -10,6 +10,8 @@ const modeTitles = {
   auction: "Auction Levels",
   performance: "Month Map",
   regression: "Regression + EMAs",
+  "ridge-growth": "Ridge Growth",
+  "flow-compass": "Flow Compass",
   portfolio: "Portfolio",
   volatility: "Volatility",
   analysis: "Stock Brief",
@@ -22,6 +24,10 @@ const modeContracts = {
     "Compares historical month behavior; use the current period against typical drift, hit rate, and range.",
   regression:
     "Shows trend channel and EMA structure; use slope, band position, and average reclaim/loss to judge trend health.",
+  "ridge-growth":
+    "Runs the Ridge daily trend strategy over 6M, 1Y, and 2Y windows with Flow Compass and auction-market context.",
+  "flow-compass":
+    "Scores main bias from signed volume, trend, momentum, value location, and relative volatility direction.",
   portfolio:
     "Builds a watchlist portfolio run; compare return, drawdown, volatility, and benchmark alpha before sizing ideas.",
   volatility:
@@ -36,6 +42,8 @@ const fieldRules = {
   auction: [...sharedFields, "period"],
   performance: [...sharedFields, "month"],
   regression: [...sharedFields, "start-date", "end-date", "period"],
+  "ridge-growth": [...sharedFields],
+  "flow-compass": [...sharedFields, "period"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
   volatility: [...sharedFields],
   analysis: [...sharedFields],
@@ -56,6 +64,7 @@ const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const chartViewer = createChartViewer();
+mountAccountControls({ root: document.querySelector("#account-control") });
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
   getRecord: buildResearchRecord,
@@ -180,6 +189,7 @@ async function fetchChart(payload) {
   exportButton.disabled = false;
   researchLibrary.setCanSave(true);
   renderImages(data.images || []);
+  renderChartExtras(data);
   renderSummary(data.meta || {});
   renderWarnings(data.meta?.errors || []);
 }
@@ -235,6 +245,71 @@ function renderImages(images) {
     card.append(previewButton, actions);
     imagesEl.append(card);
   });
+}
+
+function renderChartExtras(data) {
+  const meta = data.meta || {};
+  if (!meta.analysis_memo && !meta.windows?.length) {
+    return;
+  }
+  const stack = document.createElement("div");
+  stack.className = "brief-stack";
+  if (meta.analysis_memo) {
+    stack.append(markdownPanel("Ridge + Flow Memo", meta.analysis_memo));
+  }
+  if (meta.windows?.length) {
+    stack.append(ridgeWindowTable(meta.windows));
+  }
+  imagesEl.append(stack);
+  emptyState.hidden = true;
+}
+
+function ridgeWindowTable(windows) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Ridge Windows";
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.className = "scanner-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Window</th>
+        <th>State</th>
+        <th>Read</th>
+        <th>Return</th>
+        <th>Drawdown</th>
+        <th>Flow</th>
+        <th>Auction</th>
+      </tr>
+    </thead>
+  `;
+  const body = document.createElement("tbody");
+  windows.forEach((window) => {
+    const tr = document.createElement("tr");
+    [
+      String(window.period || "").toUpperCase(),
+      window.state,
+      window.recommendation,
+      formatPercent(window.total_return),
+      formatPercent(window.max_drawdown),
+      `${window.flow_compass?.state || "N/A"} ${formatValue(
+        window.flow_compass?.score ?? "N/A",
+      )}`,
+      window.auction?.location || "N/A",
+    ].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  tableWrap.append(table);
+  panel.append(title, tableWrap);
+  return panel;
 }
 
 function chartActionButton(label, onClick) {
@@ -349,7 +424,13 @@ function renderSummary(meta) {
     "error_count",
     "watchlist_name",
     "portfolio_final",
+    "ending_equity",
     "total_return",
+    "state",
+    "recommendation",
+    "flow_state",
+    "flow_score",
+    "auction_location",
     "benchmark_ticker",
     "benchmark_return",
     "alpha_vs_benchmark",
@@ -545,7 +626,18 @@ function formatMetaValue(key, value) {
   ) {
     return formatPercent(Number(value));
   }
+  if (["portfolio_final", "ending_equity"].includes(key)) {
+    return formatCurrency(Number(value));
+  }
   return formatValue(value);
+}
+
+function formatCurrency(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return `$${number.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
 function formatPercent(value) {
@@ -649,6 +741,7 @@ function openSavedResearch(record) {
     return;
   }
   renderImages(payload.images || []);
+  renderChartExtras(payload);
   renderSummary(payload.meta || {});
   renderWarnings(payload.meta?.errors || []);
 }

@@ -24,10 +24,13 @@ from app.analysis import build_scanner_rows, summarize_stock
 from app.anthropic import DEFAULT_ANTHROPIC_MODEL, AnthropicError
 from app.charts import (
     RenderedImage,
+    build_ridge_growth_memo,
     render_auction_chart,
+    render_flow_compass_chart,
     render_performance_chart,
     render_portfolio_chart,
     render_regression_chart,
+    render_ridge_growth_chart,
     render_volatility_chart,
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
@@ -53,6 +56,7 @@ from app.watchlists import (
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
+RIDGE_GROWTH_PERIODS = ("6mo", "1y", "2y")
 
 
 @dataclass(frozen=True)
@@ -531,6 +535,101 @@ def build_chart_response(
             images,
             mixed_provider(histories),
             "Batch regression render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "ridge-growth":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        images = []
+        histories = []
+        results = []
+        errors = []
+        windows: list[dict[str, Any]] = []
+        for ticker in selection.tickers:
+            ticker_windows: list[dict[str, Any]] = []
+            for period in RIDGE_GROWTH_PERIODS:
+                try:
+                    history = client.get_history(ticker, period=period, interval="1d")
+                    image, meta = render_ridge_growth_chart(history, period=period)
+                except (ValueError, MarketDataError) as exc:
+                    errors.append({"ticker": ticker, "error": f"{period}: {exc}"})
+                    continue
+                histories.append(history)
+                images.append(image)
+                ticker_windows.append(meta)
+                windows.append(meta)
+                results.append(result_payload(history.ticker, history.provider, history.note, meta))
+            if ticker_windows:
+                ticker_windows[-1]["analysis_memo"] = build_ridge_growth_memo(
+                    ticker, ticker_windows
+                )
+        require_results(results, errors)
+        meta = {**batch_meta(results, errors, selection.watchlist), "windows": windows}
+        first_memo = next(
+            (
+                str(window["analysis_memo"])
+                for window in windows
+                if window.get("analysis_memo")
+            ),
+            "",
+        )
+        if first_memo:
+            meta["analysis_memo"] = first_memo
+        if windows:
+            primary = next(
+                (window for window in windows if window.get("period") == "1y"),
+                windows[-1],
+            )
+            meta.update(
+                {
+                    "state": primary.get("state"),
+                    "recommendation": primary.get("recommendation"),
+                    "ending_equity": primary.get("ending_equity"),
+                    "total_return": primary.get("total_return"),
+                    "max_drawdown": primary.get("max_drawdown"),
+                    "flow_state": primary.get("flow_compass", {}).get("state"),
+                    "flow_score": primary.get("flow_compass", {}).get("score"),
+                    "auction_location": primary.get("auction", {}).get("location"),
+                }
+            )
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Ridge Growth daily strategy render",
+            meta,
+            mode=chart_key,
+            tickers=selection.tickers,
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "flow-compass":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        period = str(payload.get("period") or "1y")
+        images = []
+        histories = []
+        results = []
+        errors = []
+        for ticker in selection.tickers:
+            try:
+                history = client.get_history(ticker, period=period, interval="1d")
+                image, meta = render_flow_compass_chart(history, period=period)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(history)
+            images.append(image)
+            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Flow Compass daily indicator render",
             meta,
             mode=chart_key,
             tickers=[history.ticker for history in histories],

@@ -11,3 +11,4 @@ stock_analysis.log
 .env.*
 !.env.example
 .worktrees
+.railway/

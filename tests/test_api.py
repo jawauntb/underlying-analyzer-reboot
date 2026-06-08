@@ -281,6 +281,8 @@ def test_index_includes_underlying_tool_dock() -> None:
     assert response.status_code == 200
     for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline"):
         assert route in response.data
+    for mode in (b'data-mode="ridge-growth"', b'data-mode="flow-compass"'):
+        assert mode in response.data
 
 
 def test_legacy_tool_routes_render_status_page() -> None:
@@ -306,6 +308,53 @@ def test_chart_endpoint_returns_image_payload() -> None:
     assert payload["provider"] == "fake"
     assert payload["images"][0]["mime"] == "image/png"
     assert len(payload["images"][0]["data"]) > 100
+
+
+def test_ridge_growth_endpoint_returns_strategy_package() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/charts/ridge-growth", json={"ticker": "AAPL"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["provider"] == "fake"
+    assert len(payload["images"]) == 3
+    assert [window["period"] for window in payload["meta"]["windows"]] == ["6mo", "1y", "2y"]
+    assert "Ridge + Flow Read" in payload["meta"]["analysis_memo"]
+    assert payload["meta"]["recommendation"] in {
+        "BUY",
+        "SELL",
+        "HOLD LONG",
+        "BUY SETUP",
+        "WATCH",
+        "CASH",
+    }
+    assert payload["meta"]["flow_state"]
+    assert payload["meta"]["auction_location"]
+    assert payload["export"]["mode"] == "ridge-growth"
+
+
+def test_flow_compass_endpoint_returns_indicator_dashboard() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/charts/flow-compass", json={"ticker": "AAPL", "period": "6mo"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["images"][0]["filename"] == "aapl-flow-compass-6mo.png"
+    assert payload["meta"]["state"] in {
+        "STRONG LONG",
+        "LONG OK",
+        "STRONG SHORT",
+        "AVOID CALLS",
+        "NEUTRAL",
+    }
+    assert payload["meta"]["delta_method"] == "daily signed-volume proxy"
+    assert payload["export"]["mode"] == "flow-compass"
 
 
 def test_analysis_endpoint_returns_summary() -> None:

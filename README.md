@@ -71,6 +71,31 @@ Regression, and Brief generate one result per resolved ticker. The `Export JSON`
 the structured result data, including resolved tickers, watchlist metadata, per-symbol metrics, and
 any skipped-symbol errors.
 
+## Railway Deploy
+
+Railway is the production host for this Flask app. The Procfile starts Gunicorn on Railway's
+provided `$PORT`. `railway.toml` mirrors that start command, configures `/api/health` as the
+deployment healthcheck, and forces the Railpack builder. `requirements.txt` gives Railway's pip
+installer an explicit dependency file, while `.python-version` keeps production on Python 3.12.
+`pyproject.toml` pins package discovery to the `app` package so Railway's Python installer does not
+accidentally treat migration folders as import packages.
+
+```bash
+railway link
+railway variable set \
+  OPENAI_API_KEY=... \
+  ANTHROPIC_API_KEY=... \
+  ANTHROPIC_TEXT_MODEL=claude-opus-4-8 \
+  OPENAI_IMAGE_MODEL=gpt-image-2 \
+  SUPABASE_URL=... \
+  SUPABASE_ANON_KEY=... \
+  SEC_USER_AGENT=...
+railway up
+railway domain
+```
+
+For magic links, add the Railway URL to Supabase Auth redirect URLs alongside local dev URLs.
+
 ## Modal Deploy
 
 Modal is the simplest public host for this Flask app because it can serve the app directly as a WSGI
