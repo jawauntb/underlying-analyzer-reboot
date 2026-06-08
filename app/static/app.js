@@ -407,6 +407,7 @@ function showError(message) {
 }
 
 function setLoading(isLoading) {
+  document.body.classList.toggle("is-loading", isLoading);
   generateButton.disabled = isLoading;
   exportButton.disabled = isLoading || !state.lastExport;
   generateButton.textContent = isLoading ? "Generating..." : "Generate";

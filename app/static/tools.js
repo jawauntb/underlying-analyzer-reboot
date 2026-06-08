@@ -296,6 +296,7 @@ function showError(message) {
 }
 
 function setLoading(isLoading) {
+  document.body.classList.toggle("is-loading", isLoading);
   submitButton.disabled = isLoading;
   exportButton.disabled = isLoading || !lastExport;
   submitButton.textContent = isLoading ? "Working..." : activeTool.action;
