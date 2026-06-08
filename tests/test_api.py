@@ -80,7 +80,47 @@ class FakeMarketDataClient:
         return HistoryResult(ticker=ticker, data=frame, provider="fake", note="fake test provider")
 
     def get_profile(self, ticker: str) -> dict[str, object]:
-        return {"longName": f"{ticker} Inc", "sector": "Testing", "marketCap": 123_000_000}
+        return {
+            "longName": f"{ticker} Inc",
+            "sector": "Testing",
+            "industry": "Software Testing",
+            "marketCap": 123_000_000,
+            "longBusinessSummary": (
+                f"{ticker} Inc provides testing platforms for institutional research "
+                "teams and developer workflows."
+            ),
+            "country": "United States",
+            "website": "https://example.com",
+            "fullTimeEmployees": 1200,
+            "trailingPE": 18.2,
+            "forwardPE": 15.6,
+            "priceToSalesTrailing12Months": 3.2,
+            "priceToBook": 4.1,
+            "enterpriseValue": 150_000_000,
+            "enterpriseToRevenue": 3.4,
+            "enterpriseToEbitda": 9.8,
+            "totalRevenue": 50_000_000,
+            "revenueGrowth": 0.18,
+            "grossMargins": 0.72,
+            "ebitdaMargins": 0.25,
+            "operatingMargins": 0.21,
+            "profitMargins": 0.16,
+            "returnOnEquity": 0.19,
+            "freeCashflow": 8_500_000,
+            "totalCash": 12_000_000,
+            "totalDebt": 4_000_000,
+            "debtToEquity": 22.0,
+            "currentRatio": 1.8,
+            "recommendationKey": "buy",
+            "targetMeanPrice": 180.0,
+            "numberOfAnalystOpinions": 12,
+            "heldPercentInsiders": 0.04,
+            "heldPercentInstitutions": 0.62,
+            "companyOfficers": [
+                {"name": "Jane Analyst", "title": "Chief Executive Officer"},
+                {"name": "Sam Operator", "title": "Chief Financial Officer"},
+            ],
+        }
 
 
 class FakeWatchlistClient:
@@ -255,6 +295,9 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
     payload = response.get_json()
     assert response.status_code == 200
     assert payload["Ticker"] == "AAPL"
+    assert payload["Business Context"]["Business Summary"].startswith("AAPL Inc provides")
+    assert payload["Financial Quality"]["Revenue Growth"] == 0.18
+    assert payload["Management Snapshot"]["Executive Officers"][0]["Name"] == "Jane Analyst"
     assert payload["Volatility Metrics"]
     assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
     assert payload["Anthropic Report"] == "Stock Fax narrative."
@@ -263,8 +306,9 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
 
 def test_vision_tool_returns_market_memo() -> None:
     app = create_app()
+    generator = FakeTextGenerator("### AAPL Vision\n\nAnthropic memo.")
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
-    app.config["TEXT_GENERATOR"] = FakeTextGenerator("### AAPL Vision\n\nAnthropic memo.")
+    app.config["TEXT_GENERATOR"] = generator
     client = app.test_client()
 
     response = client.post("/api/tools/vision", json={"ticker": "AAPL"})
@@ -274,13 +318,29 @@ def test_vision_tool_returns_market_memo() -> None:
     assert payload["Ticker"] == "AAPL"
     assert "AAPL Vision" in payload["Market Memo"]
     assert payload["Report"]["Ticker"] == "AAPL"
+    assert [chart["key"] for chart in payload["Memo Charts"]] == [
+        "auction",
+        "regression",
+        "volatility",
+    ]
+    assert payload["Memo Charts"][0]["placement"] == "Price Map"
+    assert payload["Memo Charts"][0]["image"]["mime"] == "image/png"
+    assert payload["Chart Errors"] == []
     assert payload["Text Model"] == "claude-test"
+    assert generator.calls[0]["max_tokens"] == 3200
+    prompt = str(generator.calls[0]["prompt"])
+    assert "Company, Sector, And Business Model" in prompt
+    assert "Management And Execution" in prompt
+    assert "Research Gaps / Next Diligence" in prompt
+    assert "Jane Analyst" in prompt
+    assert "SEC 10-K/10-Q Business" in prompt
 
 
 def test_vision_stream_tool_returns_ndjson_events() -> None:
     app = create_app()
+    generator = FakeStreamingTextGenerator()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
-    app.config["TEXT_GENERATOR"] = FakeStreamingTextGenerator()
+    app.config["TEXT_GENERATOR"] = generator
     client = app.test_client()
 
     response = client.post("/api/tools/vision/stream", json={"ticker": "AAPL"})
@@ -293,6 +353,16 @@ def test_vision_stream_tool_returns_ndjson_events() -> None:
     assert events[-1]["text"] == "### AAPL Vision\n\nStreamed memo."
     assert events[-1]["export"]["mode"] == "vision"
     assert events[-1]["export"]["market_memo"] == events[-1]["text"]
+    assert [chart["key"] for chart in events[-1]["Memo Charts"]] == [
+        "auction",
+        "regression",
+        "volatility",
+    ]
+    assert events[-1]["export"]["image_files"][0]["filename"].endswith("-auction.png")
+    assert events[-1]["export"]["memo_charts"][1]["placement"] == (
+        "Equity Performance And Positioning"
+    )
+    assert generator.calls[0]["max_tokens"] == 3200
 
 
 def test_text_tool_reports_missing_anthropic_key(monkeypatch: MonkeyPatch) -> None:

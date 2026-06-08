@@ -34,6 +34,7 @@ from app.market_data import HistoryResult, MarketDataClient, MarketDataError, cl
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
+    build_market_memo_charts,
     build_stock_fax,
     build_stock_fax_data,
     generate_analysis_brief,
@@ -203,13 +204,16 @@ def create_app() -> Flask:
     def vision_tool_stream() -> Any:
         try:
             payload = request.get_json(silent=True) or {}
-            report = build_stock_fax_data(get_market_client(), str(payload.get("ticker") or ""))
+            ticker = str(payload.get("ticker") or "")
+            client = get_market_client()
+            report = build_stock_fax_data(client, ticker)
+            charts, chart_errors = build_market_memo_charts(client, ticker)
             options = text_generation_options()
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
         return Response(
-            stream_with_context(vision_stream_events(report, options)),
+            stream_with_context(vision_stream_events(report, options, charts, chart_errors)),
             mimetype="application/x-ndjson",
         )
 
@@ -267,7 +271,14 @@ def text_generation_options() -> dict[str, Any]:
     }
 
 
-def vision_stream_events(report: dict[str, Any], options: dict[str, Any]) -> Iterator[str]:
+def vision_stream_events(
+    report: dict[str, Any],
+    options: dict[str, Any],
+    charts: list[dict[str, Any]] | None = None,
+    chart_errors: list[dict[str, str]] | None = None,
+) -> Iterator[str]:
+    memo_charts = charts or []
+    memo_chart_errors = chart_errors or []
     text_provider, text_model = text_generation_identity(options)
     meta = vision_stream_meta(report, text_provider, text_model)
     yield ndjson({"type": "meta", **meta})
@@ -293,13 +304,37 @@ def vision_stream_events(report: dict[str, Any], options: dict[str, Any]) -> Ite
         tickers=[str(report["Ticker"])],
         meta=meta,
         watchlist=None,
-        image_files=[],
+        image_files=memo_chart_files(memo_charts),
     )
     export["market_memo"] = memo_text
     export["report"] = report
+    export["memo_charts"] = memo_charts
+    export["chart_errors"] = memo_chart_errors
     export["text_provider"] = text_provider
     export["text_model"] = text_model
-    yield ndjson({"type": "done", "text": memo_text, "export": export, **meta})
+    yield ndjson(
+        {
+            "type": "done",
+            "text": memo_text,
+            "export": export,
+            "Memo Charts": memo_charts,
+            "Chart Errors": memo_chart_errors,
+            **meta,
+        }
+    )
+
+
+def memo_chart_files(charts: list[dict[str, Any]]) -> list[dict[str, str]]:
+    files = []
+    for chart in charts:
+        image = chart.get("image")
+        if not isinstance(image, dict):
+            continue
+        filename = image.get("filename")
+        mime = image.get("mime")
+        if isinstance(filename, str) and isinstance(mime, str):
+            files.append({"filename": filename, "mime": mime})
+    return files
 
 
 def vision_stream_meta(

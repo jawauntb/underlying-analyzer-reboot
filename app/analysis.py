@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -16,6 +17,34 @@ def compact_number(value: Any) -> str:
             return f"{number:.2f}{suffix}"
         number /= 1000
     return f"{number:.2f}Q"
+
+
+def missing_profile_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, list | tuple | set | dict):
+        return not value
+    if isinstance(value, int | float):
+        return bool(np.isnan(float(value)))
+    return False
+
+
+def profile_value(profile: Mapping[str, Any], key: str, default: Any = "N/A") -> Any:
+    value = profile.get(key)
+    return default if missing_profile_value(value) else value
+
+
+def trim_text(value: Any, *, limit: int = 520) -> str:
+    if not isinstance(value, str):
+        return "N/A"
+    clean = " ".join(value.split())
+    if not clean:
+        return "N/A"
+    if len(clean) <= limit:
+        return clean
+    return f"{clean[: limit - 3].rstrip()}..."
 
 
 def summarize_stock(client: MarketDataClient, ticker: str) -> dict[str, Any]:
@@ -40,12 +69,25 @@ def summarize_stock(client: MarketDataClient, ticker: str) -> dict[str, Any]:
         "name": profile.get("longName") or profile.get("shortName") or symbol,
         "sector": profile.get("sector") or "N/A",
         "industry": profile.get("industry") or "N/A",
+        "business_summary": trim_text(profile.get("longBusinessSummary")),
+        "country": profile_value(profile, "country"),
+        "website": profile_value(profile, "website"),
+        "employees": profile_value(profile, "fullTimeEmployees"),
         "price": latest,
         "change": latest - previous,
         "change_percent": ((latest - previous) / previous * 100) if previous else 0.0,
         "market_cap": compact_number(profile.get("marketCap")),
         "trailing_pe": profile.get("trailingPE") or "N/A",
         "forward_pe": profile.get("forwardPE") or "N/A",
+        "price_to_sales": profile_value(profile, "priceToSalesTrailing12Months"),
+        "price_to_book": profile_value(profile, "priceToBook"),
+        "revenue_growth": profile_value(profile, "revenueGrowth"),
+        "profit_margins": profile_value(profile, "profitMargins"),
+        "return_on_equity": profile_value(profile, "returnOnEquity"),
+        "debt_to_equity": profile_value(profile, "debtToEquity"),
+        "recommendation": profile_value(profile, "recommendationKey"),
+        "target_mean_price": profile_value(profile, "targetMeanPrice"),
+        "analyst_count": profile_value(profile, "numberOfAnalystOpinions"),
         "beta": profile.get("beta") or "N/A",
         "annual_volatility": annual_vol,
         "trend_50d": trend_50,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,7 +13,13 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from app.analysis import summarize_stock
+from app.analysis import (
+    compact_number,
+    missing_profile_value,
+    profile_value,
+    summarize_stock,
+    trim_text,
+)
 from app.anthropic import AnthropicTextClient, GeneratedText, StreamingTextGenerator, TextGenerator
 from app.charts import (
     AMBER,
@@ -32,6 +38,9 @@ from app.charts import (
     calculate_auction_levels,
     format_absolute_y_axis,
     image_from_figure,
+    render_auction_chart,
+    render_regression_chart,
+    render_volatility_chart,
     style_axis,
     style_legend,
 )
@@ -43,9 +52,11 @@ PIXEL_STYLE = (
 )
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 MARKET_TEXT_SYSTEM = (
-    "You are The Underlying's market analyst. Write concise, direct market analysis from "
-    "the provided structured data only. Do not invent prices, dates, catalysts, or news. "
-    "Avoid investment advice promises and include uncertainty when the setup is mixed."
+    "You are The Underlying's institutional equity analyst. Produce sober, evidence-based "
+    "research for a serious investor using only the provided structured data. Separate facts "
+    "from inference, label missing information, and never invent prices, dates, news, "
+    "earnings details, management commentary, catalysts, peers, or filings. Avoid hype, "
+    "generic finance filler, and personalized investment advice."
 )
 
 
@@ -78,6 +89,7 @@ def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any
     symbol = clean_ticker(ticker)
     history = client.get_history(symbol, period="2y")
     summary = summarize_stock(client, symbol)
+    profile = client.get_profile(symbol)
     data = history.data
     close = data["Adj Close"].dropna()
     returns = close.pct_change().dropna()
@@ -101,6 +113,12 @@ def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any
             "52W High": summary["fifty_two_week_high"],
             "52W Low": summary["fifty_two_week_low"],
         },
+        "Business Context": business_context(profile, summary),
+        "Performance Metrics": performance_metrics(close),
+        "Valuation Context": valuation_context(profile, summary),
+        "Financial Quality": financial_quality(profile),
+        "Analyst And Ownership Signals": analyst_ownership_signals(profile),
+        "Management Snapshot": management_snapshot(profile),
         "Volatility Metrics": volatility_metrics(close),
         "Regression Trend": regression_trend(close),
         "EMAs Summary": ema_summary(close),
@@ -110,8 +128,158 @@ def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any
             "Value Area Low (VAL)": val,
         },
         "Signal Summary": signal_summary(close, returns, poc),
+        "Data Coverage": data_coverage(profile),
         "Export Rows": price_rows(history),
     }
+
+
+def business_context(profile: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "Company": summary.get("name"),
+        "Sector": summary.get("sector"),
+        "Industry": summary.get("industry"),
+        "Country": profile_value(profile, "country"),
+        "Website": profile_value(profile, "website"),
+        "Employees": profile_value(profile, "fullTimeEmployees"),
+        "Business Summary": trim_text(profile.get("longBusinessSummary"), limit=900),
+    }
+
+
+def performance_metrics(close: pd.Series) -> dict[str, dict[str, float] | float]:
+    clean = close.dropna()
+    if clean.empty:
+        return {}
+
+    latest = float(clean.iloc[-1])
+    metrics: dict[str, dict[str, float] | float] = {
+        "Latest Price": latest,
+        "Distance From 52W High (%)": 0.0,
+        "Distance From 52W Low (%)": 0.0,
+    }
+    high_52 = float(clean.tail(252).max())
+    low_52 = float(clean.tail(252).min())
+    if high_52:
+        metrics["Distance From 52W High (%)"] = (latest / high_52 - 1) * 100
+    if low_52:
+        metrics["Distance From 52W Low (%)"] = (latest / low_52 - 1) * 100
+
+    for label, window in {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "2Y": 504}.items():
+        if len(clean) < 2:
+            continue
+        start = float(clean.iloc[-window - 1]) if len(clean) > window else float(clean.iloc[0])
+        metrics[label] = {
+            "Return (%)": ((latest / start) - 1) * 100 if start else 0.0,
+            "Start Price": start,
+            "End Price": latest,
+        }
+    return metrics
+
+
+def valuation_context(profile: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "Market Cap": summary.get("market_cap"),
+        "Enterprise Value": compact_profile_number(profile, "enterpriseValue"),
+        "Trailing PE": summary.get("trailing_pe"),
+        "Forward PE": summary.get("forward_pe"),
+        "PEG Ratio": profile_value(profile, "pegRatio"),
+        "Price To Sales": profile_value(profile, "priceToSalesTrailing12Months"),
+        "Price To Book": profile_value(profile, "priceToBook"),
+        "Enterprise To Revenue": profile_value(profile, "enterpriseToRevenue"),
+        "Enterprise To EBITDA": profile_value(profile, "enterpriseToEbitda"),
+        "Trailing EPS": profile_value(profile, "trailingEps"),
+        "Forward EPS": profile_value(profile, "forwardEps"),
+    }
+
+
+def financial_quality(profile: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "Total Revenue": compact_profile_number(profile, "totalRevenue"),
+        "Revenue Growth": profile_value(profile, "revenueGrowth"),
+        "Gross Margins": profile_value(profile, "grossMargins"),
+        "EBITDA Margins": profile_value(profile, "ebitdaMargins"),
+        "Operating Margins": profile_value(profile, "operatingMargins"),
+        "Profit Margins": profile_value(profile, "profitMargins"),
+        "Return On Equity": profile_value(profile, "returnOnEquity"),
+        "Free Cash Flow": compact_profile_number(profile, "freeCashflow"),
+        "Total Cash": compact_profile_number(profile, "totalCash"),
+        "Total Debt": compact_profile_number(profile, "totalDebt"),
+        "Debt To Equity": profile_value(profile, "debtToEquity"),
+        "Current Ratio": profile_value(profile, "currentRatio"),
+    }
+
+
+def analyst_ownership_signals(profile: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "Recommendation": profile_value(profile, "recommendationKey"),
+        "Recommendation Mean": profile_value(profile, "recommendationMean"),
+        "Target Mean Price": profile_value(profile, "targetMeanPrice"),
+        "Target Median Price": profile_value(profile, "targetMedianPrice"),
+        "Target High Price": profile_value(profile, "targetHighPrice"),
+        "Target Low Price": profile_value(profile, "targetLowPrice"),
+        "Analyst Opinion Count": profile_value(profile, "numberOfAnalystOpinions"),
+        "Held By Insiders": profile_value(profile, "heldPercentInsiders"),
+        "Held By Institutions": profile_value(profile, "heldPercentInstitutions"),
+        "Dividend Yield": profile_value(profile, "dividendYield"),
+        "Payout Ratio": profile_value(profile, "payoutRatio"),
+    }
+
+
+def management_snapshot(profile: Mapping[str, Any]) -> dict[str, Any]:
+    officers = []
+    raw_officers = profile.get("companyOfficers")
+    if isinstance(raw_officers, list):
+        for officer in raw_officers:
+            if not isinstance(officer, dict):
+                continue
+            name = officer.get("name")
+            title = officer.get("title")
+            if missing_profile_value(name) or missing_profile_value(title):
+                continue
+            officers.append({"Name": str(name), "Title": str(title)})
+            if len(officers) == 5:
+                break
+
+    return {
+        "Executive Officers": officers or "N/A",
+        "Governance Caveat": (
+            "Officer roster comes from the profile provider when available. Board "
+            "independence, ownership details by holder, compensation philosophy, and proxy "
+            "filing context are not available in this dataset."
+        ),
+    }
+
+
+def data_coverage(profile: Mapping[str, Any]) -> dict[str, str]:
+    checks = {
+        "Business Description": ("longBusinessSummary",),
+        "Sector And Industry": ("sector", "industry"),
+        "Management Roster": ("companyOfficers",),
+        "Valuation Multiples": ("trailingPE", "forwardPE", "enterpriseToRevenue"),
+        "Financial Quality": ("revenueGrowth", "profitMargins", "returnOnEquity"),
+        "Analyst Expectations": ("targetMeanPrice", "recommendationKey"),
+        "Ownership Signals": ("heldPercentInsiders", "heldPercentInstitutions"),
+        "SEC Filings / MD&A": (),
+        "Earnings Transcript / Guidance": (),
+        "Peer Comps": (),
+    }
+    coverage = {}
+    for label, keys in checks.items():
+        if not keys:
+            coverage[label] = "not supplied"
+            continue
+        coverage[label] = (
+            "available"
+            if any(not missing_profile_value(profile.get(key)) for key in keys)
+            else "not supplied"
+        )
+    return coverage
+
+
+def compact_profile_number(profile: Mapping[str, Any], key: str) -> Any:
+    value = profile_value(profile, key, None)
+    if isinstance(value, int | float):
+        return compact_number(value)
+    return "N/A" if value is None else value
 
 
 def volatility_metrics(close: pd.Series) -> dict[str, dict[str, float]]:
@@ -223,13 +391,116 @@ def build_market_memo(
         text_model=text_model,
         session=session,
     )
+    charts, chart_errors = build_market_memo_charts(client, ticker)
     return {
         "Ticker": report["Ticker"],
         "Market Memo": generated.text,
         "Report": report,
+        "Memo Charts": charts,
+        "Chart Errors": chart_errors,
         "Text Provider": generated.provider,
         "Text Model": generated.model,
     }
+
+
+def build_market_memo_charts(
+    client: MarketDataClient, ticker: str
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    symbol = clean_ticker(ticker)
+    history = client.get_history(symbol, period="2y")
+    charts: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    chart_specs = [
+        (
+            "auction",
+            "Auction Map",
+            "Price Map",
+            "Value area, point of control, and the current price distribution.",
+            lambda: render_auction_chart(history, period="2y"),
+            auction_chart_read,
+        ),
+        (
+            "regression",
+            "Regression Channel",
+            "Equity Performance And Positioning",
+            "Trend channel, EMA structure, and volume confirmation.",
+            lambda: render_regression_chart(history),
+            regression_chart_read,
+        ),
+        (
+            "volatility",
+            "Volatility Radar",
+            "Catalysts, Risks, And Variant Perception",
+            "Realized volatility and expected one-week / one-month price ranges.",
+            lambda: render_volatility_chart([history]),
+            volatility_chart_read,
+        ),
+    ]
+
+    for key, title, placement, description, render, caption in chart_specs:
+        try:
+            image, meta = render()
+        except (ValueError, MarketDataError) as exc:
+            errors.append({"chart": key, "error": str(exc)})
+            continue
+        charts.append(
+            memo_chart_payload(
+                key=key,
+                title=title,
+                placement=placement,
+                description=description,
+                image=image,
+                meta=meta,
+                caption=caption(meta),
+            )
+        )
+
+    return charts, errors
+
+
+def memo_chart_payload(
+    *,
+    key: str,
+    title: str,
+    placement: str,
+    description: str,
+    image: RenderedImage,
+    meta: dict[str, Any],
+    caption: str,
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "title": title,
+        "placement": placement,
+        "description": description,
+        "caption": caption,
+        "image": image.__dict__,
+        "meta": meta,
+    }
+
+
+def auction_chart_read(meta: dict[str, Any]) -> str:
+    return (
+        f"POC {meta.get('poc', 'N/A')}, VAH {meta.get('vah', 'N/A')}, "
+        f"VAL {meta.get('val', 'N/A')}; use this as the memo's near-term price map."
+    )
+
+
+def regression_chart_read(meta: dict[str, Any]) -> str:
+    return (
+        f"Slope/day {meta.get('slope_per_day', 'N/A')} with residual sigma "
+        f"{meta.get('residual_std', 'N/A')}; use this to judge trend persistence."
+    )
+
+
+def volatility_chart_read(meta: dict[str, Any]) -> str:
+    rows = meta.get("rows")
+    row = rows[0] if isinstance(rows, list) and rows else {}
+    return (
+        f"Annualized realized volatility {row.get('annual_vol', 'N/A')}; expected "
+        f"1w range +/- {row.get('one_week_range', 'N/A')}, 1m range +/- "
+        f"{row.get('one_month_range', 'N/A')}."
+    )
 
 
 def generate_stock_fax_text(
@@ -248,12 +519,14 @@ def generate_stock_fax_text(
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
         prompt=(
-            "Create a compact Stock Fax narrative in markdown for this ticker. "
-            "Use exactly these sections: Setup, Key Levels, Trend/Volatility, Watch Next. "
-            "Keep it under 220 words.\n\n"
+            "Create a compact Stock Fax narrative in markdown for this ticker. Make it "
+            "useful to an analyst who needs the business read and the tape read in one pass. "
+            "Use exactly these sections: Business Read, Setup, Valuation/Fundamentals, "
+            "Key Levels, Watch Next. Keep it under 280 words. Call out any material "
+            "research gaps instead of filling them with generic commentary.\n\n"
             f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
         ),
-        max_tokens=650,
+        max_tokens=850,
         temperature=0.2,
     )
 
@@ -274,7 +547,7 @@ def generate_market_memo_text(
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
         prompt=market_memo_prompt(report),
-        max_tokens=2400,
+        max_tokens=3200,
         temperature=0.2,
     )
 
@@ -297,7 +570,7 @@ def stream_market_memo_text(
         yield from stream_text(
             system=MARKET_TEXT_SYSTEM,
             prompt=market_memo_prompt(report),
-            max_tokens=2400,
+            max_tokens=3200,
             temperature=0.2,
         )
         return
@@ -305,7 +578,7 @@ def stream_market_memo_text(
     generated = generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
         prompt=market_memo_prompt(report),
-        max_tokens=2400,
+        max_tokens=3200,
         temperature=0.2,
     )
     yield generated.text
@@ -313,28 +586,51 @@ def stream_market_memo_text(
 
 def market_memo_prompt(report: dict[str, Any]) -> str:
     return (
-        f"Write a professional buyside-style analyst memo for {report['Ticker']} in "
+        f"Write a professional buyside-style equity analyst memo for {report['Ticker']} in "
         "markdown. Start with exactly "
-        f"'### {report['Ticker']} Vision'. Target 700-1,000 words and use a sober, "
-        "institutional voice. Do not sound like a newsletter teaser. Use only the "
-        "provided structured data; do not invent news, earnings details, catalysts, "
-        "guidance, products, macro facts, or valuation history that is not present.\n\n"
+        f"'### {report['Ticker']} Vision'. Target 950-1,300 words and use a sober, "
+        "institutional voice. The memo should feel like a real investment note, not a "
+        "technical indicator recap or newsletter teaser. Use only the provided structured "
+        "data; do not invent news, earnings details, guidance, management commentary, "
+        "products, macro facts, peer comps, or valuation history that is not present. "
+        "When a normal analyst workstream is missing, say 'not supplied' and move it to "
+        "the diligence agenda.\n\n"
+        "Analytical standards:\n"
+        "- Anchor every claim to a supplied field or clearly label it as an inference.\n"
+        "- Discuss business quality, sector/industry context, equity performance, valuation, "
+        "financial quality, management/execution, risk, and scenario levels.\n"
+        "- Do not use generic catalysts like 'earnings could move the stock' unless the "
+        "data contains a concrete earnings/guidance item.\n"
+        "- Do not issue a personal buy/sell recommendation. A provisional stance is allowed "
+        "only if framed as data-conditioned and uncertainty-aware.\n\n"
         "Use exactly these sections:\n"
-        "1. **Executive Read** - 2-3 dense paragraphs on the current setup, directional "
-        "bias, and confidence level.\n"
-        "2. **Price Map** - a markdown table covering current price, 52-week high/low, "
-        "VAH, VAL, POC, EMA21, EMA55, and regression channel bounds when present.\n"
-        "3. **Trend And Volatility Regime** - discuss slope, EMA structure, volatility "
-        "by window, average daily move, and whether the tape looks stretched, balanced, "
-        "or deteriorating.\n"
-        "4. **Scenario Framework** - bullet bullish, neutral, and bearish cases with "
-        "specific levels that would confirm or invalidate each case.\n"
-        "5. **What To Watch Next** - practical monitoring checklist for the next several "
-        "sessions.\n"
-        "6. **Data Caveats** - note what the data can and cannot prove. Include uncertainty "
-        "when the setup is mixed.\n\n"
-        "Avoid investment advice promises. Make the memo useful to a serious trader or "
-        "analyst who wants a price/volatility read, not a short summary.\n\n"
+        "1. **Executive Read** - 2-3 dense paragraphs with the provisional stance, what "
+        "matters most, confidence level, and the strongest counterargument.\n"
+        "2. **Company, Sector, And Business Model** - use the business description, sector, "
+        "industry, geography, employee base, and what is missing from the company-level read.\n"
+        "3. **Equity Performance And Positioning** - cover recent returns, distance from "
+        "52-week high/low, trend, beta, liquidity/volume if available, and whether the stock "
+        "looks crowded, extended, washed out, or balanced from the supplied data.\n"
+        "4. **Valuation And Financial Quality** - discuss market cap, PE/EV/sales/book "
+        "metrics, revenue growth, margins, ROE, leverage, cash/debt, free cash flow, and "
+        "whether the valuation looks internally justified by quality signals. Do not compare "
+        "to peers unless peer data is supplied.\n"
+        "5. **Management And Execution** - identify supplied executives and assess execution "
+        "only through supplied fundamentals, margins, growth, leverage, and business summary. "
+        "If no management roster or MD&A is supplied, say so plainly.\n"
+        "6. **Price Map** - a markdown table covering current price, 52-week high/low, VAH, "
+        "VAL, POC, EMA21, EMA55, regression channel bounds, and any clear scenario trigger.\n"
+        "7. **Catalysts, Risks, And Variant Perception** - separate data-supported items from "
+        "research gaps. Include downside risks, upside evidence, and what the market may be "
+        "under/overweighting based only on supplied fields.\n"
+        "8. **Scenario Framework** - bullish, base, and bearish cases with specific levels "
+        "or fundamental conditions that would confirm or invalidate each case.\n"
+        "9. **Research Gaps / Next Diligence** - list the missing SEC 10-K/10-Q Business, "
+        "Risk Factors, MD&A, financial statements, proxy/management compensation, latest "
+        "earnings transcript, guidance, and peer-comparison work that should be checked before "
+        "treating the memo as a full investment recommendation.\n\n"
+        "Avoid investment advice promises. Make the memo useful to a serious analyst who wants "
+        "a research starting point with a price map, not a short summary.\n\n"
         f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
     )
 
@@ -357,12 +653,14 @@ def generate_analysis_brief(
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
         prompt=(
-            "Write a concise stock brief for this analysis response in markdown. "
-            "If multiple tickers are present, lead with the scanner read and then "
-            "call out the top one or two names. Keep it under 180 words.\n\n"
+            "Write a concise professional stock brief for this analysis response in markdown. "
+            "If multiple tickers are present, lead with the scanner read, then call out the top "
+            "one or two names and the main caveats. Include business/sector, valuation, quality, "
+            "performance, and risk only where the supplied summaries support it. Keep it under "
+            "260 words and avoid generic market commentary.\n\n"
             f"{json.dumps(payload, sort_keys=True, default=str)}"
         ),
-        max_tokens=550,
+        max_tokens=750,
         temperature=0.2,
     )
 

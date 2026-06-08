@@ -1189,6 +1189,51 @@ body.is-loading .source-chip::after {
   font-weight: 850;
 }
 
+.memo-chart {
+  display: grid;
+  gap: 11px;
+  margin: 6px 0 14px;
+  border: 1px solid rgba(87, 217, 255, 0.22);
+  background:
+    linear-gradient(135deg, rgba(87, 217, 255, 0.08), transparent 46%),
+    rgba(3, 8, 11, 0.72);
+  padding: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.memo-chart-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.memo-chart h4 {
+  margin: 0;
+  color: var(--amber);
+  font-family: var(--pixel-font);
+  font-size: 0.76rem;
+  line-height: 1.7;
+  letter-spacing: 0;
+}
+
+.memo-chart-preview img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border: 1px solid rgba(87, 217, 255, 0.22);
+  background: #030608;
+  box-shadow: 0 18px 34px var(--hard-shadow);
+}
+
+.memo-chart figcaption {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 900;
+  line-height: 1.5;
+}
+
 .stream-cursor {
   display: inline-block;
   width: 10px;
@@ -1471,6 +1516,10 @@ body.is-loading .source-chip::after {
     text-align: center;
   }
 
+  .memo-chart-head {
+    grid-template-columns: 1fr;
+  }
+
   .chart-viewer {
     padding: 8px;
   }
@@ -1668,6 +1717,7 @@ body.is-loading .source-chip::after {
 
   .summary-item,
   .memo-card,
+  .memo-chart,
   .report-section,
   .memo-table-wrap {
     break-inside: avoid;
@@ -1705,6 +1755,10 @@ body.is-loading .source-chip::after {
 
   .memo-table th {
     background: #f1f1f1;
+  }
+
+  .memo-chart figcaption {
+    color: #4a4a4a;
   }
 }
 

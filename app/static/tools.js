@@ -49,6 +49,7 @@ const errorEl = document.querySelector("#tool-error");
 const emptyEl = document.querySelector("#tool-empty");
 const sourceEl = document.querySelector("#tool-source");
 const pdfButton = createPdfButton();
+const memoChartViewer = createMemoChartViewer();
 let lastExport = null;
 
 boot();
@@ -82,6 +83,12 @@ exportButton.addEventListener("click", () => {
 pdfButton.addEventListener("click", () => {
   if (lastExport) {
     window.print();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !memoChartViewer.root.hidden) {
+    closeMemoChartViewer();
   }
 });
 
@@ -218,7 +225,7 @@ function handleVisionStreamEvent(state, event) {
       "Market Memo": state.memo,
     };
     if (state.frame) {
-      updateMemoBody(state.frame.body, state.memo, false);
+      updateMemoBody(state.frame.body, state.memo, false, memoCharts(data));
       state.frame.status.textContent = "Complete";
       state.frame.status.classList.add("complete");
     }
@@ -259,7 +266,7 @@ function renderToolResult(data) {
 
 function renderVision(data) {
   const frame = renderVisionFrame(data);
-  updateMemoBody(frame.body, data["Market Memo"] || "", false);
+  updateMemoBody(frame.body, data["Market Memo"] || "", false, memoCharts(data));
 }
 
 function renderVisionFrame(data, options = {}) {
@@ -317,10 +324,15 @@ function memoChip(value) {
   return chip;
 }
 
-function updateMemoBody(body, markdown, streaming) {
+function memoCharts(data) {
+  const charts = data["Memo Charts"] || data.charts || data.export?.memo_charts || [];
+  return Array.isArray(charts) ? charts : [];
+}
+
+function updateMemoBody(body, markdown, streaming, charts = []) {
   body.innerHTML = "";
   if (markdown.trim()) {
-    renderMarkdown(markdown, body);
+    renderMarkdown(markdown, body, charts);
   } else {
     const standby = document.createElement("p");
     standby.className = "memo-standby";
@@ -429,8 +441,185 @@ function reportRow(label, value) {
   return row;
 }
 
-function renderMarkdown(markdown, container) {
-  markdownBlocks(markdown).forEach((node) => container.append(node));
+function renderMarkdown(markdown, container, charts = []) {
+  const usedCharts = new Set();
+  markdownBlocks(markdown).forEach((node) => {
+    container.append(node);
+    if (node instanceof HTMLHeadingElement) {
+      charts
+        .map((chart, index) => [chart, index])
+        .filter(([chart, index]) => !usedCharts.has(index) && chartBelongsAfterHeading(chart, node))
+        .forEach(([chart, index]) => {
+          container.append(memoChartFigure(chart));
+          usedCharts.add(index);
+        });
+    }
+  });
+  charts.forEach((chart, index) => {
+    if (!usedCharts.has(index)) {
+      container.append(memoChartFigure(chart));
+    }
+  });
+}
+
+function chartBelongsAfterHeading(chart, heading) {
+  const placement = String(chart.placement || "").toLowerCase();
+  const title = String(chart.title || chart.key || "").toLowerCase();
+  const text = heading.textContent.toLowerCase();
+  return (
+    (placement && (text.includes(placement) || placement.includes(text))) ||
+    (title.includes("auction") && text.includes("price map")) ||
+    (title.includes("regression") && text.includes("performance")) ||
+    (title.includes("volatility") && (text.includes("risk") || text.includes("variant")))
+  );
+}
+
+function memoChartFigure(chart) {
+  const image = chart.image || chart;
+  const src = `data:${image.mime};base64,${image.data}`;
+  const filename = image.filename || `${chart.key || "memo-chart"}.png`;
+
+  const figure = document.createElement("figure");
+  figure.className = "memo-chart";
+
+  const head = document.createElement("div");
+  head.className = "memo-chart-head";
+  const titleGroup = document.createElement("div");
+  const label = document.createElement("span");
+  label.className = "memo-eyebrow";
+  label.textContent = chart.placement || "Evidence";
+  const title = document.createElement("h4");
+  title.textContent = chart.title || filename;
+  titleGroup.append(label, title);
+
+  const actions = document.createElement("div");
+  actions.className = "chart-actions memo-chart-actions";
+  actions.append(
+    chartActionButton("Inspect", () => openMemoChartViewer({ src, filename })),
+    chartActionLink("Open PNG", src, filename, false),
+    chartActionLink("Download", src, filename, true),
+  );
+  head.append(titleGroup, actions);
+
+  const preview = document.createElement("button");
+  preview.className = "chart-preview-button memo-chart-preview";
+  preview.type = "button";
+  preview.setAttribute("aria-label", `Inspect ${chart.title || filename}`);
+  const img = document.createElement("img");
+  img.src = src;
+  img.alt = chart.title || filename;
+  preview.append(img);
+  preview.addEventListener("click", () => openMemoChartViewer({ src, filename }));
+
+  const caption = document.createElement("figcaption");
+  caption.textContent = chart.caption || chart.description || filename;
+
+  figure.append(head, preview, caption);
+  return figure;
+}
+
+function chartActionButton(label, onClick) {
+  const button = document.createElement("button");
+  button.className = "download-link chart-action-button";
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function chartActionLink(label, href, filename, download) {
+  const link = document.createElement("a");
+  link.className = "download-link";
+  link.href = href;
+  link.textContent = label;
+  if (download) {
+    link.download = filename;
+  } else {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  }
+  return link;
+}
+
+function createMemoChartViewer() {
+  const root = document.createElement("div");
+  root.className = "chart-viewer";
+  root.hidden = true;
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "memo-chart-viewer-title");
+
+  const panel = document.createElement("div");
+  panel.className = "chart-viewer-panel";
+
+  const head = document.createElement("div");
+  head.className = "chart-viewer-head";
+
+  const titleGroup = document.createElement("div");
+  const label = document.createElement("div");
+  label.className = "panel-label";
+  label.textContent = "Memo Chart";
+  const title = document.createElement("h2");
+  title.id = "memo-chart-viewer-title";
+  title.textContent = "Memo Chart";
+  titleGroup.append(label, title);
+
+  const actions = document.createElement("div");
+  actions.className = "chart-viewer-actions";
+  const openLink = document.createElement("a");
+  openLink.className = "download-link";
+  openLink.textContent = "Open PNG";
+  openLink.target = "_blank";
+  openLink.rel = "noopener noreferrer";
+  const downloadLink = document.createElement("a");
+  downloadLink.className = "download-link";
+  downloadLink.textContent = "Download";
+  const closeButton = document.createElement("button");
+  closeButton.className = "download-link chart-viewer-close";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.addEventListener("click", closeMemoChartViewer);
+  actions.append(openLink, downloadLink, closeButton);
+
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "chart-viewer-image-wrap";
+  const image = document.createElement("img");
+  image.className = "chart-viewer-image";
+  image.alt = "Expanded memo chart";
+  imageWrap.append(image);
+
+  head.append(titleGroup, actions);
+  panel.append(head, imageWrap);
+  root.append(panel);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) {
+      closeMemoChartViewer();
+    }
+  });
+  document.body.append(root);
+  return { root, title, image, openLink, downloadLink, closeButton, previousFocus: null };
+}
+
+function openMemoChartViewer({ src, filename }) {
+  memoChartViewer.previousFocus = document.activeElement;
+  memoChartViewer.title.textContent = filename;
+  memoChartViewer.image.src = src;
+  memoChartViewer.image.alt = filename;
+  memoChartViewer.openLink.href = src;
+  memoChartViewer.downloadLink.href = src;
+  memoChartViewer.downloadLink.download = filename;
+  memoChartViewer.root.hidden = false;
+  document.body.classList.add("chart-viewer-open");
+  memoChartViewer.closeButton.focus();
+}
+
+function closeMemoChartViewer() {
+  memoChartViewer.root.hidden = true;
+  document.body.classList.remove("chart-viewer-open");
+  if (memoChartViewer.previousFocus?.focus) {
+    memoChartViewer.previousFocus.focus();
+  }
+  memoChartViewer.previousFocus = null;
 }
 
 function markdownBlocks(markdown) {
@@ -571,6 +760,7 @@ function formatValue(value) {
 }
 
 function clearOutput() {
+  closeMemoChartViewer();
   resultEl.innerHTML = "";
   summaryEl.innerHTML = "";
   summaryEl.hidden = true;
