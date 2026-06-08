@@ -318,6 +318,14 @@ def test_vision_tool_returns_market_memo() -> None:
     assert payload["Ticker"] == "AAPL"
     assert "AAPL Vision" in payload["Market Memo"]
     assert payload["Report"]["Ticker"] == "AAPL"
+    assert [chart["key"] for chart in payload["Memo Charts"]] == [
+        "auction",
+        "regression",
+        "volatility",
+    ]
+    assert payload["Memo Charts"][0]["placement"] == "Price Map"
+    assert payload["Memo Charts"][0]["image"]["mime"] == "image/png"
+    assert payload["Chart Errors"] == []
     assert payload["Text Model"] == "claude-test"
     assert generator.calls[0]["max_tokens"] == 3200
     prompt = str(generator.calls[0]["prompt"])
@@ -345,6 +353,15 @@ def test_vision_stream_tool_returns_ndjson_events() -> None:
     assert events[-1]["text"] == "### AAPL Vision\n\nStreamed memo."
     assert events[-1]["export"]["mode"] == "vision"
     assert events[-1]["export"]["market_memo"] == events[-1]["text"]
+    assert [chart["key"] for chart in events[-1]["Memo Charts"]] == [
+        "auction",
+        "regression",
+        "volatility",
+    ]
+    assert events[-1]["export"]["image_files"][0]["filename"].endswith("-auction.png")
+    assert events[-1]["export"]["memo_charts"][1]["placement"] == (
+        "Equity Performance And Positioning"
+    )
     assert generator.calls[0]["max_tokens"] == 3200
 
 

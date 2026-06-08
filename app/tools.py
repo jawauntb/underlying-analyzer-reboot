@@ -38,6 +38,9 @@ from app.charts import (
     calculate_auction_levels,
     format_absolute_y_axis,
     image_from_figure,
+    render_auction_chart,
+    render_regression_chart,
+    render_volatility_chart,
     style_axis,
     style_legend,
 )
@@ -388,13 +391,116 @@ def build_market_memo(
         text_model=text_model,
         session=session,
     )
+    charts, chart_errors = build_market_memo_charts(client, ticker)
     return {
         "Ticker": report["Ticker"],
         "Market Memo": generated.text,
         "Report": report,
+        "Memo Charts": charts,
+        "Chart Errors": chart_errors,
         "Text Provider": generated.provider,
         "Text Model": generated.model,
     }
+
+
+def build_market_memo_charts(
+    client: MarketDataClient, ticker: str
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    symbol = clean_ticker(ticker)
+    history = client.get_history(symbol, period="2y")
+    charts: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    chart_specs = [
+        (
+            "auction",
+            "Auction Map",
+            "Price Map",
+            "Value area, point of control, and the current price distribution.",
+            lambda: render_auction_chart(history, period="2y"),
+            auction_chart_read,
+        ),
+        (
+            "regression",
+            "Regression Channel",
+            "Equity Performance And Positioning",
+            "Trend channel, EMA structure, and volume confirmation.",
+            lambda: render_regression_chart(history),
+            regression_chart_read,
+        ),
+        (
+            "volatility",
+            "Volatility Radar",
+            "Catalysts, Risks, And Variant Perception",
+            "Realized volatility and expected one-week / one-month price ranges.",
+            lambda: render_volatility_chart([history]),
+            volatility_chart_read,
+        ),
+    ]
+
+    for key, title, placement, description, render, caption in chart_specs:
+        try:
+            image, meta = render()
+        except (ValueError, MarketDataError) as exc:
+            errors.append({"chart": key, "error": str(exc)})
+            continue
+        charts.append(
+            memo_chart_payload(
+                key=key,
+                title=title,
+                placement=placement,
+                description=description,
+                image=image,
+                meta=meta,
+                caption=caption(meta),
+            )
+        )
+
+    return charts, errors
+
+
+def memo_chart_payload(
+    *,
+    key: str,
+    title: str,
+    placement: str,
+    description: str,
+    image: RenderedImage,
+    meta: dict[str, Any],
+    caption: str,
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "title": title,
+        "placement": placement,
+        "description": description,
+        "caption": caption,
+        "image": image.__dict__,
+        "meta": meta,
+    }
+
+
+def auction_chart_read(meta: dict[str, Any]) -> str:
+    return (
+        f"POC {meta.get('poc', 'N/A')}, VAH {meta.get('vah', 'N/A')}, "
+        f"VAL {meta.get('val', 'N/A')}; use this as the memo's near-term price map."
+    )
+
+
+def regression_chart_read(meta: dict[str, Any]) -> str:
+    return (
+        f"Slope/day {meta.get('slope_per_day', 'N/A')} with residual sigma "
+        f"{meta.get('residual_std', 'N/A')}; use this to judge trend persistence."
+    )
+
+
+def volatility_chart_read(meta: dict[str, Any]) -> str:
+    rows = meta.get("rows")
+    row = rows[0] if isinstance(rows, list) and rows else {}
+    return (
+        f"Annualized realized volatility {row.get('annual_vol', 'N/A')}; expected "
+        f"1w range +/- {row.get('one_week_range', 'N/A')}, 1m range +/- "
+        f"{row.get('one_month_range', 'N/A')}."
+    )
 
 
 def generate_stock_fax_text(
