@@ -7,6 +7,7 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - `yfinance` as the primary provider, updated to the current package line
 - Nasdaq public historical fallback for daily US equity OHLCV when yfinance fails
 - Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
+- SEC EDGAR source packs for filings, XBRL company facts, and Vision memo citations
 - JSON exports for generated ticker/watchlist data
 
 ## Data Provider Notes
@@ -23,6 +24,12 @@ Free keyed options worth considering later:
 - Twelve Data: free basic plan with 8 credits/minute and 800/day.
 - Alpha Vantage: free, but currently only 25 requests/day.
 - Marketstack: free, but 100 requests/month and one year of EOD history.
+
+Vision also uses the SEC EDGAR APIs for 10-K/10-Q/8-K metadata, filing excerpts, and XBRL
+company facts. SEC APIs are free and do not require an API key, but automated clients should
+declare a descriptive `SEC_USER_AGENT` and keep request volume modest.
+If SEC blocks the runtime, the app falls back to Yahoo-hosted SEC filing copies for 10-K/10-Q/8-K
+sections; XBRL company facts are only available from the direct SEC API path.
 
 ## Local Setup
 
@@ -44,6 +51,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_TEXT_MODEL=claude-opus-4-8
 OPENAI_API_KEY=sk-proj-...
 OPENAI_IMAGE_MODEL=gpt-image-2
+SEC_USER_AGENT="The Underlying Analyzer Reboot contact:jawauntb@users.noreply.github.com"
 ```
 
 Restart the Flask process after changing `.env`.

@@ -123,6 +123,70 @@ class FakeMarketDataClient:
         }
 
 
+class FakeSecClient:
+    def get_source_pack(self, ticker: str) -> dict[str, object]:
+        return {
+            "Status": "available",
+            "Provider": "SEC EDGAR",
+            "Ticker": ticker,
+            "CIK": "0000320193",
+            "Company Name": "Apple Inc.",
+            "Filings": {
+                "10-K": {
+                    "form": "10-K",
+                    "filing_date": "2025-10-31",
+                    "report_date": "2025-09-27",
+                    "url": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                }
+            },
+            "Filing Sections": {
+                "Business": {
+                    "Item": "Item 1",
+                    "Heading": "Business",
+                    "Snippet": "Apple sells products and services through global channels.",
+                    "Form": "10-K",
+                    "Filing Date": "2025-10-31",
+                    "Source URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                },
+                "Risk Factors": {
+                    "Item": "Item 1A",
+                    "Heading": "Risk Factors",
+                    "Snippet": "The company faces supply chain and market demand risks.",
+                    "Form": "10-K",
+                    "Filing Date": "2025-10-31",
+                    "Source URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                },
+                "MD&A": {
+                    "Item": "Item 7",
+                    "Heading": "Management's Discussion And Analysis",
+                    "Snippet": "Management discusses revenue, margins, and capital returns.",
+                    "Form": "10-K",
+                    "Filing Date": "2025-10-31",
+                    "Source URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                },
+            },
+            "Company Facts": {
+                "Revenue": {
+                    "Value": 391_035_000_000,
+                    "Unit": "USD",
+                    "Form": "10-K",
+                    "Filed": "2025-10-31",
+                    "Concept": "RevenueFromContractWithCustomerExcludingAssessedTax",
+                }
+            },
+            "Citations": [
+                {
+                    "Label": "SEC 10-K Item 1 Business",
+                    "Type": "filing-section",
+                    "Form": "10-K",
+                    "Filing Date": "2025-10-31",
+                    "URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                }
+            ],
+            "Errors": [],
+        }
+
+
 class FakeWatchlistClient:
     def get_watchlist(self, url: str) -> WatchlistResult:
         return WatchlistResult(
@@ -327,6 +391,7 @@ def test_analysis_post_endpoint_returns_batch_summaries() -> None:
 def test_stock_fax_tool_returns_migrated_report() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["SEC_CLIENT"] = FakeSecClient()
     app.config["TEXT_GENERATOR"] = FakeTextGenerator("Stock Fax narrative.")
     client = app.test_client()
 
@@ -338,6 +403,8 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
     assert payload["Business Context"]["Business Summary"].startswith("AAPL Inc provides")
     assert payload["Financial Quality"]["Revenue Growth"] == 0.18
     assert payload["Management Snapshot"]["Executive Officers"][0]["Name"] == "Jane Analyst"
+    assert payload["SEC Source Pack"]["CIK"] == "0000320193"
+    assert payload["Data Coverage"]["SEC Filings / MD&A"] == "available"
     assert payload["Volatility Metrics"]
     assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
     assert payload["Anthropic Report"] == "Stock Fax narrative."
@@ -348,6 +415,7 @@ def test_vision_tool_returns_market_memo() -> None:
     app = create_app()
     generator = FakeTextGenerator("### AAPL Vision\n\nAnthropic memo.")
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["SEC_CLIENT"] = FakeSecClient()
     app.config["TEXT_GENERATOR"] = generator
     client = app.test_client()
 
@@ -373,13 +441,15 @@ def test_vision_tool_returns_market_memo() -> None:
     assert "Management And Execution" in prompt
     assert "Research Gaps / Next Diligence" in prompt
     assert "Jane Analyst" in prompt
-    assert "SEC 10-K/10-Q Business" in prompt
+    assert "SEC 10-K Item 1 Business" in prompt
+    assert "RevenueFromContractWithCustomerExcludingAssessedTax" in prompt
 
 
 def test_vision_stream_tool_returns_ndjson_events() -> None:
     app = create_app()
     generator = FakeStreamingTextGenerator()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["SEC_CLIENT"] = FakeSecClient()
     app.config["TEXT_GENERATOR"] = generator
     client = app.test_client()
 
@@ -402,6 +472,7 @@ def test_vision_stream_tool_returns_ndjson_events() -> None:
     assert events[-1]["export"]["memo_charts"][1]["placement"] == (
         "Equity Performance And Positioning"
     )
+    assert events[-1]["export"]["report"]["SEC Source Pack"]["CIK"] == "0000320193"
     assert generator.calls[0]["max_tokens"] == 3200
 
 
@@ -410,6 +481,7 @@ def test_text_tool_reports_missing_anthropic_key(monkeypatch: MonkeyPatch) -> No
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["SEC_CLIENT"] = FakeSecClient()
     app.config["ANTHROPIC_API_KEY"] = ""
     client = app.test_client()
 
@@ -418,6 +490,19 @@ def test_text_tool_reports_missing_anthropic_key(monkeypatch: MonkeyPatch) -> No
     payload = response.get_json()
     assert response.status_code == 400
     assert "ANTHROPIC_API_KEY" in payload["error"]
+
+
+def test_sec_endpoint_returns_source_pack() -> None:
+    app = create_app()
+    app.config["SEC_CLIENT"] = FakeSecClient()
+    client = app.test_client()
+
+    response = client.get("/api/sec/AAPL")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["Provider"] == "SEC EDGAR"
+    assert payload["Filing Sections"]["MD&A"]["Item"] == "Item 7"
 
 
 def test_pixel_tool_reports_missing_openai_key(monkeypatch: MonkeyPatch) -> None:
