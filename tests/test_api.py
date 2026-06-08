@@ -50,6 +50,28 @@ def test_health_endpoint() -> None:
     assert response.get_json()["ok"] is True
 
 
+def test_index_includes_underlying_tool_dock() -> None:
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline"):
+        assert route in response.data
+
+
+def test_legacy_tool_routes_render_status_page() -> None:
+    app = create_app()
+    client = app.test_client()
+
+    for route in ("/vision", "/pixel", "/fax", "/moneyline"):
+        response = client.get(route)
+
+        assert response.status_code == 200
+        assert b"Legacy Tool" in response.data
+
+
 def test_chart_endpoint_returns_image_payload() -> None:
     app = create_app()
     app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()

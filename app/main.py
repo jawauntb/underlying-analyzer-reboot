@@ -47,6 +47,13 @@ def create_app() -> Flask:
     def index() -> Response:
         return send_from_directory(STATIC_DIR, "index.html")
 
+    @app.get("/vision")
+    @app.get("/pixel")
+    @app.get("/fax")
+    @app.get("/moneyline")
+    def legacy_tool() -> Response:
+        return send_from_directory(STATIC_DIR, "legacy-tool.html")
+
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True, "service": "underlying-analyzer-reboot"})

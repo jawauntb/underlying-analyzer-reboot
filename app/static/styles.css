@@ -99,6 +99,47 @@ select {
   box-shadow: 0 10px 28px var(--shadow);
 }
 
+.tool-dock {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0 16px;
+}
+
+.tool-link {
+  min-width: 112px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-soft);
+  background: rgba(8, 21, 35, 0.9);
+  color: var(--text);
+  padding: 8px 10px;
+  text-decoration: none;
+  font-weight: 900;
+  transition: transform 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.tool-link:hover,
+.tool-link.active {
+  transform: translateY(-1px);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.tool-link img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.tool-link span {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
 .dot {
   width: 10px;
   height: 10px;
@@ -415,6 +456,59 @@ select:focus {
   letter-spacing: 0;
 }
 
+.legacy-shell {
+  min-height: 100vh;
+}
+
+.legacy-dock {
+  padding-bottom: 0;
+}
+
+.legacy-panel {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 20px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 20px;
+}
+
+.legacy-panel img {
+  width: 78px;
+  height: 78px;
+  object-fit: contain;
+  border: 2px solid var(--line);
+  background: #081523;
+  padding: 8px;
+}
+
+.legacy-panel h2 {
+  margin: 0 0 12px;
+  color: var(--amber);
+  font-family: "Press Start 2P", monospace;
+  font-size: clamp(16px, 3vw, 24px);
+  letter-spacing: 0;
+}
+
+.legacy-panel p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.legacy-back {
+  display: inline-block;
+  margin-top: 18px;
+  color: var(--ink);
+  background: var(--green);
+  padding: 10px 14px;
+  text-decoration: none;
+  font-weight: 900;
+}
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -446,7 +540,15 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .tool-link {
+    min-width: calc(50% - 5px);
+  }
+
   .output-head {
     display: grid;
+  }
+
+  .legacy-panel {
+    grid-template-columns: 1fr;
   }
 }

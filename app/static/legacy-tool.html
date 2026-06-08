@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Underlying Tools</title>
+    <meta name="theme-color" content="#07111f" />
+    <meta property="og:image" content="/static/assets/bullish.png" />
+    <link rel="icon" href="/static/assets/Terminal.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell legacy-shell">
+      <header class="masthead">
+        <a class="icon-link" href="/" aria-label="Terminal home">
+          <img src="/static/assets/Terminal.png" alt="" />
+        </a>
+        <div class="brand">
+          <h1 id="legacy-title">Tool</h1>
+          <a href="https://theunderlying.substack.com/">by The Underlying</a>
+        </div>
+        <nav class="tool-dock legacy-dock" aria-label="The Underlying tools">
+          <a class="tool-link" href="/" aria-label="Terminal">
+            <img src="/static/assets/Terminal.png" alt="" />
+            <span>Terminal</span>
+          </a>
+          <a class="tool-link" data-tool-link="vision" href="/vision" aria-label="Vision">
+            <img src="/static/assets/vision.png" alt="" />
+            <span>Vision</span>
+          </a>
+          <a class="tool-link" data-tool-link="pixel" href="/pixel" aria-label="Pixel">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Pixel</span>
+          </a>
+          <a class="tool-link" data-tool-link="fax" href="/fax" aria-label="Stock Fax">
+            <img src="/static/assets/fax.png" alt="" />
+            <span>Stock Fax</span>
+          </a>
+          <a class="tool-link" data-tool-link="moneyline" href="/moneyline" aria-label="Moneyline">
+            <img src="/static/assets/moneyline.png" alt="" />
+            <span>Moneyline</span>
+          </a>
+        </nav>
+      </header>
+
+      <section class="panel legacy-panel">
+        <img id="legacy-icon" src="/static/assets/vision.png" alt="" />
+        <div>
+          <div class="panel-label">Legacy Tool</div>
+          <h2 id="legacy-heading">Tool</h2>
+          <p id="legacy-copy"></p>
+          <a class="legacy-back" href="/">Back to Terminal</a>
+        </div>
+      </section>
+    </main>
+    <script>
+      const tools = {
+        vision: {
+          title: "Vision",
+          icon: "/static/assets/vision.png",
+          copy:
+            "Vision was part of the original Next.js app and used the old micro-memo backend. Its route is back in the map; the engine still needs to be ported into this Flask/Modal reboot.",
+        },
+        pixel: {
+          title: "Pixel",
+          icon: "/static/assets/toro.png",
+          copy:
+            "Pixel was the original 8-bit image generator. It depended on the old image endpoint and still needs its generator moved into the reboot.",
+        },
+        fax: {
+          title: "Stock Fax",
+          icon: "/static/assets/fax.png",
+          copy:
+            "Stock Fax was a deeper stock-analysis page from the original app. Brief mode covers part of that surface today; the full Fax page still needs a port.",
+        },
+        moneyline: {
+          title: "Moneyline",
+          icon: "/static/assets/moneyline.png",
+          copy:
+            "Moneyline was the original options-flow chart. Its page and plotting endpoint have not been moved into this reboot yet.",
+        },
+      };
+
+      const key = location.pathname.replace("/", "") || "vision";
+      const tool = tools[key] || tools.vision;
+      document.title = `${tool.title} by The Underlying`;
+      document.querySelector("#legacy-title").textContent = tool.title;
+      document.querySelector("#legacy-heading").textContent = tool.title;
+      document.querySelector("#legacy-icon").src = tool.icon;
+      document.querySelector("#legacy-copy").textContent = tool.copy;
+      document.querySelector(`[data-tool-link="${key}"]`)?.classList.add("active");
+    </script>
+  </body>
+</html>
