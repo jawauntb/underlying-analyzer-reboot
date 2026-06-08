@@ -45,6 +45,7 @@ class TickerSelection:
 
 
 def create_app() -> Flask:
+    load_env_file()
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
@@ -190,6 +191,22 @@ def get_market_client() -> MarketDataClient:
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
     return current_app.config["WATCHLIST_CLIENT"]
+
+
+def load_env_file(path: Path | None = None) -> None:
+    env_path = path or Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def build_chart_response(

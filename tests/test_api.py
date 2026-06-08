@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 from pytest import MonkeyPatch
 
@@ -41,6 +43,28 @@ class FakeWatchlistClient:
                 WatchlistSymbol(raw="NASDAQ:MSFT", exchange="NASDAQ", symbol="MSFT", ticker="MSFT"),
             ],
         )
+
+
+def test_load_env_file_sets_missing_key(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-test\n", encoding="utf-8")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    main_module.load_env_file(env_path)
+
+    assert main_module.os.environ["OPENAI_API_KEY"] == "sk-test"
+
+
+def test_load_env_file_does_not_override_existing_key(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-file\n", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-shell")
+
+    main_module.load_env_file(env_path)
+
+    assert main_module.os.environ["OPENAI_API_KEY"] == "sk-shell"
 
 
 def test_health_endpoint() -> None:

@@ -35,6 +35,14 @@ python -m flask --app app.main run --port 5050
 
 Open `http://127.0.0.1:5050`.
 
+For Pixel image generation, copy `.env.example` to `.env` and paste your OpenAI project key:
+
+```bash
+OPENAI_API_KEY=sk-proj-...
+```
+
+Restart the Flask process after changing `.env`.
+
 ## Watchlist Workflow
 
 Paste a public TradingView watchlist URL, set `Max results`, and generate any mode that accepts
