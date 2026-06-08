@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import pandas as pd
+from pytest import MonkeyPatch
 
+import app.main as main_module
+from app.charts import RenderedImage
 from app.main import create_app
 from app.market_data import HistoryResult
 from app.watchlists import WatchlistResult, WatchlistSymbol
@@ -69,7 +72,7 @@ def test_legacy_tool_routes_render_status_page() -> None:
         response = client.get(route)
 
         assert response.status_code == 200
-        assert b"Legacy Tool" in response.data
+        assert b"/static/tools.js" in response.data
 
 
 def test_chart_endpoint_returns_image_payload() -> None:
@@ -158,3 +161,71 @@ def test_analysis_post_endpoint_returns_batch_summaries() -> None:
     assert {row["ticker"] for row in payload["scanner"]} == {"AAPL", "MSFT"}
     assert payload["export"]["mode"] == "analysis"
     assert payload["export"]["scanner"] == payload["scanner"]
+
+
+def test_stock_fax_tool_returns_migrated_report() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/tools/fax", json={"ticker": "AAPL"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["Ticker"] == "AAPL"
+    assert payload["Volatility Metrics"]
+    assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
+
+
+def test_vision_tool_returns_market_memo() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/tools/vision", json={"ticker": "AAPL"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["Ticker"] == "AAPL"
+    assert "AAPL Vision" in payload["Market Memo"]
+    assert payload["Report"]["Ticker"] == "AAPL"
+
+
+def test_pixel_tool_reports_missing_openai_key() -> None:
+    app = create_app()
+    app.config["OPENAI_API_KEY"] = ""
+    client = app.test_client()
+
+    response = client.post("/api/tools/pixel", json={"prompt": "market mascot"})
+
+    payload = response.get_json()
+    assert response.status_code == 400
+    assert "OPENAI_API_KEY" in payload["error"]
+
+
+def test_moneyline_tool_returns_image_payload(monkeypatch: MonkeyPatch) -> None:
+    def fake_moneyline(
+        ticker: str, expiry: str | None = None
+    ) -> tuple[RenderedImage, dict[str, object]]:
+        return (
+            RenderedImage("abc123", "image/png", "moneyline.png"),
+            {
+                "ticker": ticker,
+                "expiry": expiry or "2026-06-19",
+                "current_price": 100.0,
+                "rows": [],
+            },
+        )
+
+    monkeypatch.setattr(main_module, "render_moneyline_chart", fake_moneyline)
+    app = create_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/tools/moneyline", json={"ticker": "AAPL", "expiry": "2026-06-19"}
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["image"]["mime"] == "image/png"
+    assert payload["meta"]["ticker"] == "AAPL"

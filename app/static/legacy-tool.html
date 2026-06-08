@@ -49,52 +49,55 @@
         </nav>
       </header>
 
-      <section class="panel legacy-panel">
-        <img id="legacy-icon" src="/static/assets/vision.png" alt="" />
-        <div>
-          <div class="panel-label">Legacy Tool</div>
-          <h2 id="legacy-heading">Tool</h2>
-          <p id="legacy-copy"></p>
-          <a class="legacy-back" href="/">Back to Terminal</a>
-        </div>
+      <section class="tool-workspace">
+        <form id="tool-form" class="panel tool-form">
+          <img id="legacy-icon" src="/static/assets/vision.png" alt="" />
+          <div>
+            <div class="panel-label" id="tool-label">Tool</div>
+            <h2 id="legacy-heading">Tool</h2>
+            <p id="legacy-copy"></p>
+          </div>
+          <label id="ticker-field">
+            <span>Ticker</span>
+            <input id="tool-ticker" name="ticker" value="AAPL" autocomplete="off" />
+          </label>
+          <label id="expiry-field" hidden>
+            <span>Expiry</span>
+            <input id="tool-expiry" name="expiry" type="date" />
+          </label>
+          <label id="prompt-field" hidden>
+            <span>Prompt</span>
+            <textarea
+              id="tool-prompt"
+              name="prompt"
+              rows="5"
+              placeholder="A bullish market spirit guarding a tiny semiconductor city"
+            ></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="generate-button" id="tool-submit" type="submit">Generate</button>
+            <button class="export-button" id="tool-export" type="button" disabled>Export JSON</button>
+          </div>
+        </form>
+
+        <section class="panel tool-output">
+          <div class="output-head">
+            <div>
+              <div class="panel-label">Output</div>
+              <h2 id="tool-output-title">Ready</h2>
+            </div>
+            <span id="tool-source" class="source-chip">idle</span>
+          </div>
+          <div id="tool-error" class="error" hidden></div>
+          <div id="tool-summary" class="summary-grid" hidden></div>
+          <div id="tool-result" class="tool-result"></div>
+          <div id="tool-empty" class="empty-state">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Ready</span>
+          </div>
+        </section>
       </section>
     </main>
-    <script>
-      const tools = {
-        vision: {
-          title: "Vision",
-          icon: "/static/assets/vision.png",
-          copy:
-            "Vision was part of the original Next.js app and used the old micro-memo backend. Its route is back in the map; the engine still needs to be ported into this Flask/Modal reboot.",
-        },
-        pixel: {
-          title: "Pixel",
-          icon: "/static/assets/toro.png",
-          copy:
-            "Pixel was the original 8-bit image generator. It depended on the old image endpoint and still needs its generator moved into the reboot.",
-        },
-        fax: {
-          title: "Stock Fax",
-          icon: "/static/assets/fax.png",
-          copy:
-            "Stock Fax was a deeper stock-analysis page from the original app. Brief mode covers part of that surface today; the full Fax page still needs a port.",
-        },
-        moneyline: {
-          title: "Moneyline",
-          icon: "/static/assets/moneyline.png",
-          copy:
-            "Moneyline was the original options-flow chart. Its page and plotting endpoint have not been moved into this reboot yet.",
-        },
-      };
-
-      const key = location.pathname.replace("/", "") || "vision";
-      const tool = tools[key] || tools.vision;
-      document.title = `${tool.title} by The Underlying`;
-      document.querySelector("#legacy-title").textContent = tool.title;
-      document.querySelector("#legacy-heading").textContent = tool.title;
-      document.querySelector("#legacy-icon").src = tool.icon;
-      document.querySelector("#legacy-copy").textContent = tool.copy;
-      document.querySelector(`[data-tool-link="${key}"]`)?.classList.add("active");
-    </script>
+    <script src="/static/tools.js" type="module"></script>
   </body>
 </html>

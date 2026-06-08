@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,12 @@ from app.charts import (
     render_volatility_chart,
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.tools import (
+    build_market_memo,
+    build_stock_fax,
+    generate_pixel_image,
+    render_moneyline_chart,
+)
 from app.watchlists import (
     TradingViewWatchlistClient,
     WatchlistError,
@@ -42,6 +49,7 @@ def create_app() -> Flask:
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
+    app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
     @app.get("/")
     def index() -> Response:
@@ -123,6 +131,53 @@ def create_app() -> Flask:
                 }
             )
         except WatchlistError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/fax")
+    def stock_fax_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(build_stock_fax(get_market_client(), str(payload.get("ticker") or "")))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/vision")
+    def vision_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(build_market_memo(get_market_client(), str(payload.get("ticker") or "")))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/moneyline")
+    def moneyline_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            image, meta = render_moneyline_chart(
+                str(payload.get("ticker") or ""), expiry=payload.get("expiry")
+            )
+            export = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "mode": "moneyline",
+                "ticker": meta["ticker"],
+                "meta": meta,
+                "image_files": [{"filename": image.filename, "mime": image.mime}],
+            }
+            return jsonify({"image": image.__dict__, "meta": meta, "export": export})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/pixel")
+    def pixel_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(
+                generate_pixel_image(
+                    str(payload.get("prompt") or ""),
+                    api_key=current_app.config.get("OPENAI_API_KEY"),
+                )
+            )
+        except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
     register_compat_routes(app)
@@ -566,8 +621,49 @@ def register_compat_routes(app: Flask) -> None:
         return compat_chart("volatility")
 
     @app.get("/stock_analysis/<ticker>")
-    def compat_analysis(ticker: str) -> Any:
-        return jsonify(summarize_stock(get_market_client(), ticker))
+    def compat_stock_fax(ticker: str) -> Any:
+        try:
+            return jsonify(build_stock_fax(get_market_client(), ticker))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
+
+    @app.get("/micro_memo/<ticker>")
+    def compat_micro_memo(ticker: str) -> Any:
+        try:
+            memo = build_market_memo(get_market_client(), ticker)
+            return jsonify({"Ticker": memo["Ticker"], "Market Memo": memo["Market Memo"]})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
+
+    @app.post("/generate-image")
+    def compat_generate_image() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = generate_pixel_image(
+                str(payload.get("prompt") or ""),
+                api_key=current_app.config.get("OPENAI_API_KEY"),
+            )
+            return jsonify(
+                {
+                    "created": result["created"],
+                    "image": result["image"],
+                    "urls": [],
+                }
+            )
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/plot-moneylines")
+    @app.post("/plot-moneywall")
+    def compat_moneyline() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            image, _meta = render_moneyline_chart(
+                str(payload.get("ticker") or ""), expiry=payload.get("expiry")
+            )
+            return jsonify({"image": image.data})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
 
 def compat_chart(chart_type: str) -> Any:
