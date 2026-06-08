@@ -372,8 +372,21 @@ def openai_error_text(response: requests.Response) -> str:
     try:
         payload = response.json()
     except ValueError:
-        return response.text or "OpenAI image request failed"
+        return friendly_openai_error(response.text or "OpenAI image request failed")
     error = payload.get("error") if isinstance(payload, dict) else None
     if isinstance(error, dict) and error.get("message"):
-        return str(error["message"])
+        return friendly_openai_error(str(error["message"]))
     return "OpenAI image request failed"
+
+
+def friendly_openai_error(message: str) -> str:
+    lowered = message.lower()
+    if "billing hard limit" in lowered or "insufficient_quota" in lowered:
+        return (
+            "OpenAI billing limit reached for this project. Add or raise the project budget, "
+            "wait a few minutes for it to propagate, or use a key from a project with available "
+            "image-generation budget."
+        )
+    if "invalid api key" in lowered or "incorrect api key" in lowered:
+        return "OpenAI API key was rejected. Check OPENAI_API_KEY in .env and the Modal secret."
+    return message
