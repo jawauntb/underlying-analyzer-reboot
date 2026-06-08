@@ -45,6 +45,7 @@ from app.charts import (
     style_legend,
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.sec import SecClient, SecDataError
 
 PIXEL_STYLE = (
     "Create a depiction in 8-bit, pixelated, retro video game style with crisp graphics, "
@@ -55,8 +56,9 @@ MARKET_TEXT_SYSTEM = (
     "You are The Underlying's institutional equity analyst. Produce sober, evidence-based "
     "research for a serious investor using only the provided structured data. Separate facts "
     "from inference, label missing information, and never invent prices, dates, news, "
-    "earnings details, management commentary, catalysts, peers, or filings. Avoid hype, "
-    "generic finance filler, and personalized investment advice."
+    "earnings details, management commentary, catalysts, peers, or filings. Use SEC source "
+    "pack citations when supplied, and avoid hype, generic finance filler, and personalized "
+    "investment advice."
 )
 
 
@@ -64,12 +66,13 @@ def build_stock_fax(
     client: MarketDataClient,
     ticker: str,
     *,
+    sec_client: SecClient | None = None,
     text_generator: TextGenerator | None = None,
     api_key: str | None = None,
     text_model: str | None = None,
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
-    report = build_stock_fax_data(client, ticker)
+    report = build_stock_fax_data(client, ticker, sec_client=sec_client)
     generated = generate_stock_fax_text(
         report,
         text_generator=text_generator,
@@ -85,11 +88,14 @@ def build_stock_fax(
     }
 
 
-def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any]:
+def build_stock_fax_data(
+    client: MarketDataClient, ticker: str, *, sec_client: SecClient | None = None
+) -> dict[str, Any]:
     symbol = clean_ticker(ticker)
     history = client.get_history(symbol, period="2y")
     summary = summarize_stock(client, symbol)
     profile = client.get_profile(symbol)
+    sec_source_pack = build_sec_source_pack(sec_client, symbol)
     data = history.data
     close = data["Adj Close"].dropna()
     returns = close.pct_change().dropna()
@@ -119,6 +125,7 @@ def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any
         "Financial Quality": financial_quality(profile),
         "Analyst And Ownership Signals": analyst_ownership_signals(profile),
         "Management Snapshot": management_snapshot(profile),
+        "SEC Source Pack": sec_source_pack,
         "Volatility Metrics": volatility_metrics(close),
         "Regression Trend": regression_trend(close),
         "EMAs Summary": ema_summary(close),
@@ -128,9 +135,23 @@ def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any
             "Value Area Low (VAL)": val,
         },
         "Signal Summary": signal_summary(close, returns, poc),
-        "Data Coverage": data_coverage(profile),
+        "Data Coverage": data_coverage(profile, sec_source_pack),
         "Export Rows": price_rows(history),
     }
+
+
+def build_sec_source_pack(sec_client: SecClient | None, ticker: str) -> dict[str, Any]:
+    if sec_client is None:
+        return {"Status": "not configured", "Provider": "SEC EDGAR", "Errors": []}
+    try:
+        return sec_client.get_source_pack(ticker)
+    except (SecDataError, requests.RequestException) as exc:
+        return {
+            "Status": "unavailable",
+            "Provider": "SEC EDGAR",
+            "Ticker": ticker,
+            "Errors": [str(exc)],
+        }
 
 
 def business_context(profile: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -249,7 +270,7 @@ def management_snapshot(profile: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def data_coverage(profile: Mapping[str, Any]) -> dict[str, str]:
+def data_coverage(profile: Mapping[str, Any], sec_source_pack: Mapping[str, Any]) -> dict[str, str]:
     checks = {
         "Business Description": ("longBusinessSummary",),
         "Sector And Industry": ("sector", "industry"),
@@ -264,6 +285,9 @@ def data_coverage(profile: Mapping[str, Any]) -> dict[str, str]:
     }
     coverage = {}
     for label, keys in checks.items():
+        if label == "SEC Filings / MD&A":
+            coverage[label] = sec_coverage(sec_source_pack)
+            continue
         if not keys:
             coverage[label] = "not supplied"
             continue
@@ -273,6 +297,17 @@ def data_coverage(profile: Mapping[str, Any]) -> dict[str, str]:
             else "not supplied"
         )
     return coverage
+
+
+def sec_coverage(sec_source_pack: Mapping[str, Any]) -> str:
+    status = sec_source_pack.get("Status")
+    sections = sec_source_pack.get("Filing Sections")
+    facts = sec_source_pack.get("Company Facts")
+    if status == "available" and (sections or facts):
+        return "available"
+    if status == "partial" or sections or facts:
+        return "partial"
+    return "not supplied"
 
 
 def compact_profile_number(profile: Mapping[str, Any], key: str) -> Any:
@@ -378,12 +413,13 @@ def build_market_memo(
     client: MarketDataClient,
     ticker: str,
     *,
+    sec_client: SecClient | None = None,
     text_generator: TextGenerator | None = None,
     api_key: str | None = None,
     text_model: str | None = None,
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
-    report = build_stock_fax_data(client, ticker)
+    report = build_stock_fax_data(client, ticker, sec_client=sec_client)
     generated = generate_market_memo_text(
         report,
         text_generator=text_generator,
@@ -594,7 +630,9 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "data; do not invent news, earnings details, guidance, management commentary, "
         "products, macro facts, peer comps, or valuation history that is not present. "
         "When a normal analyst workstream is missing, say 'not supplied' and move it to "
-        "the diligence agenda.\n\n"
+        "the diligence agenda. When SEC Source Pack data is supplied, cite it inline with "
+        "labels like (SEC 10-K Item 1, filed YYYY-MM-DD) or (SEC XBRL Revenue, filed "
+        "YYYY-MM-DD). Do not cite SEC fields that are absent.\n\n"
         "Analytical standards:\n"
         "- Anchor every claim to a supplied field or clearly label it as an inference.\n"
         "- Discuss business quality, sector/industry context, equity performance, valuation, "
@@ -607,7 +645,8 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "1. **Executive Read** - 2-3 dense paragraphs with the provisional stance, what "
         "matters most, confidence level, and the strongest counterargument.\n"
         "2. **Company, Sector, And Business Model** - use the business description, sector, "
-        "industry, geography, employee base, and what is missing from the company-level read.\n"
+        "industry, geography, employee base, and SEC Business section when supplied; say what "
+        "is missing from the company-level read.\n"
         "3. **Equity Performance And Positioning** - cover recent returns, distance from "
         "52-week high/low, trend, beta, liquidity/volume if available, and whether the stock "
         "looks crowded, extended, washed out, or balanced from the supplied data.\n"
@@ -616,19 +655,21 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "whether the valuation looks internally justified by quality signals. Do not compare "
         "to peers unless peer data is supplied.\n"
         "5. **Management And Execution** - identify supplied executives and assess execution "
-        "only through supplied fundamentals, margins, growth, leverage, and business summary. "
-        "If no management roster or MD&A is supplied, say so plainly.\n"
+        "through supplied fundamentals, margins, growth, leverage, business summary, and SEC "
+        "MD&A when supplied. If no management roster or MD&A is supplied, say so plainly.\n"
         "6. **Price Map** - a markdown table covering current price, 52-week high/low, VAH, "
         "VAL, POC, EMA21, EMA55, regression channel bounds, and any clear scenario trigger.\n"
         "7. **Catalysts, Risks, And Variant Perception** - separate data-supported items from "
-        "research gaps. Include downside risks, upside evidence, and what the market may be "
-        "under/overweighting based only on supplied fields.\n"
+        "research gaps. Use SEC Risk Factors when supplied. Include downside risks, upside "
+        "evidence, and what the market may be under/overweighting based only on supplied "
+        "fields.\n"
         "8. **Scenario Framework** - bullish, base, and bearish cases with specific levels "
         "or fundamental conditions that would confirm or invalidate each case.\n"
-        "9. **Research Gaps / Next Diligence** - list the missing SEC 10-K/10-Q Business, "
-        "Risk Factors, MD&A, financial statements, proxy/management compensation, latest "
-        "earnings transcript, guidance, and peer-comparison work that should be checked before "
-        "treating the memo as a full investment recommendation.\n\n"
+        "9. **Research Gaps / Next Diligence** - list only the missing or weak workstreams: "
+        "SEC Business, Risk Factors, MD&A, XBRL financial statements, proxy/management "
+        "compensation, latest earnings transcript, guidance, and peer-comparison work. If a "
+        "SEC item was supplied, do not describe that item as missing; instead mention any "
+        "limits in extraction depth or recency.\n\n"
         "Avoid investment advice promises. Make the memo useful to a serious analyst who wants "
         "a research starting point with a price map, not a short summary.\n\n"
         f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"

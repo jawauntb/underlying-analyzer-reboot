@@ -34,6 +34,7 @@ from app.charts import (
     render_volatility_chart,
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.sec import SecClient, SecDataError
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
@@ -71,6 +72,7 @@ def create_app() -> Flask:
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
+    app.config["SEC_CLIENT"] = SecClient(user_agent=os.getenv("SEC_USER_AGENT"))
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
     app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
     app.config["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
@@ -129,6 +131,13 @@ def create_app() -> Flask:
                 ],
             }
         )
+
+    @app.get("/api/sec/<ticker>")
+    def sec_source_pack(ticker: str) -> Any:
+        try:
+            return jsonify(get_sec_client().get_source_pack(ticker))
+        except (ValueError, SecDataError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.post("/api/charts/<chart_type>")
     def chart(chart_type: str) -> Any:
@@ -203,6 +212,7 @@ def create_app() -> Flask:
                 build_stock_fax(
                     get_market_client(),
                     str(payload.get("ticker") or ""),
+                    sec_client=get_sec_client(),
                     **text_generation_options(),
                 )
             )
@@ -217,6 +227,7 @@ def create_app() -> Flask:
                 build_market_memo(
                     get_market_client(),
                     str(payload.get("ticker") or ""),
+                    sec_client=get_sec_client(),
                     **text_generation_options(),
                 )
             )
@@ -229,7 +240,7 @@ def create_app() -> Flask:
             payload = request.get_json(silent=True) or {}
             ticker = str(payload.get("ticker") or "")
             client = get_market_client()
-            report = build_stock_fax_data(client, ticker)
+            report = build_stock_fax_data(client, ticker, sec_client=get_sec_client())
             charts, chart_errors = build_market_memo_charts(client, ticker)
             options = text_generation_options()
         except (ValueError, MarketDataError) as exc:
@@ -282,6 +293,10 @@ def get_market_client() -> MarketDataClient:
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
     return current_app.config["WATCHLIST_CLIENT"]
+
+
+def get_sec_client() -> SecClient:
+    return current_app.config["SEC_CLIENT"]
 
 
 def public_env(*names: str) -> str | None:
@@ -969,7 +984,12 @@ def register_compat_routes(app: Flask) -> None:
     def compat_stock_fax(ticker: str) -> Any:
         try:
             return jsonify(
-                build_stock_fax(get_market_client(), ticker, **text_generation_options())
+                build_stock_fax(
+                    get_market_client(),
+                    ticker,
+                    sec_client=get_sec_client(),
+                    **text_generation_options(),
+                )
             )
         except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
@@ -977,7 +997,12 @@ def register_compat_routes(app: Flask) -> None:
     @app.get("/micro_memo/<ticker>")
     def compat_micro_memo(ticker: str) -> Any:
         try:
-            memo = build_market_memo(get_market_client(), ticker, **text_generation_options())
+            memo = build_market_memo(
+                get_market_client(),
+                ticker,
+                sec_client=get_sec_client(),
+                **text_generation_options(),
+            )
             return jsonify({"Ticker": memo["Ticker"], "Market Memo": memo["Market Memo"]})
         except (ValueError, AnthropicError, MarketDataError) as exc:
             return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
