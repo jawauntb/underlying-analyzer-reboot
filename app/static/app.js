@@ -1,6 +1,7 @@
 const state = {
   mode: "auction",
   lastExport: null,
+  viewerPreviousFocus: null,
 };
 
 const modeTitles = {
@@ -35,6 +36,7 @@ const generateButton = document.querySelector("#generate");
 const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
+const chartViewer = createChartViewer();
 
 document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => {
@@ -52,6 +54,12 @@ exportButton.addEventListener("click", () => {
     return;
   }
   downloadJson(state.lastExport, exportFilename());
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !chartViewer.root.hidden) {
+    closeChartViewer();
+  }
 });
 
 form.addEventListener("submit", async (event) => {
@@ -164,22 +172,140 @@ function renderImages(images) {
   imagesEl.innerHTML = "";
   emptyState.hidden = images.length > 0;
   images.forEach((image, index) => {
+    const src = `data:${image.mime};base64,${image.data}`;
+    const filename = image.filename || `chart-${index + 1}.png`;
+
     const card = document.createElement("div");
     card.className = "chart-card";
 
+    const previewButton = document.createElement("button");
+    previewButton.className = "chart-preview-button";
+    previewButton.type = "button";
+    previewButton.setAttribute("aria-label", `Inspect ${filename}`);
+
     const img = document.createElement("img");
-    img.src = `data:${image.mime};base64,${image.data}`;
-    img.alt = image.filename || `Generated chart ${index + 1}`;
+    img.src = src;
+    img.alt = filename;
 
-    const link = document.createElement("a");
-    link.className = "download-link";
-    link.href = img.src;
-    link.download = image.filename || `chart-${index + 1}.png`;
-    link.textContent = "Download";
+    previewButton.append(img);
+    previewButton.addEventListener("click", () => openChartViewer({ src, filename }));
 
-    card.append(img, link);
+    const actions = document.createElement("div");
+    actions.className = "chart-actions";
+    actions.append(
+      chartActionButton("Inspect", () => openChartViewer({ src, filename })),
+      chartActionLink("Open PNG", src, filename, false),
+      chartActionLink("Download", src, filename, true),
+    );
+
+    card.append(previewButton, actions);
     imagesEl.append(card);
   });
+}
+
+function chartActionButton(label, onClick) {
+  const button = document.createElement("button");
+  button.className = "download-link chart-action-button";
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function chartActionLink(label, href, filename, download) {
+  const link = document.createElement("a");
+  link.className = "download-link";
+  link.href = href;
+  link.textContent = label;
+  if (download) {
+    link.download = filename;
+  } else {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  }
+  return link;
+}
+
+function createChartViewer() {
+  const root = document.createElement("div");
+  root.className = "chart-viewer";
+  root.hidden = true;
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "chart-viewer-title");
+
+  const panel = document.createElement("div");
+  panel.className = "chart-viewer-panel";
+
+  const head = document.createElement("div");
+  head.className = "chart-viewer-head";
+
+  const titleGroup = document.createElement("div");
+  const label = document.createElement("div");
+  label.className = "panel-label";
+  label.textContent = "Chart";
+  const title = document.createElement("h2");
+  title.id = "chart-viewer-title";
+  title.textContent = "Chart";
+  titleGroup.append(label, title);
+
+  const actions = document.createElement("div");
+  actions.className = "chart-viewer-actions";
+  const openLink = document.createElement("a");
+  openLink.className = "download-link";
+  openLink.textContent = "Open PNG";
+  openLink.target = "_blank";
+  openLink.rel = "noopener noreferrer";
+  const downloadLink = document.createElement("a");
+  downloadLink.className = "download-link";
+  downloadLink.textContent = "Download";
+  const closeButton = document.createElement("button");
+  closeButton.className = "download-link chart-viewer-close";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.addEventListener("click", closeChartViewer);
+  actions.append(openLink, downloadLink, closeButton);
+
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "chart-viewer-image-wrap";
+  const image = document.createElement("img");
+  image.className = "chart-viewer-image";
+  image.alt = "Expanded chart";
+  imageWrap.append(image);
+
+  panel.append(head, imageWrap);
+  head.append(titleGroup, actions);
+  root.append(panel);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) {
+      closeChartViewer();
+    }
+  });
+  document.body.append(root);
+
+  return { root, title, image, openLink, downloadLink, closeButton };
+}
+
+function openChartViewer({ src, filename }) {
+  state.viewerPreviousFocus = document.activeElement;
+  chartViewer.title.textContent = filename;
+  chartViewer.image.src = src;
+  chartViewer.image.alt = filename;
+  chartViewer.openLink.href = src;
+  chartViewer.downloadLink.href = src;
+  chartViewer.downloadLink.download = filename;
+  chartViewer.root.hidden = false;
+  document.body.classList.add("chart-viewer-open");
+  chartViewer.closeButton.focus();
+}
+
+function closeChartViewer() {
+  chartViewer.root.hidden = true;
+  document.body.classList.remove("chart-viewer-open");
+  if (state.viewerPreviousFocus?.focus) {
+    state.viewerPreviousFocus.focus();
+  }
+  state.viewerPreviousFocus = null;
 }
 
 function renderSummary(meta) {
@@ -408,6 +534,7 @@ function renderWarnings(errors) {
 }
 
 function clearOutput() {
+  closeChartViewer();
   imagesEl.innerHTML = "";
   summaryEl.innerHTML = "";
   summaryEl.hidden = true;
