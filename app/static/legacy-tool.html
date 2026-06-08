@@ -92,8 +92,15 @@
           <div id="tool-summary" class="summary-grid" hidden></div>
           <div id="tool-result" class="tool-result"></div>
           <div id="tool-empty" class="empty-state">
-            <img src="/static/assets/toro.png" alt="" />
+            <div class="empty-visual" aria-hidden="true">
+              <span class="empty-grid"></span>
+              <span class="empty-scan"></span>
+              <span class="empty-sparkline empty-sparkline-a"></span>
+              <span class="empty-sparkline empty-sparkline-b"></span>
+              <img src="/static/assets/toro.png" alt="" />
+            </div>
             <span>Ready</span>
+            <strong>Awaiting signal</strong>
           </div>
         </section>
       </section>
