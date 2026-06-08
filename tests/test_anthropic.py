@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
@@ -25,15 +26,38 @@ class FakeAnthropicResponse(requests.Response):
         }
 
 
-class FakeAnthropicSession:
+class FakeAnthropicStreamResponse(requests.Response):
     def __init__(self) -> None:
+        super().__init__()
+        self.status_code = 200
+
+    def iter_lines(
+        self,
+        chunk_size: int | None = 512,
+        decode_unicode: bool = False,
+        delimiter: str | bytes | None = None,
+    ) -> Iterator[Any]:
+        del chunk_size, decode_unicode, delimiter
+        yield "event: message_start"
+        yield 'data: {"type":"message_start","message":{"model":"claude-test"}}'
+        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"One "}}'
+        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"two."}}'
+        yield 'data: {"type":"message_stop"}'
+
+    def close(self) -> None:
+        self._content_consumed = True
+
+
+class FakeAnthropicSession:
+    def __init__(self, response: requests.Response | None = None) -> None:
         self.last_headers: dict[str, str] | None = None
         self.last_json: dict[str, Any] | None = None
+        self.response = response or FakeAnthropicResponse()
 
-    def post(self, _: str, **kwargs: Any) -> FakeAnthropicResponse:
+    def post(self, _: str, **kwargs: Any) -> requests.Response:
         self.last_headers = kwargs["headers"]
         self.last_json = kwargs["json"]
-        return FakeAnthropicResponse()
+        return self.response
 
 
 def test_anthropic_text_client_reports_missing_key() -> None:
@@ -57,3 +81,14 @@ def test_anthropic_text_client_sends_messages_request() -> None:
     assert session.last_json is not None
     assert session.last_json["model"] == DEFAULT_ANTHROPIC_MODEL
     assert session.last_json["messages"] == [{"role": "user", "content": "user prompt"}]
+
+
+def test_anthropic_text_client_streams_text_deltas() -> None:
+    session = FakeAnthropicSession(FakeAnthropicStreamResponse())
+    client = AnthropicTextClient(api_key="sk-ant-test", session=cast(requests.Session, session))
+
+    chunks = list(client.stream_text(system="system prompt", prompt="user prompt"))
+
+    assert chunks == ["One ", "two."]
+    assert session.last_json is not None
+    assert session.last_json["stream"] is True

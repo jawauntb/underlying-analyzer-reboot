@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
@@ -35,6 +37,30 @@ class FakeTextGenerator:
             }
         )
         return GeneratedText(text=self.text, model="claude-test")
+
+
+class FakeStreamingTextGenerator(FakeTextGenerator):
+    provider = "anthropic"
+    model = "claude-stream-test"
+
+    def stream_text(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        max_tokens: int = 700,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        self.calls.append(
+            {
+                "system": system,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+        )
+        yield "### AAPL Vision\n\n"
+        yield "Streamed memo."
 
 
 class FakeMarketDataClient:
@@ -249,6 +275,24 @@ def test_vision_tool_returns_market_memo() -> None:
     assert "AAPL Vision" in payload["Market Memo"]
     assert payload["Report"]["Ticker"] == "AAPL"
     assert payload["Text Model"] == "claude-test"
+
+
+def test_vision_stream_tool_returns_ndjson_events() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["TEXT_GENERATOR"] = FakeStreamingTextGenerator()
+    client = app.test_client()
+
+    response = client.post("/api/tools/vision/stream", json={"ticker": "AAPL"})
+
+    events = [json.loads(line) for line in response.data.decode("utf-8").splitlines()]
+    assert response.status_code == 200
+    assert [event["type"] for event in events] == ["meta", "token", "token", "done"]
+    assert events[0]["Ticker"] == "AAPL"
+    assert events[0]["Text Model"] == "claude-stream-test"
+    assert events[-1]["text"] == "### AAPL Vision\n\nStreamed memo."
+    assert events[-1]["export"]["mode"] == "vision"
+    assert events[-1]["export"]["market_memo"] == events[-1]["text"]
 
 
 def test_text_tool_reports_missing_anthropic_key(monkeypatch: MonkeyPatch) -> None:

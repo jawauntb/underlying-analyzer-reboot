@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,7 +14,7 @@ import requests
 import yfinance as yf
 
 from app.analysis import summarize_stock
-from app.anthropic import AnthropicTextClient, GeneratedText, TextGenerator
+from app.anthropic import AnthropicTextClient, GeneratedText, StreamingTextGenerator, TextGenerator
 from app.charts import (
     AMBER,
     AX_BG,
@@ -272,14 +273,50 @@ def generate_market_memo_text(
     )
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
-        prompt=(
-            f"Write a market memo for {report['Ticker']} in markdown. Start with "
-            f"'### {report['Ticker']} Vision'. Keep it under 180 words. Focus on "
-            "the setup, price map, trend, and what to watch next.\n\n"
-            f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
-        ),
+        prompt=market_memo_prompt(report),
         max_tokens=550,
         temperature=0.2,
+    )
+
+
+def stream_market_memo_text(
+    report: dict[str, Any],
+    *,
+    text_generator: TextGenerator | StreamingTextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> Iterator[str]:
+    generator = text_generator or AnthropicTextClient(
+        api_key=api_key,
+        model=text_model,
+        session=session,
+    )
+    stream_text = getattr(generator, "stream_text", None)
+    if callable(stream_text):
+        yield from stream_text(
+            system=MARKET_TEXT_SYSTEM,
+            prompt=market_memo_prompt(report),
+            max_tokens=550,
+            temperature=0.2,
+        )
+        return
+
+    generated = generator.generate_text(
+        system=MARKET_TEXT_SYSTEM,
+        prompt=market_memo_prompt(report),
+        max_tokens=550,
+        temperature=0.2,
+    )
+    yield generated.text
+
+
+def market_memo_prompt(report: dict[str, Any]) -> str:
+    return (
+        f"Write a market memo for {report['Ticker']} in markdown. Start with "
+        f"'### {report['Ticker']} Vision'. Keep it under 180 words. Focus on "
+        "the setup, price map, trend, and what to watch next.\n\n"
+        f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
     )
 
 
