@@ -68,6 +68,28 @@ modal secret create underlying-analyzer-env --from-dotenv .env --force
 modal deploy modal_app.py
 ```
 
+## Supabase Research Library
+
+Saved research uses Supabase Auth plus Postgres RLS. The browser receives only the public project URL
+and anon key from `/api/config`; the service-role key stays server/local only.
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-public-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_DB_PASSWORD=your-db-password
+```
+
+Apply migrations with the Supabase CLI:
+
+```bash
+supabase link --project-ref your-project-ref --password "$SUPABASE_DB_PASSWORD"
+supabase db push --password "$SUPABASE_DB_PASSWORD"
+```
+
+For magic links, add local and deployed URLs to Supabase Auth redirect URLs, including
+`http://127.0.0.1:5058/*` for local testing and the Modal URL for production.
+
 ## Quality Checks
 
 ```bash

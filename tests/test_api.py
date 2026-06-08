@@ -168,6 +168,46 @@ def test_health_endpoint() -> None:
     assert response.get_json()["ok"] is True
 
 
+def test_config_endpoint_reports_disabled_supabase(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("NEXT_PUBLIC_SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    monkeypatch.delenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", raising=False)
+
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/api/config")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["supabase"] == {"enabled": False, "url": None, "anon_key": None}
+
+
+def test_config_endpoint_returns_only_public_supabase_values(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "public-anon")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "secret-service-role")
+
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/api/config")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["supabase"] == {
+        "enabled": True,
+        "url": "https://example.supabase.co",
+        "anon_key": "public-anon",
+    }
+    assert "secret-service-role" not in response.text
+
+
 def test_index_includes_underlying_tool_dock() -> None:
     app = create_app()
     client = app.test_client()

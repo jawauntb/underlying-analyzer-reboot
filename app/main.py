@@ -73,6 +73,10 @@ def create_app() -> Flask:
     app.config["ANTHROPIC_TEXT_MODEL"] = os.getenv(
         "ANTHROPIC_TEXT_MODEL", DEFAULT_ANTHROPIC_MODEL
     )
+    app.config["SUPABASE_URL"] = public_env("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
+    app.config["SUPABASE_ANON_KEY"] = public_env(
+        "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    )
     app.config["TEXT_GENERATOR"] = None
 
     @app.get("/")
@@ -89,6 +93,21 @@ def create_app() -> Flask:
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True, "service": "underlying-analyzer-reboot"})
+
+    @app.get("/api/config")
+    def public_config() -> Any:
+        supabase_url = current_app.config.get("SUPABASE_URL")
+        supabase_anon_key = current_app.config.get("SUPABASE_ANON_KEY")
+        supabase_enabled = bool(supabase_url and supabase_anon_key)
+        return jsonify(
+            {
+                "supabase": {
+                    "enabled": supabase_enabled,
+                    "url": supabase_url if supabase_enabled else None,
+                    "anon_key": supabase_anon_key if supabase_enabled else None,
+                }
+            }
+        )
 
     @app.get("/api/providers")
     def providers() -> Any:
@@ -259,6 +278,14 @@ def get_market_client() -> MarketDataClient:
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
     return current_app.config["WATCHLIST_CLIENT"]
+
+
+def public_env(*names: str) -> str | None:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return None
 
 
 def text_generation_options() -> dict[str, Any]:

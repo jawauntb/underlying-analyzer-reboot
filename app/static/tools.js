@@ -1,3 +1,5 @@
+import { mountResearchLibrary } from "./research.js";
+
 const toolConfig = {
   vision: {
     title: "Vision",
@@ -54,6 +56,12 @@ const emptyEl = document.querySelector("#tool-empty");
 const sourceEl = document.querySelector("#tool-source");
 const pdfButton = createPdfButton();
 const memoChartViewer = createMemoChartViewer();
+const researchLibrary = mountResearchLibrary({
+  insertAfter: document.querySelector("#tool-form .form-actions"),
+  getRecord: buildToolResearchRecord,
+  modeFilter: pathKey,
+  openRecord: openSavedToolResearch,
+});
 let lastExport = null;
 
 boot();
@@ -236,6 +244,7 @@ function handleVisionStreamEvent(state, event) {
     lastExport = event.export || data;
     exportButton.disabled = false;
     pdfButton.disabled = false;
+    researchLibrary.setCanSave(true);
     sourceEl.textContent = data["Text Model"] || data["Text Provider"] || activeTool.label;
     renderSummary(visionSummaryItems(data));
     return;
@@ -250,6 +259,7 @@ function renderCompletedResult(data) {
   lastExport = data.export || data;
   exportButton.disabled = false;
   pdfButton.disabled = false;
+  researchLibrary.setCanSave(true);
   sourceEl.textContent = data.Provider || data.provider || data.meta?.ticker || activeTool.label;
   renderToolResult(data);
 }
@@ -775,6 +785,7 @@ function clearOutput() {
   lastExport = null;
   exportButton.disabled = true;
   pdfButton.disabled = true;
+  researchLibrary.setCanSave(false);
 }
 
 function showError(message) {
@@ -805,4 +816,42 @@ function downloadJson(payload, filename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function buildToolResearchRecord() {
+  if (!lastExport) {
+    return null;
+  }
+  const ticker = toolResearchTicker(lastExport) || toolPayload().ticker || "";
+  return {
+    mode: pathKey,
+    ticker,
+    title: `${activeTool.title}${ticker ? ` - ${ticker}` : ""}`,
+    summary: activeTool.copy,
+    payload: lastExport,
+  };
+}
+
+function openSavedToolResearch(record) {
+  clearOutput();
+  lastExport = record.payload || {};
+  exportButton.disabled = false;
+  pdfButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  sourceEl.textContent = "saved";
+  renderToolResult(lastExport);
+}
+
+function toolResearchTicker(payload) {
+  return firstString(
+    payload.Ticker,
+    payload.ticker,
+    payload.Report?.Ticker,
+    payload.meta?.ticker,
+    payload.export?.ticker,
+  );
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === "string" && value.trim()) || "";
 }
