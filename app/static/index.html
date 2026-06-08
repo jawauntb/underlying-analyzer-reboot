@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terminal by The Underlying</title>
+    <meta name="theme-color" content="#07111f" />
+    <meta property="og:image" content="/static/assets/bullish.png" />
+    <link rel="icon" href="/static/assets/Terminal.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="icon-link" href="/" aria-label="Terminal home">
+          <img src="/static/assets/Terminal.png" alt="" />
+        </a>
+        <div class="brand">
+          <h1>Terminal</h1>
+          <a href="https://theunderlying.substack.com/">by The Underlying</a>
+        </div>
+        <div class="status-strip" aria-live="polite">
+          <span id="health-dot" class="dot"></span>
+          <span id="provider-label">checking provider</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel tools-panel">
+          <div class="panel-label">Modes</div>
+          <div class="mode-grid" role="tablist" aria-label="Chart mode">
+            <button class="mode-button active" data-mode="auction" type="button">Auction</button>
+            <button class="mode-button" data-mode="performance" type="button">Month Map</button>
+            <button class="mode-button" data-mode="regression" type="button">Regression</button>
+            <button class="mode-button" data-mode="portfolio" type="button">Portfolio</button>
+            <button class="mode-button" data-mode="volatility" type="button">Volatility</button>
+            <button class="mode-button" data-mode="analysis" type="button">Brief</button>
+          </div>
+        </aside>
+
+        <section class="panel form-panel">
+          <form id="chart-form">
+            <div class="form-grid">
+              <label>
+                <span>Ticker(s)</span>
+                <input id="tickers" name="tickers" value="AAPL" autocomplete="off" />
+              </label>
+              <label data-field="period">
+                <span>Period</span>
+                <select id="period" name="period">
+                  <option value="1mo">1M</option>
+                  <option value="3mo">3M</option>
+                  <option value="6mo">6M</option>
+                  <option value="1y" selected>1Y</option>
+                  <option value="2y">2Y</option>
+                  <option value="5y">5Y</option>
+                  <option value="10y">10Y</option>
+                </select>
+              </label>
+              <label data-field="month" hidden>
+                <span>Month</span>
+                <select id="month" name="month">
+                  <option value="1">January</option>
+                  <option value="2">February</option>
+                  <option value="3">March</option>
+                  <option value="4">April</option>
+                  <option value="5">May</option>
+                  <option value="6">June</option>
+                  <option value="7">July</option>
+                  <option value="8">August</option>
+                  <option value="9">September</option>
+                  <option value="10">October</option>
+                  <option value="11">November</option>
+                  <option value="12">December</option>
+                </select>
+              </label>
+              <label data-field="start-date" hidden>
+                <span>Start</span>
+                <input id="start-date" name="start_date" type="date" />
+              </label>
+              <label data-field="end-date" hidden>
+                <span>End</span>
+                <input id="end-date" name="end_date" type="date" />
+              </label>
+              <label data-field="investment" hidden>
+                <span>Per stock</span>
+                <input id="investment" name="investment_per_stock" type="number" min="1" step="1" value="100" />
+              </label>
+            </div>
+            <button class="generate-button" id="generate" type="submit">Generate</button>
+          </form>
+        </section>
+
+        <section class="panel output-panel">
+          <div class="output-head">
+            <div>
+              <div class="panel-label">Output</div>
+              <h2 id="output-title">Auction Levels</h2>
+            </div>
+            <span id="source-chip" class="source-chip">idle</span>
+          </div>
+          <div id="error" class="error" hidden></div>
+          <div id="summary" class="summary-grid" hidden></div>
+          <div id="images" class="image-stack"></div>
+          <div id="empty-state" class="empty-state">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Ready</span>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
+
