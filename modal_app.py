@@ -18,12 +18,12 @@ image = (
     .add_local_dir("app", remote_path="/root/app", copy=True)
 )
 
-app = modal.App("underlying-terminal", image=image)
+app = modal.App("jawaun-underlying-terminal", image=image)
 
 
 @app.function(cpu=1.0, memory=2048, timeout=300, scaledown_window=300)
 @modal.concurrent(max_inputs=10)
-@modal.wsgi_app(label="underlying-terminal")
+@modal.wsgi_app(label="jawaun-underlying-terminal")
 def flask_app() -> Callable:
     import sys
 

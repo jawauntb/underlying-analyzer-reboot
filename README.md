@@ -46,8 +46,8 @@ any skipped-symbol errors.
 ## Modal Deploy
 
 Modal is the simplest public host for this Flask app because it can serve the app directly as a WSGI
-web function. The endpoint label is `underlying-terminal`, so the deployed URL uses Modal's standard
-`<workspace>--underlying-terminal.modal.run` shape.
+web function. The endpoint label is `jawaun-underlying-terminal`, so the deployed URL uses Modal's
+standard `<workspace>--jawaun-underlying-terminal.modal.run` shape.
 
 ```bash
 python -m pip install -e ".[deploy]"
