@@ -1,5 +1,6 @@
 const state = {
   mode: "auction",
+  lastExport: null,
 };
 
 const modeTitles = {
@@ -11,13 +12,15 @@ const modeTitles = {
   analysis: "Stock Brief",
 };
 
+const sharedFields = ["watchlist-url", "max-results"];
+
 const fieldRules = {
-  auction: ["period"],
-  performance: ["month"],
-  regression: ["start-date", "end-date", "period"],
-  portfolio: ["start-date", "end-date", "investment"],
-  volatility: [],
-  analysis: [],
+  auction: [...sharedFields, "period"],
+  performance: [...sharedFields, "month"],
+  regression: [...sharedFields, "start-date", "end-date", "period"],
+  portfolio: [...sharedFields, "start-date", "end-date", "investment"],
+  volatility: [...sharedFields],
+  analysis: [...sharedFields],
 };
 
 const form = document.querySelector("#chart-form");
@@ -28,6 +31,7 @@ const emptyState = document.querySelector("#empty-state");
 const sourceChip = document.querySelector("#source-chip");
 const summaryEl = document.querySelector("#summary");
 const generateButton = document.querySelector("#generate");
+const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 
@@ -40,6 +44,13 @@ document.querySelectorAll(".mode-button").forEach((button) => {
     syncFields();
     clearOutput();
   });
+});
+
+exportButton.addEventListener("click", () => {
+  if (!state.lastExport) {
+    return;
+  }
+  downloadJson(state.lastExport, exportFilename());
 });
 
 form.addEventListener("submit", async (event) => {
@@ -102,6 +113,8 @@ function payloadFromForm() {
   return {
     ticker: tickers[0],
     tickers,
+    watchlist_url: data.get("watchlist_url"),
+    max_results: Number(data.get("max_results") || 10),
     period: data.get("period"),
     month: Number(data.get("month")),
     start_date: data.get("start_date"),
@@ -121,17 +134,25 @@ async function fetchChart(payload) {
     throw new Error(data.error || "Could not generate chart");
   }
   sourceChip.textContent = data.provider || "provider";
+  state.lastExport = data.export || data;
+  exportButton.disabled = false;
   renderImages(data.images || []);
   renderSummary(data.meta || {});
 }
 
 async function fetchAnalysis(payload) {
-  const response = await fetch(`/api/analysis/${payload.ticker}`);
+  const response = await fetch("/api/analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "Could not fetch brief");
   }
   sourceChip.textContent = data.provider || "provider";
+  state.lastExport = data.export || data;
+  exportButton.disabled = false;
   renderAnalysis(data);
 }
 
@@ -169,6 +190,28 @@ function renderSummary(meta) {
 function renderAnalysis(data) {
   imagesEl.innerHTML = "";
   emptyState.hidden = true;
+  const summaries = data.summaries || [data];
+  summaryEl.innerHTML = "";
+  summaryEl.hidden = false;
+  summaryEl.append(summaryItem("Results", summaries.length));
+  if (data.meta?.error_count) {
+    summaryEl.append(summaryItem("Skipped", data.meta.error_count));
+  }
+  if (data.meta?.watchlist_name) {
+    summaryEl.append(summaryItem("Source", data.meta.watchlist_name));
+  }
+
+  const stack = document.createElement("div");
+  stack.className = "brief-stack";
+  summaries.forEach((summary) => stack.append(briefCard(summary)));
+  imagesEl.append(stack);
+}
+
+function briefCard(data) {
+  const card = document.createElement("article");
+  card.className = "brief-card";
+  const title = document.createElement("h3");
+  title.textContent = data.ticker;
   const items = [
     ["Name", data.name],
     ["Price", data.price],
@@ -179,9 +222,11 @@ function renderAnalysis(data) {
     ["50D Trend", `${formatValue(data.trend_50d * 100)}%`],
     ["52W Range", `${formatValue(data.fifty_two_week_low)} - ${formatValue(data.fifty_two_week_high)}`],
   ];
-  summaryEl.innerHTML = "";
-  summaryEl.hidden = false;
-  items.forEach(([label, value]) => summaryEl.append(summaryItem(label, value)));
+  const grid = document.createElement("div");
+  grid.className = "brief-grid";
+  items.forEach(([label, value]) => grid.append(summaryItem(label, value)));
+  card.append(title, grid);
+  return card;
 }
 
 function summaryItem(label, value) {
@@ -202,6 +247,8 @@ function flattenMeta(meta) {
       Object.entries(value).forEach(([childKey, childValue]) => {
         flat[`${key}_${childKey}`] = childValue;
       });
+    } else if (Array.isArray(value)) {
+      flat[key] = `${value.length} items`;
     } else {
       flat[key] = value;
     }
@@ -215,7 +262,13 @@ function labelize(key) {
 
 function formatValue(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
+    if (Number.isInteger(value)) {
+      return String(value);
+    }
     return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2);
+  }
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
   }
   return String(value);
 }
@@ -228,6 +281,8 @@ function clearOutput() {
   errorEl.textContent = "";
   emptyState.hidden = false;
   sourceChip.textContent = "idle";
+  state.lastExport = null;
+  exportButton.disabled = true;
 }
 
 function showError(message) {
@@ -238,8 +293,25 @@ function showError(message) {
 
 function setLoading(isLoading) {
   generateButton.disabled = isLoading;
+  exportButton.disabled = isLoading || !state.lastExport;
   generateButton.textContent = isLoading ? "Generating..." : "Generate";
 }
 
-boot();
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
+function exportFilename() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${state.mode}-${stamp}.json`;
+}
+
+boot();
