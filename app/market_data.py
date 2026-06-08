@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from threading import Lock
 from typing import Any
 
 import pandas as pd
@@ -89,6 +90,9 @@ def normalize_ohlcv(data: pd.DataFrame) -> pd.DataFrame:
 class MarketDataClient:
     def __init__(self, session: requests.Session | None = None) -> None:
         self.session = session or requests.Session()
+        self._history_cache: dict[tuple[str, str, date, date, str], HistoryResult] = {}
+        self._profile_cache: dict[str, dict[str, Any]] = {}
+        self._cache_lock = Lock()
 
     def get_history(
         self,
@@ -107,6 +111,12 @@ class MarketDataClient:
             start_date = start_date or period_start
             end_date = end_date or period_end
 
+        cache_key = (symbol, period, start_date, end_date, interval)
+        with self._cache_lock:
+            cached = self._history_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         errors: list[str] = []
         try:
             result = self._history_from_yfinance(
@@ -117,6 +127,7 @@ class MarketDataClient:
                 interval=interval,
             )
             if not result.data.empty:
+                self._remember_history(cache_key, result)
                 return result
         except Exception as exc:
             errors.append(f"yfinance: {exc}")
@@ -125,6 +136,7 @@ class MarketDataClient:
             try:
                 result = self._history_from_nasdaq(symbol, start=start_date, end=end_date)
                 if not result.data.empty:
+                    self._remember_history(cache_key, result)
                     return result
             except Exception as exc:
                 errors.append(f"nasdaq: {exc}")
@@ -134,14 +146,29 @@ class MarketDataClient:
 
     def get_profile(self, ticker: str) -> dict[str, Any]:
         symbol = clean_ticker(ticker)
+        with self._cache_lock:
+            cached = self._profile_cache.get(symbol)
+        if cached is not None:
+            return cached
+
+        profile: dict[str, Any] = {}
         try:
             stock = yf.Ticker(symbol)
             info = stock.get_info()
             if isinstance(info, dict):
-                return info
+                profile = info
         except Exception:
-            return {}
-        return {}
+            profile = {}
+
+        with self._cache_lock:
+            self._profile_cache[symbol] = profile
+        return profile
+
+    def _remember_history(
+        self, cache_key: tuple[str, str, date, date, str], result: HistoryResult
+    ) -> None:
+        with self._cache_lock:
+            self._history_cache[cache_key] = result
 
     def _history_from_yfinance(
         self,

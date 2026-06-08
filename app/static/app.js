@@ -18,7 +18,7 @@ const fieldRules = {
   auction: [...sharedFields, "period"],
   performance: [...sharedFields, "month"],
   regression: [...sharedFields, "start-date", "end-date", "period"],
-  portfolio: [...sharedFields, "start-date", "end-date", "investment"],
+  portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
   volatility: [...sharedFields],
   analysis: [...sharedFields],
 };
@@ -27,6 +27,7 @@ const form = document.querySelector("#chart-form");
 const outputTitle = document.querySelector("#output-title");
 const imagesEl = document.querySelector("#images");
 const errorEl = document.querySelector("#error");
+const warningsEl = document.querySelector("#warnings");
 const emptyState = document.querySelector("#empty-state");
 const sourceChip = document.querySelector("#source-chip");
 const summaryEl = document.querySelector("#summary");
@@ -120,6 +121,7 @@ function payloadFromForm() {
     start_date: data.get("start_date"),
     end_date: data.get("end_date"),
     investment_per_stock: Number(data.get("investment_per_stock") || 100),
+    benchmark_ticker: data.get("benchmark_ticker"),
   };
 }
 
@@ -138,6 +140,7 @@ async function fetchChart(payload) {
   exportButton.disabled = false;
   renderImages(data.images || []);
   renderSummary(data.meta || {});
+  renderWarnings(data.meta?.errors || []);
 }
 
 async function fetchAnalysis(payload) {
@@ -154,6 +157,7 @@ async function fetchAnalysis(payload) {
   state.lastExport = data.export || data;
   exportButton.disabled = false;
   renderAnalysis(data);
+  renderWarnings(data.meta?.errors || []);
 }
 
 function renderImages(images) {
@@ -179,11 +183,32 @@ function renderImages(images) {
 }
 
 function renderSummary(meta) {
-  const entries = Object.entries(flattenMeta(meta)).slice(0, 8);
+  const flat = flattenMeta(meta);
+  const preferred = [
+    "result_count",
+    "error_count",
+    "watchlist_name",
+    "portfolio_final",
+    "total_return",
+    "benchmark_ticker",
+    "benchmark_return",
+    "alpha_vs_benchmark",
+    "max_drawdown",
+    "annualized_volatility",
+    "scanner_count",
+  ];
+  const entries = preferred
+    .filter((key) => Object.hasOwn(flat, key))
+    .map((key) => [key, flat[key]]);
+  Object.entries(flat).forEach(([key, value]) => {
+    if (entries.length < 8 && !preferred.includes(key)) {
+      entries.push([key, value]);
+    }
+  });
   summaryEl.innerHTML = "";
   summaryEl.hidden = entries.length === 0;
-  entries.forEach(([key, value]) => {
-    summaryEl.append(summaryItem(labelize(key), formatValue(value)));
+  entries.slice(0, 8).forEach(([key, value]) => {
+    summaryEl.append(summaryItem(labelize(key), formatMetaValue(key, value)));
   });
 }
 
@@ -200,11 +225,65 @@ function renderAnalysis(data) {
   if (data.meta?.watchlist_name) {
     summaryEl.append(summaryItem("Source", data.meta.watchlist_name));
   }
+  if (data.scanner?.length) {
+    summaryEl.append(summaryItem("Scanner Rows", data.scanner.length));
+  }
 
   const stack = document.createElement("div");
   stack.className = "brief-stack";
+  if (data.scanner?.length > 1) {
+    stack.append(scannerTable(data.scanner));
+  }
   summaries.forEach((summary) => stack.append(briefCard(summary)));
   imagesEl.append(stack);
+}
+
+function scannerTable(rows) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Watchlist Scanner";
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.className = "scanner-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Ticker</th>
+        <th>Price</th>
+        <th>Day</th>
+        <th>50D</th>
+        <th>52W High</th>
+        <th>Vol</th>
+        <th>Score</th>
+      </tr>
+    </thead>
+  `;
+  const body = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    [
+      row.rank,
+      row.ticker,
+      formatValue(row.price),
+      formatPercent(row.change_percent / 100),
+      formatPercent(row.trend_50d),
+      formatPercent(row.distance_from_52w_high),
+      formatPercent(row.annual_volatility),
+      formatValue(row.score),
+    ].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  tableWrap.append(table);
+  panel.append(title, tableWrap);
+  return panel;
 }
 
 function briefCard(data) {
@@ -273,12 +352,48 @@ function formatValue(value) {
   return String(value);
 }
 
+function formatMetaValue(key, value) {
+  if (
+    [
+      "total_return",
+      "benchmark_return",
+      "alpha_vs_benchmark",
+      "max_drawdown",
+      "annualized_volatility",
+    ].includes(key)
+  ) {
+    return formatPercent(Number(value));
+  }
+  return formatValue(value);
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return `${formatValue(number * 100)}%`;
+}
+
+function renderWarnings(errors) {
+  warningsEl.innerHTML = "";
+  warningsEl.hidden = !errors.length;
+  errors.forEach((item) => {
+    const warning = document.createElement("div");
+    warning.className = "warning-item";
+    warning.textContent = `${item.ticker || "Skipped"}: ${item.error || "No data"}`;
+    warningsEl.append(warning);
+  });
+}
+
 function clearOutput() {
   imagesEl.innerHTML = "";
   summaryEl.innerHTML = "";
   summaryEl.hidden = true;
   errorEl.hidden = true;
   errorEl.textContent = "";
+  warningsEl.innerHTML = "";
+  warningsEl.hidden = true;
   emptyState.hidden = false;
   sourceChip.textContent = "idle";
   state.lastExport = null;

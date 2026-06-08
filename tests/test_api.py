@@ -114,7 +114,12 @@ def test_portfolio_endpoint_can_use_watchlist_url() -> None:
     assert response.status_code == 200
     assert payload["meta"]["result_count"] == 2
     assert payload["meta"]["watchlist_name"] == "Test Watchlist"
+    assert payload["meta"]["benchmark_ticker"] == "SPY"
+    assert payload["meta"]["total_return"] > 0
+    assert "alpha_vs_benchmark" in payload["meta"]
+    assert payload["meta"]["equity_curve"]
     assert payload["export"]["tickers"] == ["AAPL", "MSFT"]
+    assert payload["export"]["meta"]["benchmark_equity_curve"]
 
 
 def test_analysis_post_endpoint_returns_batch_summaries() -> None:
@@ -127,4 +132,7 @@ def test_analysis_post_endpoint_returns_batch_summaries() -> None:
     payload = response.get_json()
     assert response.status_code == 200
     assert [summary["ticker"] for summary in payload["summaries"]] == ["AAPL", "MSFT"]
+    assert [row["rank"] for row in payload["scanner"]] == [1, 2]
+    assert {row["ticker"] for row in payload["scanner"]} == {"AAPL", "MSFT"}
     assert payload["export"]["mode"] == "analysis"
+    assert payload["export"]["scanner"] == payload["scanner"]

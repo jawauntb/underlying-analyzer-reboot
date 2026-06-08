@@ -266,6 +266,20 @@ select:focus {
   padding: 12px;
 }
 
+.warning-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.warning-item {
+  border: 1px solid rgba(255, 204, 77, 0.55);
+  background: rgba(255, 204, 77, 0.1);
+  color: #ffe5a3;
+  padding: 10px 12px;
+  font-weight: 800;
+}
+
 .image-stack {
   display: grid;
   gap: 18px;
@@ -329,9 +343,23 @@ select:focus {
   padding: 14px;
 }
 
+.scanner-panel {
+  border: 1px solid var(--line-soft);
+  background: rgba(8, 21, 35, 0.86);
+  padding: 14px;
+}
+
 .brief-card h3 {
   margin: 0 0 12px;
   color: var(--amber);
+  font-family: "Press Start 2P", monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.scanner-panel h3 {
+  margin: 0 0 12px;
+  color: var(--green);
   font-family: "Press Start 2P", monospace;
   font-size: 13px;
   letter-spacing: 0;
@@ -341,6 +369,35 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.scanner-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.scanner-table th,
+.scanner-table td {
+  border-bottom: 1px solid rgba(230, 196, 74, 0.22);
+  padding: 10px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.scanner-table th {
+  color: var(--cyan);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.scanner-table td {
+  color: var(--text);
+  font-weight: 800;
 }
 
 .empty-state {

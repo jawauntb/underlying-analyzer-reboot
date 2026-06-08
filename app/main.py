@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 from flask import Flask, Response, current_app, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from app.analysis import summarize_stock
+from app.analysis import build_scanner_rows, summarize_stock
 from app.charts import (
     RenderedImage,
     render_auction_chart,
@@ -17,7 +18,7 @@ from app.charts import (
     render_regression_chart,
     render_volatility_chart,
 )
-from app.market_data import MarketDataClient, MarketDataError, clean_ticker
+from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
 from app.watchlists import (
     TradingViewWatchlistClient,
     WatchlistError,
@@ -235,16 +236,22 @@ def build_chart_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
+        history_options = {
+            "start": payload.get("start_date"),
+            "end": payload.get("end_date"),
+            "period": "1y",
+        }
         histories, errors = collect_histories(
             client,
             selection.tickers,
-            start=payload.get("start_date"),
-            end=payload.get("end_date"),
-            period="1y",
+            **history_options,
         )
         require_histories(histories, errors)
+        benchmark = collect_benchmark(client, payload, errors, **history_options)
         image, portfolio_meta = render_portfolio_chart(
-            histories, investment_per_stock=float(payload.get("investment_per_stock") or 100)
+            histories,
+            investment_per_stock=float(payload.get("investment_per_stock") or 100),
+            benchmark=benchmark,
         )
         results = [
             result_payload(
@@ -298,15 +305,9 @@ def build_analysis_response(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     selection = resolve_ticker_selection(payload, watchlist_client)
-    summaries: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    for ticker in selection.tickers:
-        try:
-            summaries.append(summarize_stock(client, ticker))
-        except (ValueError, MarketDataError) as exc:
-            errors.append({"ticker": ticker, "error": str(exc)})
-
+    summaries, errors = collect_summaries(client, selection.tickers)
     require_results(summaries, errors)
+    scanner = build_scanner_rows(summaries)
     providers = sorted({str(summary["provider"]) for summary in summaries})
     provider = "+".join(providers)
     meta = batch_meta(
@@ -322,8 +323,10 @@ def build_analysis_response(
         errors,
         selection.watchlist,
     )
+    meta["scanner_count"] = len(scanner)
     response = {
         "summaries": summaries,
+        "scanner": scanner,
         "provider": provider,
         "provider_note": "Batch stock brief",
         "meta": meta,
@@ -338,6 +341,7 @@ def build_analysis_response(
         watchlist=selection.watchlist,
         image_files=[],
         summaries=summaries,
+        scanner=scanner,
     )
     return response
 
@@ -409,17 +413,61 @@ def max_results(payload: dict[str, Any]) -> int:
     return max(1, min(value, MAX_RESULTS_CAP))
 
 
+def collect_benchmark(
+    client: MarketDataClient,
+    payload: dict[str, Any],
+    errors: list[dict[str, str]],
+    **history_options: Any,
+) -> HistoryResult | None:
+    benchmark_label = str(payload.get("benchmark_ticker") or "SPY").strip().upper() or "Benchmark"
+    try:
+        benchmark_ticker = clean_ticker(benchmark_label)
+        return client.get_history(benchmark_ticker, **history_options)
+    except (ValueError, MarketDataError) as exc:
+        errors.append({"ticker": benchmark_label, "error": f"Benchmark unavailable: {exc}"})
+        return None
+
+
 def collect_histories(
     client: MarketDataClient, tickers: list[str], **history_options: Any
-) -> tuple[list[Any], list[dict[str, str]]]:
-    histories = []
-    errors = []
-    for ticker in tickers:
-        try:
-            histories.append(client.get_history(ticker, **history_options))
-        except (ValueError, MarketDataError) as exc:
-            errors.append({"ticker": ticker, "error": str(exc)})
-    return histories, errors
+) -> tuple[list[HistoryResult], list[dict[str, str]]]:
+    history_slots: list[HistoryResult | None] = [None] * len(tickers)
+    errors: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(client.get_history, ticker, **history_options): (index, ticker)
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index, ticker = futures[future]
+            try:
+                history_slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+    return [history for history in history_slots if history is not None], errors
+
+
+def collect_summaries(
+    client: MarketDataClient, tickers: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    summary_slots: list[dict[str, Any] | None] = [None] * len(tickers)
+    errors: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(summarize_stock, client, ticker): (index, ticker)
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index, ticker = futures[future]
+            try:
+                summary_slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+    return [summary for summary in summary_slots if summary is not None], errors
+
+
+def batch_worker_count(tickers: list[str]) -> int:
+    return max(1, min(len(tickers), 8))
 
 
 def result_payload(
@@ -468,6 +516,7 @@ def export_payload(
     watchlist: WatchlistResult | None,
     image_files: list[dict[str, str]],
     summaries: list[dict[str, Any]] | None = None,
+    scanner: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -479,6 +528,7 @@ def export_payload(
         "image_files": image_files,
         "meta": meta,
         "summaries": summaries or [],
+        "scanner": scanner or [],
     }
 
 

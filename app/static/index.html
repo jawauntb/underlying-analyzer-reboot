@@ -105,6 +105,10 @@
                 <span>Per stock</span>
                 <input id="investment" name="investment_per_stock" type="number" min="1" step="1" value="100" />
               </label>
+              <label data-field="benchmark" hidden>
+                <span>Benchmark</span>
+                <input id="benchmark" name="benchmark_ticker" value="SPY" autocomplete="off" />
+              </label>
             </div>
             <div class="form-actions">
               <button class="generate-button" id="generate" type="submit">Generate</button>
@@ -122,6 +126,7 @@
             <span id="source-chip" class="source-chip">idle</span>
           </div>
           <div id="error" class="error" hidden></div>
+          <div id="warnings" class="warning-list" hidden></div>
           <div id="summary" class="summary-grid" hidden></div>
           <div id="images" class="image-stack"></div>
           <div id="empty-state" class="empty-state">

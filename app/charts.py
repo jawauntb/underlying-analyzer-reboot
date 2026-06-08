@@ -241,7 +241,10 @@ def render_regression_chart(history: HistoryResult) -> tuple[RenderedImage, dict
 
 
 def render_portfolio_chart(
-    histories: list[HistoryResult], *, investment_per_stock: float
+    histories: list[HistoryResult],
+    *,
+    investment_per_stock: float,
+    benchmark: HistoryResult | None = None,
 ) -> tuple[RenderedImage, dict[str, Any]]:
     apply_terminal_style()
     fig, ax = plt.subplots(figsize=(15, 8))
@@ -255,18 +258,118 @@ def render_portfolio_chart(
         ax.plot(normalized.index, normalized, linewidth=2, label=history.ticker)
         final_values[history.ticker] = float(normalized.iloc[-1])
 
-    combined["Portfolio"] = combined.sum(axis=1)
-    ax.plot(combined.index, combined["Portfolio"], color="#ffd84d", linewidth=3, label="Portfolio")
-    ax.set_title("Portfolio cash performance")
+    combined["Portfolio"] = combined.sum(axis=1, min_count=1)
+    portfolio = combined["Portfolio"].dropna()
+    benchmark_series = normalized_benchmark_series(
+        benchmark, portfolio, investment_per_stock, histories
+    )
+    if benchmark is not None and benchmark_series is not None:
+        ax.plot(
+            benchmark_series.index,
+            benchmark_series,
+            color="#62d6ff",
+            linestyle="--",
+            linewidth=2.4,
+            label=f"{benchmark.ticker} benchmark",
+        )
+
+    ax.plot(portfolio.index, portfolio, color="#ffd84d", linewidth=3, label="Portfolio")
+    ax.set_title("Portfolio cash performance vs benchmark")
     ax.set_ylabel("Value")
     ax.grid(True)
     ax.legend(loc="upper left")
+    total_return = series_return(portfolio)
+    max_drawdown = series_max_drawdown(portfolio)
+    volatility = series_annualized_volatility(portfolio)
+    fig.text(
+        0.5,
+        0.02,
+        (
+            f"Return {total_return * 100:.1f}% | "
+            f"Drawdown {max_drawdown * 100:.1f}% | "
+            f"Vol {volatility * 100:.1f}%"
+        ),
+        ha="center",
+        color="#ffd84d",
+        fontsize=11,
+    )
     fig.autofmt_xdate()
     fig.tight_layout()
-    return image_from_figure(fig, "portfolio-performance.png"), {
+
+    meta: dict[str, Any] = {
         "final_values": final_values,
-        "portfolio_final": float(combined["Portfolio"].dropna().iloc[-1]),
+        "initial_value": float(portfolio.iloc[0]),
+        "portfolio_final": float(portfolio.iloc[-1]),
+        "total_return": total_return,
+        "max_drawdown": max_drawdown,
+        "annualized_volatility": volatility,
+        "equity_curve": series_points(portfolio),
     }
+    if benchmark is not None and benchmark_series is not None:
+        comparison = pd.concat(
+            [portfolio.rename("Portfolio"), benchmark_series.rename("Benchmark")],
+            axis=1,
+        ).dropna()
+        if not comparison.empty:
+            benchmark_return = series_return(comparison["Benchmark"])
+            portfolio_shared_return = series_return(comparison["Portfolio"])
+            meta.update(
+                {
+                    "benchmark_ticker": benchmark.ticker,
+                    "benchmark_return": benchmark_return,
+                    "alpha_vs_benchmark": portfolio_shared_return - benchmark_return,
+                    "benchmark_final": float(comparison["Benchmark"].iloc[-1]),
+                    "benchmark_equity_curve": series_points(benchmark_series),
+                }
+            )
+
+    return image_from_figure(fig, "portfolio-performance.png"), meta
+
+
+def normalized_benchmark_series(
+    benchmark: HistoryResult | None,
+    portfolio: pd.Series,
+    investment_per_stock: float,
+    histories: list[HistoryResult],
+) -> pd.Series | None:
+    if benchmark is None or portfolio.empty:
+        return None
+
+    prices = benchmark.data["Adj Close"].dropna()
+    if prices.empty:
+        return None
+
+    initial_capital = investment_per_stock * len(histories)
+    return prices / prices.iloc[0] * initial_capital
+
+
+def series_return(series: pd.Series) -> float:
+    clean = series.dropna()
+    if len(clean) < 2 or float(clean.iloc[0]) == 0:
+        return 0.0
+    return float(clean.iloc[-1] / clean.iloc[0] - 1)
+
+
+def series_max_drawdown(series: pd.Series) -> float:
+    clean = series.dropna()
+    if clean.empty:
+        return 0.0
+    drawdowns = clean / clean.cummax() - 1
+    return float(drawdowns.min())
+
+
+def series_annualized_volatility(series: pd.Series) -> float:
+    returns = series.dropna().pct_change().dropna()
+    if returns.empty:
+        return 0.0
+    return float(returns.std() * np.sqrt(252))
+
+
+def series_points(series: pd.Series) -> list[dict[str, float | str]]:
+    return [
+        {"date": timestamp.date().isoformat(), "value": float(value)}
+        for timestamp, value in series.dropna().items()
+    ]
 
 
 def render_volatility_chart(histories: list[HistoryResult]) -> tuple[RenderedImage, dict[str, Any]]:
