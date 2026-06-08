@@ -13,10 +13,24 @@ import yfinance as yf
 
 from app.analysis import summarize_stock
 from app.charts import (
+    AMBER,
+    AX_BG,
+    CHART_BG,
+    CYAN,
+    GREEN,
+    MUTED,
+    PANEL,
+    RED,
+    TEXT,
+    TEXT_STRONG,
     RenderedImage,
+    add_terminal_footer,
     apply_terminal_style,
     calculate_auction_levels,
+    format_absolute_y_axis,
     image_from_figure,
+    style_axis,
+    style_legend,
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
 
@@ -289,20 +303,44 @@ def moneyline_image(
     fig, (chart_ax, table_ax) = plt.subplots(
         1, 2, figsize=(15, 8), gridspec_kw={"width_ratios": [2.2, 1]}
     )
+    style_axis(
+        chart_ax,
+        title=f"{ticker} moneyline",
+        subtitle=f"expiry {expiry} | spot {current_price:.2f}",
+        grid_axis="y",
+    )
     strikes = [row["strike"] for row in rows]
     call_oi = [row["call_open_interest"] for row in rows]
     put_oi = [-row["put_open_interest"] for row in rows]
-    chart_ax.bar(strikes, call_oi, width=1.2, color="#83ff8f", label="Call OI")
-    chart_ax.bar(strikes, put_oi, width=1.2, color="#ff6b5f", label="Put OI")
-    chart_ax.axvline(current_price, color="#ffcc4d", linewidth=2, label=f"Spot {current_price:.2f}")
-    chart_ax.axhline(0, color="#f7f3cf", linewidth=1)
-    chart_ax.set_title(f"{ticker} moneyline - {expiry}")
+    chart_ax.bar(
+        strikes,
+        call_oi,
+        width=1.2,
+        color=GREEN,
+        alpha=0.86,
+        edgecolor=TEXT,
+        linewidth=0.25,
+        label="Call OI",
+    )
+    chart_ax.bar(
+        strikes,
+        put_oi,
+        width=1.2,
+        color=RED,
+        alpha=0.82,
+        edgecolor=TEXT,
+        linewidth=0.25,
+        label="Put OI",
+    )
+    chart_ax.axvline(current_price, color=AMBER, linewidth=2.4, label=f"Spot {current_price:.2f}")
+    chart_ax.axhline(0, color=TEXT_STRONG, linewidth=1)
     chart_ax.set_xlabel("Strike")
-    chart_ax.set_ylabel("Open interest")
-    chart_ax.legend(loc="upper left")
-    chart_ax.grid(True, axis="y")
+    chart_ax.set_ylabel("Open interest mirror")
+    format_absolute_y_axis(chart_ax)
+    style_legend(chart_ax)
 
     table_ax.axis("off")
+    table_ax.set_facecolor(AX_BG)
     table_rows = [
         [
             f"{row['strike']:.0f}",
@@ -320,7 +358,41 @@ def moneyline_image(
     )
     table.auto_set_font_size(False)
     table.set_fontsize(9)
-    fig.tight_layout()
+    table.scale(1, 1.35)
+    for (row_index, _column_index), cell in table.get_celld().items():
+        cell.set_edgecolor(CYAN if row_index == 0 else "#24444a")
+        cell.set_linewidth(0.75 if row_index == 0 else 0.35)
+        if row_index == 0:
+            cell.set_facecolor(AMBER)
+            cell.get_text().set_color(CHART_BG)
+            cell.get_text().set_fontweight("bold")
+        else:
+            cell.set_facecolor(PANEL)
+            cell.get_text().set_color(TEXT)
+    table_ax.text(
+        0,
+        0.985,
+        "STRIKE LADDER",
+        transform=table_ax.transAxes,
+        color=AMBER,
+        fontsize=12,
+        fontweight="bold",
+        ha="left",
+        va="top",
+    )
+    table_ax.text(
+        0,
+        0.93,
+        "positive calls / negative puts",
+        transform=table_ax.transAxes,
+        color=MUTED,
+        fontsize=9,
+        fontweight="bold",
+        ha="left",
+        va="top",
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+    add_terminal_footer(fig, left=f"{ticker} open interest mirror", right="moneyline")
     return image_from_figure(fig, f"{ticker.lower()}-moneyline.png")
 
 
