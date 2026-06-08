@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -12,6 +13,7 @@ import requests
 import yfinance as yf
 
 from app.analysis import summarize_stock
+from app.anthropic import AnthropicTextClient, GeneratedText, TextGenerator
 from app.charts import (
     RenderedImage,
     apply_terminal_style,
@@ -25,9 +27,39 @@ PIXEL_STYLE = (
     "esoteric market symbols, vibrant colors, and no visible text of:"
 )
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
+MARKET_TEXT_SYSTEM = (
+    "You are The Underlying's market analyst. Write concise, direct market analysis from "
+    "the provided structured data only. Do not invent prices, dates, catalysts, or news. "
+    "Avoid investment advice promises and include uncertainty when the setup is mixed."
+)
 
 
-def build_stock_fax(client: MarketDataClient, ticker: str) -> dict[str, Any]:
+def build_stock_fax(
+    client: MarketDataClient,
+    ticker: str,
+    *,
+    text_generator: TextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
+    report = build_stock_fax_data(client, ticker)
+    generated = generate_stock_fax_text(
+        report,
+        text_generator=text_generator,
+        api_key=api_key,
+        text_model=text_model,
+        session=session,
+    )
+    return {
+        **report,
+        "Anthropic Report": generated.text,
+        "Text Provider": generated.provider,
+        "Text Model": generated.model,
+    }
+
+
+def build_stock_fax_data(client: MarketDataClient, ticker: str) -> dict[str, Any]:
     symbol = clean_ticker(ticker)
     history = client.get_history(symbol, period="2y")
     summary = summarize_stock(client, symbol)
@@ -159,26 +191,114 @@ def price_rows(history: HistoryResult) -> list[dict[str, float | str]]:
     return rows
 
 
-def build_market_memo(client: MarketDataClient, ticker: str) -> dict[str, Any]:
-    report = build_stock_fax(client, ticker)
-    snapshot = report["Snapshot"]
-    signal = report["Signal Summary"]
-    trend = report["Regression Trend"]
-    auction = report["Auction Market Theory Price Levels"]
-    memo = (
-        f"### {report['Ticker']} Vision\n\n"
-        f"**Name:** {report['Name']}\n\n"
-        f"**Setup:** {signal['Setup']} with a {signal['50D Trend (%)']:.2f}% 50-day trend "
-        f"and {signal['Annual Volatility (%)']:.2f}% annualized volatility.\n\n"
-        f"**Price Map:** Latest price is {snapshot['Price']:.2f}. Auction levels put POC at "
-        f"{auction['Point of Control (POC)']:.2f}, VAH at {auction['Value Area High (VAH)']:.2f}, "
-        f"and VAL at {auction['Value Area Low (VAL)']:.2f}.\n\n"
-        f"**Trend:** Regression direction reads {trend['Trend Direction']} with slope "
-        f"{trend['Trend Slope']:.4f} per trading day.\n\n"
-        f"**Watch:** Respect the 52-week range from {snapshot['52W Low']:.2f} to "
-        f"{snapshot['52W High']:.2f}, and compare any fresh move against volume and the POC."
+def build_market_memo(
+    client: MarketDataClient,
+    ticker: str,
+    *,
+    text_generator: TextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
+    report = build_stock_fax_data(client, ticker)
+    generated = generate_market_memo_text(
+        report,
+        text_generator=text_generator,
+        api_key=api_key,
+        text_model=text_model,
+        session=session,
     )
-    return {"Ticker": report["Ticker"], "Market Memo": memo, "Report": report}
+    return {
+        "Ticker": report["Ticker"],
+        "Market Memo": generated.text,
+        "Report": report,
+        "Text Provider": generated.provider,
+        "Text Model": generated.model,
+    }
+
+
+def generate_stock_fax_text(
+    report: dict[str, Any],
+    *,
+    text_generator: TextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> GeneratedText:
+    generator = text_generator or AnthropicTextClient(
+        api_key=api_key,
+        model=text_model,
+        session=session,
+    )
+    return generator.generate_text(
+        system=MARKET_TEXT_SYSTEM,
+        prompt=(
+            "Create a compact Stock Fax narrative in markdown for this ticker. "
+            "Use exactly these sections: Setup, Key Levels, Trend/Volatility, Watch Next. "
+            "Keep it under 220 words.\n\n"
+            f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
+        ),
+        max_tokens=650,
+        temperature=0.2,
+    )
+
+
+def generate_market_memo_text(
+    report: dict[str, Any],
+    *,
+    text_generator: TextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> GeneratedText:
+    generator = text_generator or AnthropicTextClient(
+        api_key=api_key,
+        model=text_model,
+        session=session,
+    )
+    return generator.generate_text(
+        system=MARKET_TEXT_SYSTEM,
+        prompt=(
+            f"Write a market memo for {report['Ticker']} in markdown. Start with "
+            f"'### {report['Ticker']} Vision'. Keep it under 180 words. Focus on "
+            "the setup, price map, trend, and what to watch next.\n\n"
+            f"{json.dumps(text_report_payload(report), sort_keys=True, default=str)}"
+        ),
+        max_tokens=550,
+        temperature=0.2,
+    )
+
+
+def generate_analysis_brief(
+    summaries: list[dict[str, Any]],
+    scanner: list[dict[str, Any]],
+    *,
+    text_generator: TextGenerator | None = None,
+    api_key: str | None = None,
+    text_model: str | None = None,
+    session: requests.Session | None = None,
+) -> GeneratedText:
+    generator = text_generator or AnthropicTextClient(
+        api_key=api_key,
+        model=text_model,
+        session=session,
+    )
+    payload = {"summaries": summaries, "scanner": scanner}
+    return generator.generate_text(
+        system=MARKET_TEXT_SYSTEM,
+        prompt=(
+            "Write a concise stock brief for this analysis response in markdown. "
+            "If multiple tickers are present, lead with the scanner read and then "
+            "call out the top one or two names. Keep it under 180 words.\n\n"
+            f"{json.dumps(payload, sort_keys=True, default=str)}"
+        ),
+        max_tokens=550,
+        temperature=0.2,
+    )
+
+
+def text_report_payload(report: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in report.items() if key != "Export Rows"}
 
 
 def render_moneyline_chart(

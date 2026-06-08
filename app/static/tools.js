@@ -136,7 +136,7 @@ function renderToolResult(data) {
 function renderVision(data) {
   renderSummary([
     ["Ticker", data.Ticker],
-    ["Report", "Generated"],
+    ["Report", data["Text Provider"] || "Generated"],
   ]);
   const article = document.createElement("article");
   article.className = "memo-card";
@@ -149,11 +149,12 @@ function renderFax(data) {
     ["Ticker", data.Ticker],
     ["Price", data.Snapshot?.Price],
     ["Setup", data["Signal Summary"]?.Setup],
-    ["Provider", data.Provider],
+    ["Provider", data["Text Provider"] || data.Provider],
   ]);
   const stack = document.createElement("div");
   stack.className = "report-stack";
   [
+    ["Anthropic Report", data["Anthropic Report"]],
     ["Snapshot", data.Snapshot],
     ["Volatility Metrics", data["Volatility Metrics"]],
     ["Regression Trend", data["Regression Trend"]],

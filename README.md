@@ -35,9 +35,13 @@ python -m flask --app app.main run --port 5050
 
 Open `http://127.0.0.1:5050`.
 
-For Pixel image generation, copy `.env.example` to `.env` and paste your OpenAI project key:
+For text/report generation and Pixel image generation, copy `.env.example` to `.env` and paste
+your keys. Anthropic powers stock briefs, Stock Fax narratives, and Market Memo text. OpenAI is
+used only for Pixel image generation.
 
 ```bash
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_TEXT_MODEL=claude-sonnet-4-6
 OPENAI_API_KEY=sk-proj-...
 OPENAI_IMAGE_MODEL=gpt-image-2
 ```
