@@ -39,6 +39,7 @@ For Pixel image generation, copy `.env.example` to `.env` and paste your OpenAI 
 
 ```bash
 OPENAI_API_KEY=sk-proj-...
+OPENAI_IMAGE_MODEL=gpt-image-2
 ```
 
 Restart the Flask process after changing `.env`.

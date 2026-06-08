@@ -24,6 +24,7 @@ PIXEL_STYLE = (
     "Create a depiction in 8-bit, pixelated, retro video game style with crisp graphics, "
     "esoteric market symbols, vibrant colors, and no visible text of:"
 )
+DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 
 
 def build_stock_fax(client: MarketDataClient, ticker: str) -> dict[str, Any]:
@@ -327,6 +328,7 @@ def generate_pixel_image(
     prompt: str,
     *,
     api_key: str | None = None,
+    image_model: str | None = None,
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
     clean_prompt = prompt.strip()
@@ -336,13 +338,14 @@ def generate_pixel_image(
     key = api_key or os.getenv("OPENAI_API_KEY")
     if not key:
         raise MarketDataError("OPENAI_API_KEY is not configured for Pixel generation")
+    model = image_model or os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_OPENAI_IMAGE_MODEL
 
     http = session or requests.Session()
     response = http.post(
         "https://api.openai.com/v1/images/generations",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         json={
-            "model": "gpt-image-1-mini",
+            "model": model,
             "prompt": f"{PIXEL_STYLE} {clean_prompt}",
             "size": "1024x1024",
             "quality": "low",
@@ -363,6 +366,7 @@ def generate_pixel_image(
     return {
         "created": payload.get("created") or int(time.time()),
         "image": {"data": b64_json, "mime": "image/png", "filename": "pixel.png"},
+        "model": model,
         "prompt": clean_prompt,
         "styled_prompt": f"{PIXEL_STYLE} {clean_prompt}",
     }

@@ -21,6 +21,7 @@ from app.charts import (
 )
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
 from app.tools import (
+    DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
     build_stock_fax,
     generate_pixel_image,
@@ -52,6 +53,7 @@ def create_app() -> Flask:
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+    app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
 
     @app.get("/")
     def index() -> Response:
@@ -177,6 +179,7 @@ def create_app() -> Flask:
                 generate_pixel_image(
                     str(payload.get("prompt") or ""),
                     api_key=current_app.config.get("OPENAI_API_KEY"),
+                    image_model=current_app.config.get("OPENAI_IMAGE_MODEL"),
                 )
             )
         except (ValueError, MarketDataError) as exc:
@@ -660,6 +663,7 @@ def register_compat_routes(app: Flask) -> None:
             result = generate_pixel_image(
                 str(payload.get("prompt") or ""),
                 api_key=current_app.config.get("OPENAI_API_KEY"),
+                image_model=current_app.config.get("OPENAI_IMAGE_MODEL"),
             )
             return jsonify(
                 {
