@@ -6,7 +6,8 @@ const toolConfig = {
     action: "See The Vision",
     endpoint: "/api/tools/vision",
     fields: ["ticker"],
-    copy: "Generate a professional analyst memo from the rebuilt stock fax data.",
+    copy:
+      "Builds an analyst memo from fundamentals, price structure, and chart context; treat missing fields as diligence gaps.",
   },
   pixel: {
     title: "Pixel",
@@ -15,7 +16,8 @@ const toolConfig = {
     action: "Generate Image",
     endpoint: "/api/tools/pixel",
     fields: ["prompt"],
-    copy: "Create an 8-bit market image when OPENAI_API_KEY is configured.",
+    copy:
+      "Turns a prompt into an 8-bit market visual; use it for branded idea boards and thesis graphics.",
   },
   fax: {
     title: "Stock Fax",
@@ -24,7 +26,8 @@ const toolConfig = {
     action: "Get Stock Fax",
     endpoint: "/api/tools/fax",
     fields: ["ticker"],
-    copy: "Fetch volatility, trend, EMA, auction levels, and snapshot metrics.",
+    copy:
+      "Condenses price, trend, volatility, auction levels, and fundamentals into one stock fax for fast triage.",
   },
   moneyline: {
     title: "Moneyline",
@@ -33,7 +36,8 @@ const toolConfig = {
     action: "View Moneyline",
     endpoint: "/api/tools/moneyline",
     fields: ["ticker", "expiry"],
-    copy: "Render a call/put open-interest map around the current price.",
+    copy:
+      "Maps option open-interest clusters around spot; use strike walls as positioning pressure, not price targets.",
   },
 };
 

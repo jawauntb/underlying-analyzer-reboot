@@ -399,6 +399,26 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+.mode-contract,
+.output-contract {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1.5;
+}
+
+.mode-contract {
+  margin-bottom: 14px;
+  padding-left: 11px;
+  border-left: 2px solid var(--cyan);
+}
+
+.output-contract {
+  max-width: 720px;
+  margin-top: 7px;
+}
+
 .mode-grid {
   display: grid;
   gap: 9px;
