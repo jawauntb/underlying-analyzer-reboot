@@ -43,6 +43,17 @@ Regression, and Brief generate one result per resolved ticker. The `Export JSON`
 the structured result data, including resolved tickers, watchlist metadata, per-symbol metrics, and
 any skipped-symbol errors.
 
+## Modal Deploy
+
+Modal is the simplest public host for this Flask app because it can serve the app directly as a WSGI
+web function. The endpoint label is `underlying-terminal`, so the deployed URL uses Modal's standard
+`<workspace>--underlying-terminal.modal.run` shape.
+
+```bash
+python -m pip install -e ".[deploy]"
+modal deploy modal_app.py
+```
+
 ## Quality Checks
 
 ```bash

@@ -22,6 +22,9 @@ dev = [
   "ruff>=0.11,<1",
   "types-requests>=2.32,<3",
 ]
+deploy = [
+  "modal>=1.4,<2",
+]
 
 [tool.ruff]
 line-length = 100
@@ -40,4 +43,3 @@ exclude = ["\\.venv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
