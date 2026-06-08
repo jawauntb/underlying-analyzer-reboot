@@ -41,7 +41,7 @@ used only for Pixel image generation.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_TEXT_MODEL=claude-sonnet-4-6
+ANTHROPIC_TEXT_MODEL=claude-opus-4-8
 OPENAI_API_KEY=sk-proj-...
 OPENAI_IMAGE_MODEL=gpt-image-2
 ```
