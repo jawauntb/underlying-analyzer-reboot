@@ -215,7 +215,9 @@ def test_vision_tool_returns_market_memo() -> None:
     assert payload["Report"]["Ticker"] == "AAPL"
 
 
-def test_pixel_tool_reports_missing_openai_key() -> None:
+def test_pixel_tool_reports_missing_openai_key(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = create_app()
     app.config["OPENAI_API_KEY"] = ""
     client = app.test_client()

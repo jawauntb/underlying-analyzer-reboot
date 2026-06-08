@@ -59,6 +59,7 @@ standard `<workspace>--jawaun-underlying-terminal.modal.run` shape.
 
 ```bash
 python -m pip install -e ".[deploy]"
+modal secret create underlying-analyzer-env --from-dotenv .env --force
 modal deploy modal_app.py
 ```
 

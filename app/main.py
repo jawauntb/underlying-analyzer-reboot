@@ -45,7 +45,8 @@ class TickerSelection:
 
 
 def create_app() -> Flask:
-    load_env_file()
+    if os.getenv("UNDERLYING_SKIP_DOTENV") != "1":
+        load_env_file()
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
