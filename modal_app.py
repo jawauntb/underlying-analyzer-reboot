@@ -19,9 +19,10 @@ image = (
 )
 
 app = modal.App("jawaun-underlying-terminal", image=image)
+secrets = [modal.Secret.from_name("underlying-analyzer-env")]
 
 
-@app.function(cpu=1.0, memory=2048, timeout=300, scaledown_window=300)
+@app.function(cpu=1.0, memory=2048, timeout=300, scaledown_window=300, secrets=secrets)
 @modal.concurrent(max_inputs=10)
 @modal.wsgi_app(label="jawaun-underlying-terminal")
 def flask_app() -> Callable:

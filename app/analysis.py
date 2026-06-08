@@ -52,3 +52,46 @@ def summarize_stock(client: MarketDataClient, ticker: str) -> dict[str, Any]:
         "fifty_two_week_high": high_52,
         "fifty_two_week_low": low_52,
     }
+
+
+def build_scanner_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [scanner_row(summary) for summary in summaries]
+    rows.sort(key=lambda row: float(row["score"]), reverse=True)
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows
+
+
+def scanner_row(summary: dict[str, Any]) -> dict[str, Any]:
+    price = as_float(summary.get("price"))
+    high_52 = as_float(summary.get("fifty_two_week_high"))
+    low_52 = as_float(summary.get("fifty_two_week_low"))
+    change_percent = as_float(summary.get("change_percent"))
+    annual_volatility = as_float(summary.get("annual_volatility"))
+    trend_50d = as_float(summary.get("trend_50d"))
+    distance_from_52w_high = (price / high_52 - 1) if price and high_52 else 0.0
+    distance_from_52w_low = (price / low_52 - 1) if price and low_52 else 0.0
+    score = (
+        trend_50d * 100
+        + change_percent
+        + distance_from_52w_high * 25
+        - annual_volatility * 5
+    )
+    return {
+        "rank": 0,
+        "ticker": summary.get("ticker"),
+        "name": summary.get("name"),
+        "price": price,
+        "change_percent": change_percent,
+        "annual_volatility": annual_volatility,
+        "trend_50d": trend_50d,
+        "distance_from_52w_high": distance_from_52w_high,
+        "distance_from_52w_low": distance_from_52w_low,
+        "score": score,
+    }
+
+
+def as_float(value: Any) -> float:
+    if isinstance(value, int | float):
+        return float(value)
+    return 0.0

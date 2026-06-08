@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -8,7 +10,7 @@ from typing import Any
 from flask import Flask, Response, current_app, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-from app.analysis import summarize_stock
+from app.analysis import build_scanner_rows, summarize_stock
 from app.charts import (
     RenderedImage,
     render_auction_chart,
@@ -17,7 +19,14 @@ from app.charts import (
     render_regression_chart,
     render_volatility_chart,
 )
-from app.market_data import MarketDataClient, MarketDataError, clean_ticker
+from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.tools import (
+    DEFAULT_OPENAI_IMAGE_MODEL,
+    build_market_memo,
+    build_stock_fax,
+    generate_pixel_image,
+    render_moneyline_chart,
+)
 from app.watchlists import (
     TradingViewWatchlistClient,
     WatchlistError,
@@ -37,14 +46,25 @@ class TickerSelection:
 
 
 def create_app() -> Flask:
+    if os.getenv("UNDERLYING_SKIP_DOTENV") != "1":
+        load_env_file()
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
+    app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+    app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
 
     @app.get("/")
     def index() -> Response:
         return send_from_directory(STATIC_DIR, "index.html")
+
+    @app.get("/vision")
+    @app.get("/pixel")
+    @app.get("/fax")
+    @app.get("/moneyline")
+    def legacy_tool() -> Response:
+        return send_from_directory(STATIC_DIR, "legacy-tool.html")
 
     @app.get("/api/health")
     def health() -> Any:
@@ -117,6 +137,54 @@ def create_app() -> Flask:
         except WatchlistError as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.post("/api/tools/fax")
+    def stock_fax_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(build_stock_fax(get_market_client(), str(payload.get("ticker") or "")))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/vision")
+    def vision_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(build_market_memo(get_market_client(), str(payload.get("ticker") or "")))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/moneyline")
+    def moneyline_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            image, meta = render_moneyline_chart(
+                str(payload.get("ticker") or ""), expiry=payload.get("expiry")
+            )
+            export = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "mode": "moneyline",
+                "ticker": meta["ticker"],
+                "meta": meta,
+                "image_files": [{"filename": image.filename, "mime": image.mime}],
+            }
+            return jsonify({"image": image.__dict__, "meta": meta, "export": export})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/tools/pixel")
+    def pixel_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(
+                generate_pixel_image(
+                    str(payload.get("prompt") or ""),
+                    api_key=current_app.config.get("OPENAI_API_KEY"),
+                    image_model=current_app.config.get("OPENAI_IMAGE_MODEL"),
+                )
+            )
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
     register_compat_routes(app)
     return app
 
@@ -127,6 +195,22 @@ def get_market_client() -> MarketDataClient:
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
     return current_app.config["WATCHLIST_CLIENT"]
+
+
+def load_env_file(path: Path | None = None) -> None:
+    env_path = path or Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def build_chart_response(
@@ -235,16 +319,22 @@ def build_chart_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
+        history_options = {
+            "start": payload.get("start_date"),
+            "end": payload.get("end_date"),
+            "period": "1y",
+        }
         histories, errors = collect_histories(
             client,
             selection.tickers,
-            start=payload.get("start_date"),
-            end=payload.get("end_date"),
-            period="1y",
+            **history_options,
         )
         require_histories(histories, errors)
+        benchmark = collect_benchmark(client, payload, errors, **history_options)
         image, portfolio_meta = render_portfolio_chart(
-            histories, investment_per_stock=float(payload.get("investment_per_stock") or 100)
+            histories,
+            investment_per_stock=float(payload.get("investment_per_stock") or 100),
+            benchmark=benchmark,
         )
         results = [
             result_payload(
@@ -298,15 +388,9 @@ def build_analysis_response(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     selection = resolve_ticker_selection(payload, watchlist_client)
-    summaries: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    for ticker in selection.tickers:
-        try:
-            summaries.append(summarize_stock(client, ticker))
-        except (ValueError, MarketDataError) as exc:
-            errors.append({"ticker": ticker, "error": str(exc)})
-
+    summaries, errors = collect_summaries(client, selection.tickers)
     require_results(summaries, errors)
+    scanner = build_scanner_rows(summaries)
     providers = sorted({str(summary["provider"]) for summary in summaries})
     provider = "+".join(providers)
     meta = batch_meta(
@@ -322,8 +406,10 @@ def build_analysis_response(
         errors,
         selection.watchlist,
     )
+    meta["scanner_count"] = len(scanner)
     response = {
         "summaries": summaries,
+        "scanner": scanner,
         "provider": provider,
         "provider_note": "Batch stock brief",
         "meta": meta,
@@ -338,6 +424,7 @@ def build_analysis_response(
         watchlist=selection.watchlist,
         image_files=[],
         summaries=summaries,
+        scanner=scanner,
     )
     return response
 
@@ -409,17 +496,61 @@ def max_results(payload: dict[str, Any]) -> int:
     return max(1, min(value, MAX_RESULTS_CAP))
 
 
+def collect_benchmark(
+    client: MarketDataClient,
+    payload: dict[str, Any],
+    errors: list[dict[str, str]],
+    **history_options: Any,
+) -> HistoryResult | None:
+    benchmark_label = str(payload.get("benchmark_ticker") or "SPY").strip().upper() or "Benchmark"
+    try:
+        benchmark_ticker = clean_ticker(benchmark_label)
+        return client.get_history(benchmark_ticker, **history_options)
+    except (ValueError, MarketDataError) as exc:
+        errors.append({"ticker": benchmark_label, "error": f"Benchmark unavailable: {exc}"})
+        return None
+
+
 def collect_histories(
     client: MarketDataClient, tickers: list[str], **history_options: Any
-) -> tuple[list[Any], list[dict[str, str]]]:
-    histories = []
-    errors = []
-    for ticker in tickers:
-        try:
-            histories.append(client.get_history(ticker, **history_options))
-        except (ValueError, MarketDataError) as exc:
-            errors.append({"ticker": ticker, "error": str(exc)})
-    return histories, errors
+) -> tuple[list[HistoryResult], list[dict[str, str]]]:
+    history_slots: list[HistoryResult | None] = [None] * len(tickers)
+    errors: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(client.get_history, ticker, **history_options): (index, ticker)
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index, ticker = futures[future]
+            try:
+                history_slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+    return [history for history in history_slots if history is not None], errors
+
+
+def collect_summaries(
+    client: MarketDataClient, tickers: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    summary_slots: list[dict[str, Any] | None] = [None] * len(tickers)
+    errors: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(summarize_stock, client, ticker): (index, ticker)
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index, ticker = futures[future]
+            try:
+                summary_slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+    return [summary for summary in summary_slots if summary is not None], errors
+
+
+def batch_worker_count(tickers: list[str]) -> int:
+    return max(1, min(len(tickers), 8))
 
 
 def result_payload(
@@ -468,6 +599,7 @@ def export_payload(
     watchlist: WatchlistResult | None,
     image_files: list[dict[str, str]],
     summaries: list[dict[str, Any]] | None = None,
+    scanner: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -479,6 +611,7 @@ def export_payload(
         "image_files": image_files,
         "meta": meta,
         "summaries": summaries or [],
+        "scanner": scanner or [],
     }
 
 
@@ -509,8 +642,50 @@ def register_compat_routes(app: Flask) -> None:
         return compat_chart("volatility")
 
     @app.get("/stock_analysis/<ticker>")
-    def compat_analysis(ticker: str) -> Any:
-        return jsonify(summarize_stock(get_market_client(), ticker))
+    def compat_stock_fax(ticker: str) -> Any:
+        try:
+            return jsonify(build_stock_fax(get_market_client(), ticker))
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
+
+    @app.get("/micro_memo/<ticker>")
+    def compat_micro_memo(ticker: str) -> Any:
+        try:
+            memo = build_market_memo(get_market_client(), ticker)
+            return jsonify({"Ticker": memo["Ticker"], "Market Memo": memo["Market Memo"]})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"Ticker": ticker.upper(), "Error": str(exc)}), 400
+
+    @app.post("/generate-image")
+    def compat_generate_image() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = generate_pixel_image(
+                str(payload.get("prompt") or ""),
+                api_key=current_app.config.get("OPENAI_API_KEY"),
+                image_model=current_app.config.get("OPENAI_IMAGE_MODEL"),
+            )
+            return jsonify(
+                {
+                    "created": result["created"],
+                    "image": result["image"],
+                    "urls": [],
+                }
+            )
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/plot-moneylines")
+    @app.post("/plot-moneywall")
+    def compat_moneyline() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            image, _meta = render_moneyline_chart(
+                str(payload.get("ticker") or ""), expiry=payload.get("expiry")
+            )
+            return jsonify({"image": image.data})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
 
 def compat_chart(chart_type: str) -> Any:

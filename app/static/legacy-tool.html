@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Underlying Tools</title>
+    <meta name="theme-color" content="#07111f" />
+    <meta property="og:image" content="/static/assets/bullish.png" />
+    <link rel="icon" href="/static/assets/Terminal.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell legacy-shell">
+      <header class="masthead">
+        <a class="icon-link" href="/" aria-label="Terminal home">
+          <img src="/static/assets/Terminal.png" alt="" />
+        </a>
+        <div class="brand">
+          <h1 id="legacy-title">Tool</h1>
+          <a href="https://theunderlying.substack.com/">by The Underlying</a>
+        </div>
+        <nav class="tool-dock legacy-dock" aria-label="The Underlying tools">
+          <a class="tool-link" href="/" aria-label="Terminal">
+            <img src="/static/assets/Terminal.png" alt="" />
+            <span>Terminal</span>
+          </a>
+          <a class="tool-link" data-tool-link="vision" href="/vision" aria-label="Vision">
+            <img src="/static/assets/vision.png" alt="" />
+            <span>Vision</span>
+          </a>
+          <a class="tool-link" data-tool-link="pixel" href="/pixel" aria-label="Pixel">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Pixel</span>
+          </a>
+          <a class="tool-link" data-tool-link="fax" href="/fax" aria-label="Stock Fax">
+            <img src="/static/assets/fax.png" alt="" />
+            <span>Stock Fax</span>
+          </a>
+          <a class="tool-link" data-tool-link="moneyline" href="/moneyline" aria-label="Moneyline">
+            <img src="/static/assets/moneyline.png" alt="" />
+            <span>Moneyline</span>
+          </a>
+        </nav>
+      </header>
+
+      <section class="tool-workspace">
+        <form id="tool-form" class="panel tool-form">
+          <img id="legacy-icon" src="/static/assets/vision.png" alt="" />
+          <div>
+            <div class="panel-label" id="tool-label">Tool</div>
+            <h2 id="legacy-heading">Tool</h2>
+            <p id="legacy-copy"></p>
+          </div>
+          <label id="ticker-field">
+            <span>Ticker</span>
+            <input id="tool-ticker" name="ticker" value="AAPL" autocomplete="off" />
+          </label>
+          <label id="expiry-field" hidden>
+            <span>Expiry</span>
+            <input id="tool-expiry" name="expiry" type="date" />
+          </label>
+          <label id="prompt-field" hidden>
+            <span>Prompt</span>
+            <textarea
+              id="tool-prompt"
+              name="prompt"
+              rows="5"
+              placeholder="A bullish market spirit guarding a tiny semiconductor city"
+            ></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="generate-button" id="tool-submit" type="submit">Generate</button>
+            <button class="export-button" id="tool-export" type="button" disabled>Export JSON</button>
+          </div>
+        </form>
+
+        <section class="panel tool-output">
+          <div class="output-head">
+            <div>
+              <div class="panel-label">Output</div>
+              <h2 id="tool-output-title">Ready</h2>
+            </div>
+            <span id="tool-source" class="source-chip">idle</span>
+          </div>
+          <div id="tool-error" class="error" hidden></div>
+          <div id="tool-summary" class="summary-grid" hidden></div>
+          <div id="tool-result" class="tool-result"></div>
+          <div id="tool-empty" class="empty-state">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Ready</span>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/tools.js" type="module"></script>
+  </body>
+</html>
