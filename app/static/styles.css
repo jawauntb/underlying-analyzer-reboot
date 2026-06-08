@@ -134,7 +134,7 @@ textarea:focus-visible {
 .masthead {
   position: relative;
   display: grid;
-  grid-template-columns: 72px minmax(220px, 1fr) minmax(220px, auto);
+  grid-template-columns: 72px minmax(220px, 1fr) minmax(220px, auto) minmax(170px, auto);
   gap: 18px;
   align-items: center;
   min-height: 104px;
@@ -257,6 +257,153 @@ textarea:focus-visible {
     inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   font-size: 0.92rem;
   font-weight: 900;
+}
+
+.account-control {
+  position: relative;
+  z-index: 4;
+  justify-self: end;
+  min-width: 170px;
+}
+
+.account-trigger {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  border: 1px solid rgba(121, 255, 156, 0.46);
+  background:
+    linear-gradient(90deg, rgba(121, 255, 156, 0.12), transparent),
+    rgba(5, 12, 15, 0.86);
+  color: var(--text);
+  padding: 9px 11px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow:
+    0 12px 28px var(--shadow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.account-trigger:hover,
+.account-trigger[aria-expanded="true"] {
+  border-color: var(--green);
+  color: var(--green);
+  transform: translateY(-1px);
+}
+
+.account-led {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 14px var(--red);
+}
+
+.account-control[data-account-state="signed-in"] .account-led {
+  background: var(--green);
+  box-shadow: 0 0 14px var(--green);
+}
+
+.account-control[data-account-state="loading"] .account-led {
+  background: var(--amber);
+  box-shadow: 0 0 14px var(--amber);
+}
+
+.account-kicker,
+.account-trigger strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-kicker {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.account-trigger strong {
+  color: inherit;
+  font-family: var(--pixel-font);
+  font-size: 0.62rem;
+  line-height: 1.6;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.account-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 8;
+  display: grid;
+  width: min(360px, calc(100vw - 34px));
+  gap: 12px;
+  border: 1px solid rgba(87, 217, 255, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent),
+    rgba(5, 12, 16, 0.98);
+  padding: 14px;
+  box-shadow:
+    0 22px 54px var(--hard-shadow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.account-popover::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--green), var(--cyan), transparent);
+  content: "";
+}
+
+.account-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.account-auth,
+.account-session {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  gap: 9px;
+  align-items: center;
+}
+
+.account-auth input {
+  min-width: 0;
+}
+
+.account-auth .export-button,
+.account-session .download-link {
+  min-height: 44px;
+  padding: 9px 11px;
+}
+
+.account-session span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-dock {
@@ -1534,6 +1681,20 @@ body.is-loading .source-chip::after {
     min-width: 0;
   }
 
+  .account-control {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    min-width: 0;
+  }
+
+  .account-popover {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: 100%;
+    margin-top: 8px;
+  }
+
   .tool-dock {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1608,6 +1769,16 @@ body.is-loading .source-chip::after {
 
   .tool-dock {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-auth,
+  .account-session {
+    grid-template-columns: 1fr;
+  }
+
+  .account-session .download-link {
+    justify-self: stretch;
+    text-align: center;
   }
 
   .mode-grid,

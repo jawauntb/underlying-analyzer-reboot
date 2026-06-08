@@ -1,4 +1,4 @@
-import { mountResearchLibrary } from "./research.js";
+import { mountAccountControls, mountResearchLibrary } from "./research.js";
 
 const state = {
   mode: "auction",
@@ -64,6 +64,7 @@ const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const chartViewer = createChartViewer();
+mountAccountControls({ root: document.querySelector("#account-control") });
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
   getRecord: buildResearchRecord,

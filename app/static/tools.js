@@ -1,4 +1,4 @@
-import { mountResearchLibrary } from "./research.js";
+import { mountAccountControls, mountResearchLibrary } from "./research.js";
 
 const toolConfig = {
   vision: {
@@ -56,6 +56,7 @@ const emptyEl = document.querySelector("#tool-empty");
 const sourceEl = document.querySelector("#tool-source");
 const pdfButton = createPdfButton();
 const memoChartViewer = createMemoChartViewer();
+mountAccountControls({ root: document.querySelector("#account-control") });
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#tool-form .form-actions"),
   getRecord: buildToolResearchRecord,
