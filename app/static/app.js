@@ -1,4 +1,8 @@
-import { mountAccountControls, mountResearchLibrary } from "./research.js";
+import {
+  mountAccountControls,
+  mountResearchLibrary,
+  mountSavedWatchlistCockpit,
+} from "./research.js";
 
 const state = {
   mode: "auction",
@@ -12,6 +16,7 @@ const modeTitles = {
   regression: "Regression + EMAs",
   "ridge-growth": "Ridge Growth",
   "flow-compass": "Flow Compass",
+  cockpit: "Watchlist Cockpit",
   portfolio: "Portfolio",
   volatility: "Volatility",
   analysis: "Stock Brief",
@@ -28,6 +33,8 @@ const modeContracts = {
     "Runs the Ridge daily trend strategy over 6M, 1Y, and 2Y windows with Flow Compass and auction-market context.",
   "flow-compass":
     "Scores main bias from signed volume, trend, momentum, value location, and relative volatility direction.",
+  cockpit:
+    "Ranks a watchlist by scanner strength, Ridge state, Flow Compass, auction location, and risk so the first names to inspect are obvious.",
   portfolio:
     "Builds a watchlist portfolio run; compare return, drawdown, volatility, and benchmark alpha before sizing ideas.",
   volatility:
@@ -44,6 +51,7 @@ const fieldRules = {
   regression: [...sharedFields, "start-date", "end-date", "period"],
   "ridge-growth": [...sharedFields],
   "flow-compass": [...sharedFields, "period"],
+  cockpit: [...sharedFields, "period"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
   volatility: [...sharedFields],
   analysis: [...sharedFields],
@@ -65,6 +73,11 @@ const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const chartViewer = createChartViewer();
 mountAccountControls({ root: document.querySelector("#account-control") });
+mountSavedWatchlistCockpit({
+  root: document.querySelector("#saved-watchlists"),
+  getDraft: watchlistDraft,
+  applyWatchlist: applySavedWatchlist,
+});
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
   getRecord: buildResearchRecord,
@@ -73,12 +86,7 @@ const researchLibrary = mountResearchLibrary({
 
 document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => {
-    state.mode = button.dataset.mode;
-    document.querySelectorAll(".mode-button").forEach((item) => item.classList.remove("active"));
-    button.classList.add("active");
-    syncModeCopy();
-    syncFields();
-    clearOutput();
+    setMode(button.dataset.mode);
   });
 });
 
@@ -104,6 +112,8 @@ form.addEventListener("submit", async (event) => {
     const payload = payloadFromForm();
     if (state.mode === "analysis") {
       await fetchAnalysis(payload);
+    } else if (state.mode === "cockpit") {
+      await fetchCockpit(payload);
     } else {
       await fetchChart(payload);
     }
@@ -151,6 +161,19 @@ function syncModeCopy() {
   outputTitle.textContent = modeTitles[state.mode];
   modeContractEl.textContent = contract;
   outputContractEl.textContent = contract;
+}
+
+function setMode(mode, options = {}) {
+  const nextMode = modeTitles[mode] ? mode : "auction";
+  state.mode = nextMode;
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === state.mode);
+  });
+  syncModeCopy();
+  syncFields();
+  if (options.clear !== false) {
+    clearOutput();
+  }
 }
 
 function payloadFromForm() {
@@ -209,6 +232,24 @@ async function fetchAnalysis(payload) {
   exportButton.disabled = false;
   researchLibrary.setCanSave(true);
   renderAnalysis(data);
+  renderWarnings(data.meta?.errors || []);
+}
+
+async function fetchCockpit(payload) {
+  const response = await fetch("/api/watchlists/cockpit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Could not build cockpit");
+  }
+  sourceChip.textContent = data.provider || "provider";
+  state.lastExport = data.export || data;
+  exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  renderCockpit(data);
   renderWarnings(data.meta?.errors || []);
 }
 
@@ -482,6 +523,92 @@ function renderAnalysis(data) {
   imagesEl.append(stack);
 }
 
+function renderCockpit(data) {
+  imagesEl.innerHTML = "";
+  emptyState.hidden = true;
+  const rows = data.rows || data.export?.rows || [];
+  summaryEl.innerHTML = "";
+  summaryEl.hidden = false;
+  summaryEl.append(summaryItem("Rows", rows.length));
+  if (data.meta?.error_count) {
+    summaryEl.append(summaryItem("Skipped", data.meta.error_count));
+  }
+  if (data.meta?.watchlist_name) {
+    summaryEl.append(summaryItem("Source", data.meta.watchlist_name));
+  }
+  if (data.meta?.period) {
+    summaryEl.append(summaryItem("Window", String(data.meta.period).toUpperCase()));
+  }
+
+  const stack = document.createElement("div");
+  stack.className = "brief-stack";
+  stack.append(cockpitTable(rows));
+  imagesEl.append(stack);
+}
+
+function cockpitTable(rows) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel cockpit-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Watchlist Cockpit";
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.className = "scanner-table cockpit-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Ticker</th>
+        <th>Lane</th>
+        <th>Score</th>
+        <th>Price</th>
+        <th>Day</th>
+        <th>50D</th>
+        <th>Flow</th>
+        <th>Ridge</th>
+        <th>Auction</th>
+      </tr>
+    </thead>
+  `;
+  const body = document.createElement("tbody");
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const values = [
+      row.rank,
+      row.ticker,
+      row.lane,
+      formatValue(row.score),
+      formatCurrency(row.price),
+      formatPercent(row.change_percent / 100),
+      formatPercent(row.trend_50d),
+      `${row.flow?.state || "N/A"} (${formatValue(row.flow?.score)})`,
+      row.ridge?.recommendation || "N/A",
+      row.auction?.location || "N/A",
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement(index === 1 ? "th" : "td");
+      if (index === 1) {
+        cell.scope = "row";
+      }
+      cell.textContent = value;
+      tr.append(cell);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  tableWrap.append(table);
+  panel.append(title, tableWrap);
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No cockpit rows returned.";
+    panel.append(empty);
+  }
+  return panel;
+}
+
 function markdownPanel(title, markdown) {
   const panel = document.createElement("section");
   panel.className = "scanner-panel";
@@ -675,6 +802,27 @@ function clearOutput() {
   researchLibrary.setCanSave(false);
 }
 
+function watchlistDraft() {
+  const payload = payloadFromForm();
+  return {
+    source_url: String(payload.watchlist_url || "").trim(),
+    tickers: payload.tickers || [],
+    max_results: payload.max_results,
+  };
+}
+
+function applySavedWatchlist(row) {
+  const watchlistUrl = document.querySelector("#watchlist-url");
+  const tickers = document.querySelector("#tickers");
+  const maxResults = document.querySelector("#max-results");
+  watchlistUrl.value = row.source_url || "";
+  tickers.value = Array.isArray(row.tickers) ? row.tickers.join(", ") : "";
+  if (row.metadata?.max_results) {
+    maxResults.value = row.metadata.max_results;
+  }
+  setMode("cockpit");
+}
+
 function showError(message) {
   emptyState.hidden = true;
   errorEl.textContent = message;
@@ -712,7 +860,7 @@ function buildResearchRecord() {
   const payload = state.lastExport;
   const ticker = researchTicker(payload) || payloadFromForm().ticker;
   return {
-    mode: payload.mode || state.mode,
+    mode: state.mode,
     ticker,
     title: `${modeTitles[state.mode]}${ticker ? ` - ${ticker}` : ""}`,
     summary: modeContracts[state.mode],
@@ -723,18 +871,18 @@ function buildResearchRecord() {
 
 function openSavedResearch(record) {
   const payload = record.payload || {};
-  const savedMode = modeTitles[record.mode] ? record.mode : state.mode;
-  state.mode = savedMode;
-  document.querySelectorAll(".mode-button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.mode === state.mode);
-  });
-  syncModeCopy();
-  syncFields();
+  const savedMode = record.mode === "watchlist-cockpit" ? "cockpit" : record.mode;
+  setMode(modeTitles[savedMode] ? savedMode : state.mode, { clear: false });
   clearOutput();
   state.lastExport = payload;
   exportButton.disabled = false;
   researchLibrary.setCanSave(true);
   sourceChip.textContent = "saved";
+  if (state.mode === "cockpit" || payload.rows) {
+    renderCockpit(payload);
+    renderWarnings(payload.meta?.errors || []);
+    return;
+  }
   if (state.mode === "analysis" || payload.summaries || payload["Anthropic Brief"]) {
     renderAnalysis(payload);
     renderWarnings(payload.meta?.errors || []);

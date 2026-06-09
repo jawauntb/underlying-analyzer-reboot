@@ -48,6 +48,49 @@ export function mountResearchLibrary({ insertAfter, getRecord, modeFilter, openR
   return controls;
 }
 
+export function mountSavedWatchlistCockpit({ root, getDraft, applyWatchlist }) {
+  if (!root) {
+    return { refresh() {} };
+  }
+
+  const panel = createSavedWatchlistPanel(root);
+  const state = {
+    client: null,
+    user: null,
+  };
+  const callbacks = { getDraft, applyWatchlist };
+  bindSavedWatchlistEvents(panel, state, callbacks);
+  subscribeAuth(async (auth) => {
+    state.client = auth.client;
+    state.user = auth.user;
+
+    if (auth.error) {
+      showSavedWatchlistStatus(panel, `Watchlists unavailable: ${auth.error}`);
+      panel.actions.hidden = true;
+      panel.list.hidden = true;
+      panel.save.disabled = true;
+      panel.refresh.disabled = true;
+      return;
+    }
+
+    if (!auth.ready && !auth.client) {
+      showSavedWatchlistStatus(panel, "Checking saved watchlists...");
+      return;
+    }
+
+    updateSavedWatchlistControls(panel, state);
+    if (state.user) {
+      await loadSavedWatchlists(panel, state, callbacks, true);
+    }
+  });
+  initAuth();
+  return {
+    refresh() {
+      return loadSavedWatchlists(panel, state, callbacks, false);
+    },
+  };
+}
+
 async function setupResearchLibrary(panel, state, callbacks) {
   bindResearchEvents(panel, state, callbacks);
   subscribeAuth(async (auth) => {
@@ -85,6 +128,17 @@ function bindResearchEvents(panel, state, callbacks) {
   panel.signOut.addEventListener("click", () => signOutSession(panel, state));
   panel.save.addEventListener("click", () => saveResearch(panel, state, callbacks));
   panel.recent.addEventListener("click", () => loadRecentResearch(panel, state, callbacks, false));
+}
+
+function bindSavedWatchlistEvents(panel, state, callbacks) {
+  panel.save.addEventListener("click", () => saveSavedWatchlist(panel, state, callbacks));
+  panel.refresh.addEventListener("click", () => loadSavedWatchlists(panel, state, callbacks, false));
+  panel.name.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveSavedWatchlist(panel, state, callbacks);
+    }
+  });
 }
 
 function bindAccountEvents(account) {
@@ -256,6 +310,115 @@ async function loadRecentResearch(panel, state, callbacks, quiet) {
   }
 }
 
+async function saveSavedWatchlist(panel, state, callbacks) {
+  if (!state.user) {
+    showSavedWatchlistStatus(panel, "Sign in before saving watchlists.");
+    return;
+  }
+
+  const draft = callbacks.getDraft();
+  const sourceUrl = String(draft.source_url || "").trim();
+  let tickers = normalizeTickerList(draft.tickers);
+  let name = panel.name.value.trim();
+  const metadata = {
+    max_results: Number(draft.max_results || 10),
+    saved_from: "terminal",
+  };
+
+  panel.save.disabled = true;
+  try {
+    if (sourceUrl) {
+      showSavedWatchlistStatus(panel, "Resolving watchlist...");
+      const resolved = await resolveWatchlistSource(sourceUrl, metadata.max_results);
+      tickers = normalizeTickerList(resolved.tickers);
+      metadata.watchlist = resolved.watchlist;
+      name ||= resolved.watchlist?.name || "TradingView watchlist";
+    }
+
+    if (!tickers.length) {
+      showSavedWatchlistStatus(panel, "Add tickers or a public TradingView watchlist first.");
+      return;
+    }
+
+    const { error } = await state.client.from("saved_watchlists").insert({
+      user_id: state.user.id,
+      name: name || "Saved watchlist",
+      source_url: sourceUrl || null,
+      tickers,
+      metadata,
+    });
+
+    if (error) {
+      showSavedWatchlistStatus(panel, error.message);
+      return;
+    }
+
+    panel.name.value = "";
+    showSavedWatchlistStatus(panel, "Saved watchlist.");
+    await loadSavedWatchlists(panel, state, callbacks, true);
+  } catch (error) {
+    showSavedWatchlistStatus(panel, error.message || "Could not save watchlist.");
+  } finally {
+    panel.save.disabled = false;
+  }
+}
+
+async function loadSavedWatchlists(panel, state, callbacks, quiet) {
+  if (!state.user) {
+    showSavedWatchlistStatus(panel, "Sign in to load saved watchlists.");
+    return;
+  }
+
+  if (!quiet) {
+    showSavedWatchlistStatus(panel, "Loading saved watchlists...");
+  }
+
+  const { data, error } = await state.client
+    .from("saved_watchlists")
+    .select("id,name,source_url,tickers,metadata,created_at,updated_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    showSavedWatchlistStatus(panel, error.message);
+    return;
+  }
+
+  renderSavedWatchlists(panel, data || [], callbacks, state);
+  if (!quiet) {
+    showSavedWatchlistStatus(panel, data?.length ? "Saved watchlists loaded." : "No saved watchlists yet.");
+  }
+}
+
+async function deleteSavedWatchlist(panel, state, callbacks, row) {
+  if (!row.id) {
+    return;
+  }
+  showSavedWatchlistStatus(panel, "Removing watchlist...");
+  const { error } = await state.client.from("saved_watchlists").delete().eq("id", row.id);
+  if (error) {
+    showSavedWatchlistStatus(panel, error.message);
+    return;
+  }
+  await loadSavedWatchlists(panel, state, callbacks, true);
+  showSavedWatchlistStatus(panel, "Removed watchlist.");
+}
+
+async function resolveWatchlistSource(sourceUrl, maxResults) {
+  const response = await fetch("/api/watchlists/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      watchlist_url: sourceUrl,
+      max_results: maxResults,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Could not resolve watchlist");
+  }
+  return data;
+}
+
 function renderRecentResearch(panel, rows, callbacks) {
   panel.list.innerHTML = "";
   panel.list.hidden = false;
@@ -282,6 +445,53 @@ function renderRecentResearch(panel, rows, callbacks) {
       .join(" / ");
 
     item.append(title, meta);
+    panel.list.append(item);
+  });
+}
+
+function renderSavedWatchlists(panel, rows, callbacks, state) {
+  panel.list.innerHTML = "";
+  panel.list.hidden = false;
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No saved watchlists yet.";
+    panel.list.append(empty);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "saved-watchlist-row";
+
+    const load = document.createElement("button");
+    load.className = "research-row";
+    load.type = "button";
+    load.addEventListener("click", () => {
+      callbacks.applyWatchlist(row);
+      showSavedWatchlistStatus(panel, `Loaded ${row.name || "watchlist"}.`);
+    });
+
+    const title = document.createElement("strong");
+    title.textContent = row.name || "Saved watchlist";
+    const meta = document.createElement("span");
+    meta.textContent = [
+      `${normalizeTickerList(row.tickers).length} tickers`,
+      row.source_url ? "TradingView" : "Manual",
+      relativeDate(row.updated_at || row.created_at),
+    ]
+      .filter(Boolean)
+      .join(" / ");
+    load.append(title, meta);
+
+    const remove = document.createElement("button");
+    remove.className = "download-link saved-watchlist-delete";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => deleteSavedWatchlist(panel, state, callbacks, row));
+
+    item.append(load, remove);
     panel.list.append(item);
   });
 }
@@ -319,6 +529,34 @@ function createResearchPanel() {
     save: root.querySelector('[data-role="save"]'),
     signIn: root.querySelector('[data-role="signin"]'),
     signOut: root.querySelector('[data-role="signout"]'),
+    status: root.querySelector('[data-role="status"]'),
+  };
+}
+
+function createSavedWatchlistPanel(root) {
+  root.className = "saved-watchlist-cockpit";
+  root.innerHTML = `
+    <div class="research-head">
+      <div>
+        <div class="panel-label">Saved Watchlists</div>
+        <p class="research-status" data-role="status">Sign in to save watchlists.</p>
+      </div>
+    </div>
+    <div class="saved-watchlist-actions" data-role="actions" hidden>
+      <input data-role="name" autocomplete="off" placeholder="Watchlist name" />
+      <button class="export-button" data-role="save" type="button">Save</button>
+      <button class="download-link" data-role="refresh" type="button">Refresh</button>
+    </div>
+    <div class="research-list saved-watchlist-list" data-role="list" hidden></div>
+  `;
+
+  return {
+    root,
+    actions: root.querySelector('[data-role="actions"]'),
+    list: root.querySelector('[data-role="list"]'),
+    name: root.querySelector('[data-role="name"]'),
+    refresh: root.querySelector('[data-role="refresh"]'),
+    save: root.querySelector('[data-role="save"]'),
     status: root.querySelector('[data-role="status"]'),
   };
 }
@@ -384,6 +622,22 @@ function updateResearchControls(panel, state) {
   showResearchStatus(panel, "Sign in to save generated research.");
 }
 
+function updateSavedWatchlistControls(panel, state) {
+  if (state.user) {
+    panel.actions.hidden = false;
+    panel.save.disabled = false;
+    panel.refresh.disabled = false;
+    showSavedWatchlistStatus(panel, "Save or load watchlists for cockpit runs.");
+    return;
+  }
+
+  panel.actions.hidden = true;
+  panel.list.hidden = true;
+  panel.save.disabled = true;
+  panel.refresh.disabled = true;
+  showSavedWatchlistStatus(panel, "Sign in to save watchlists.");
+}
+
 function updateAccountControls(account, state) {
   account.signIn.disabled = !state.client || Boolean(state.user);
   account.signOut.disabled = !state.user;
@@ -425,6 +679,10 @@ function updateAccountControls(account, state) {
 }
 
 function showResearchStatus(panel, message) {
+  panel.status.textContent = message;
+}
+
+function showSavedWatchlistStatus(panel, message) {
   panel.status.textContent = message;
 }
 
@@ -538,4 +796,14 @@ function relativeDate(value) {
     return "";
   }
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function normalizeTickerList(value) {
+  if (Array.isArray(value)) {
+    return value.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean);
+  }
+  return String(value || "")
+    .split(",")
+    .map((ticker) => ticker.trim().toUpperCase())
+    .filter(Boolean);
 }
