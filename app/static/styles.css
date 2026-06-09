@@ -909,21 +909,38 @@ textarea {
   align-items: stretch;
 }
 
+.research-timeline-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, auto);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.research-timeline-controls input {
+  min-width: 0;
+}
+
 .saved-watchlist-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(70px, auto) minmax(70px, auto);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .alert-monitor-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(92px, auto) minmax(70px, auto);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.saved-watchlist-actions input,
+.alert-monitor-actions input {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .alert-delivery-fields {
   display: grid;
-  grid-template-columns: minmax(92px, auto) minmax(0, 1fr) minmax(112px, auto);
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: stretch;
 }
@@ -1014,6 +1031,103 @@ textarea {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticker-timeline,
+.ticker-timeline-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ticker-timeline-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(121, 255, 156, 0.18);
+  background:
+    linear-gradient(90deg, rgba(121, 255, 156, 0.07), transparent),
+    rgba(5, 11, 15, 0.68);
+  padding: 10px;
+}
+
+.ticker-timeline-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ticker-timeline-title strong,
+.ticker-timeline-title span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ticker-timeline-title strong {
+  color: var(--green);
+  font-family: var(--pixel-font);
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+
+.ticker-timeline-title span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticker-timeline-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.ticker-timeline-insight {
+  margin: 0;
+  border-left: 2px solid var(--cyan);
+  background: rgba(87, 217, 255, 0.06);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.45;
+  padding: 9px 10px;
+}
+
+.ticker-timeline-run {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ticker-timeline-open {
+  border-color: rgba(121, 255, 156, 0.22);
+  background:
+    linear-gradient(90deg, rgba(121, 255, 156, 0.07), transparent),
+    rgba(5, 11, 15, 0.78);
+}
+
+.ticker-timeline-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ticker-timeline-chips span {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid rgba(87, 217, 255, 0.18);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 1000;
+  line-height: 1.25;
+  padding: 3px 6px;
   text-transform: uppercase;
 }
 
@@ -2396,6 +2510,7 @@ body.is-loading .source-chip::after {
 
   .research-auth,
   .research-actions,
+  .research-timeline-controls,
   .saved-watchlist-actions,
   .saved-watchlist-card-head,
   .alert-monitor-actions,

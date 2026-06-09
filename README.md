@@ -77,6 +77,10 @@ now include a compact cockpit queue: `Rank` expands the saved list into a top-na
 score, Flow Compass, Ridge, and auction location, while `Cockpit` and `Alerts` launch full runs from
 that saved list.
 
+The signed-in Library also includes ticker timelines. Enter a ticker, or leave the field empty to
+use the current form ticker, then open `Timeline` to review prior saved runs and the latest
+headline changes against the previous saved run.
+
 ## Railway Deploy
 
 Railway is the production host for this Flask app. The Procfile starts Gunicorn on Railway's
