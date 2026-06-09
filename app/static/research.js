@@ -1,5 +1,7 @@
 const CONFIG_ENDPOINT = "/api/config";
 const RECENT_LIMIT = 5;
+const ALERT_RULE_LIMIT = 8;
+const ALERT_RUN_LIMIT = 5;
 
 let configPromise = null;
 let authPromise = null;
@@ -25,7 +27,7 @@ export function mountAccountControls({ root }) {
 
 export function mountResearchLibrary({ insertAfter, getRecord, modeFilter, openRecord }) {
   if (!insertAfter) {
-    return { setCanSave() {} };
+    return { root: null, setCanSave() {} };
   }
 
   const panel = createResearchPanel();
@@ -45,7 +47,51 @@ export function mountResearchLibrary({ insertAfter, getRecord, modeFilter, openR
   };
 
   setupResearchLibrary(panel, state, { getRecord, modeFilter, openRecord });
-  return controls;
+  return { ...controls, root: panel.root };
+}
+
+export function mountAlertMonitor({ insertAfter, getDraft, openRun, runRule }) {
+  if (!insertAfter) {
+    return { refresh() {} };
+  }
+
+  const panel = createAlertMonitorPanel();
+  insertAfter.after(panel.root);
+  const state = {
+    client: null,
+    user: null,
+  };
+  const callbacks = { getDraft, openRun, runRule };
+  bindAlertMonitorEvents(panel, state, callbacks);
+  subscribeAuth(async (auth) => {
+    state.client = auth.client;
+    state.user = auth.user;
+
+    if (auth.error) {
+      showAlertMonitorStatus(panel, `Alert monitor unavailable: ${auth.error}`);
+      panel.root.hidden = false;
+      panel.actions.hidden = true;
+      panel.list.hidden = true;
+      return;
+    }
+
+    if (!auth.ready && !auth.client) {
+      showAlertMonitorStatus(panel, "Checking alert monitor...");
+      return;
+    }
+
+    panel.root.hidden = false;
+    updateAlertMonitorControls(panel, state);
+    if (state.user) {
+      await loadAlertMonitor(panel, state, callbacks, true);
+    }
+  });
+  initAuth();
+  return {
+    refresh() {
+      return loadAlertMonitor(panel, state, callbacks, false);
+    },
+  };
 }
 
 export function mountSavedWatchlistCockpit({ root, getDraft, applyWatchlist }) {
@@ -137,6 +183,17 @@ function bindSavedWatchlistEvents(panel, state, callbacks) {
     if (event.key === "Enter") {
       event.preventDefault();
       saveSavedWatchlist(panel, state, callbacks);
+    }
+  });
+}
+
+function bindAlertMonitorEvents(panel, state, callbacks) {
+  panel.save.addEventListener("click", () => saveAlertRule(panel, state, callbacks));
+  panel.refresh.addEventListener("click", () => loadAlertMonitor(panel, state, callbacks, false));
+  panel.name.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveAlertRule(panel, state, callbacks);
     }
   });
 }
@@ -403,6 +460,167 @@ async function deleteSavedWatchlist(panel, state, callbacks, row) {
   showSavedWatchlistStatus(panel, "Removed watchlist.");
 }
 
+async function saveAlertRule(panel, state, callbacks) {
+  if (!state.user) {
+    showAlertMonitorStatus(panel, "Sign in before saving alert rules.");
+    return;
+  }
+
+  const draft = callbacks.getDraft();
+  const sourceUrl = String(draft.source_url || "").trim();
+  let tickers = normalizeTickerList(draft.tickers);
+  const maxResults = clampNumber(draft.max_results, 1, 50, 10);
+  const maxAlerts = clampNumber(draft.max_alerts, 1, 50, 12);
+  const volatilityThreshold = clampNumber(draft.volatility_threshold, 0, 2, 0.55);
+  let name = panel.name.value.trim();
+  const metadata = {
+    saved_from: "alert-monitor",
+  };
+
+  panel.save.disabled = true;
+  try {
+    if (sourceUrl) {
+      showAlertMonitorStatus(panel, "Resolving watchlist for alert rule...");
+      const resolved = await resolveWatchlistSource(sourceUrl, maxResults);
+      tickers = normalizeTickerList(resolved.tickers);
+      metadata.watchlist = resolved.watchlist;
+      name ||= resolved.watchlist?.name || "Daily alert rule";
+    }
+
+    if (!tickers.length) {
+      showAlertMonitorStatus(panel, "Add tickers or a public TradingView watchlist first.");
+      return;
+    }
+
+    const { error } = await state.client.from("alert_rules").insert({
+      user_id: state.user.id,
+      name: name || "Daily alert rule",
+      source_url: sourceUrl || null,
+      tickers,
+      active: true,
+      schedule: "daily",
+      period: draft.period || "1y",
+      max_results: maxResults,
+      max_alerts: maxAlerts,
+      volatility_threshold: volatilityThreshold,
+      metadata,
+    });
+
+    if (error) {
+      showAlertMonitorStatus(panel, error.message);
+      return;
+    }
+
+    panel.name.value = "";
+    showAlertMonitorStatus(panel, "Saved daily alert rule.");
+    await loadAlertMonitor(panel, state, callbacks, true);
+  } catch (error) {
+    showAlertMonitorStatus(panel, error.message || "Could not save alert rule.");
+  } finally {
+    panel.save.disabled = false;
+  }
+}
+
+async function loadAlertMonitor(panel, state, callbacks, quiet) {
+  if (!state.user) {
+    showAlertMonitorStatus(panel, "Sign in to load alert rules.");
+    return;
+  }
+
+  if (!quiet) {
+    showAlertMonitorStatus(panel, "Loading alert monitor...");
+  }
+
+  const [rulesResult, runsResult] = await Promise.all([
+    state.client
+      .from("alert_rules")
+      .select(
+        "id,name,source_url,tickers,active,schedule,period,max_results,max_alerts,volatility_threshold,last_run_at,last_run_date,metadata,created_at,updated_at",
+      )
+      .order("updated_at", { ascending: false })
+      .limit(ALERT_RULE_LIMIT),
+    state.client
+      .from("alert_runs")
+      .select(
+        "id,alert_rule_id,trigger,status,run_date,alert_count,high_alert_count,digest,alerts,rows,payload,error,created_at",
+      )
+      .order("created_at", { ascending: false })
+      .limit(ALERT_RUN_LIMIT),
+  ]);
+
+  if (rulesResult.error) {
+    showAlertMonitorStatus(panel, rulesResult.error.message);
+    return;
+  }
+  if (runsResult.error) {
+    showAlertMonitorStatus(panel, runsResult.error.message);
+    return;
+  }
+
+  renderAlertMonitor(panel, rulesResult.data || [], runsResult.data || [], callbacks, state);
+  if (!quiet) {
+    showAlertMonitorStatus(panel, "Alert monitor loaded.");
+  }
+}
+
+async function runAlertRule(panel, state, callbacks, row) {
+  if (!state.user) {
+    showAlertMonitorStatus(panel, "Sign in before running alert rules.");
+    return;
+  }
+
+  showAlertMonitorStatus(panel, `Running ${row.name || "alert rule"}...`);
+  try {
+    const payload = await callbacks.runRule(row);
+    const meta = payload.meta || {};
+    const now = new Date();
+    const runDate = now.toISOString().slice(0, 10);
+    const { error } = await state.client.from("alert_runs").insert({
+      alert_rule_id: row.id,
+      user_id: state.user.id,
+      trigger: "manual",
+      status: "success",
+      run_date: runDate,
+      alert_count: Number(meta.alert_count || 0),
+      high_alert_count: Number(meta.high_alert_count || 0),
+      digest: payload.digest || {},
+      alerts: payload.alerts || [],
+      rows: payload.rows || [],
+      payload,
+    });
+    if (error) {
+      showAlertMonitorStatus(panel, error.message);
+      return;
+    }
+    await state.client
+      .from("alert_rules")
+      .update({
+        last_run_at: now.toISOString(),
+        last_run_date: runDate,
+        updated_at: now.toISOString(),
+      })
+      .eq("id", row.id);
+    await loadAlertMonitor(panel, state, callbacks, true);
+    showAlertMonitorStatus(panel, "Alert run saved to inbox.");
+  } catch (error) {
+    showAlertMonitorStatus(panel, error.message || "Could not run alert rule.");
+  }
+}
+
+async function deleteAlertRule(panel, state, callbacks, row) {
+  if (!row.id) {
+    return;
+  }
+  showAlertMonitorStatus(panel, "Removing alert rule...");
+  const { error } = await state.client.from("alert_rules").delete().eq("id", row.id);
+  if (error) {
+    showAlertMonitorStatus(panel, error.message);
+    return;
+  }
+  await loadAlertMonitor(panel, state, callbacks, true);
+  showAlertMonitorStatus(panel, "Removed alert rule.");
+}
+
 async function resolveWatchlistSource(sourceUrl, maxResults) {
   const response = await fetch("/api/watchlists/resolve", {
     method: "POST",
@@ -496,6 +714,100 @@ function renderSavedWatchlists(panel, rows, callbacks, state) {
   });
 }
 
+function renderAlertMonitor(panel, rules, runs, callbacks, state) {
+  panel.list.innerHTML = "";
+  panel.list.hidden = false;
+
+  const rulesSection = document.createElement("div");
+  rulesSection.className = "alert-monitor-section";
+  rulesSection.append(sectionKicker("Daily Rules"));
+  if (!rules.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No alert rules yet.";
+    rulesSection.append(empty);
+  } else {
+    rules.forEach((row) => rulesSection.append(alertRuleRow(panel, state, callbacks, row)));
+  }
+
+  const runsSection = document.createElement("div");
+  runsSection.className = "alert-monitor-section";
+  runsSection.append(sectionKicker("Inbox"));
+  if (!runs.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No alert runs yet.";
+    runsSection.append(empty);
+  } else {
+    runs.forEach((row) => runsSection.append(alertRunRow(callbacks, row)));
+  }
+
+  panel.list.append(rulesSection, runsSection);
+}
+
+function alertRuleRow(panel, state, callbacks, row) {
+  const item = document.createElement("div");
+  item.className = "alert-monitor-row";
+
+  const body = document.createElement("div");
+  body.className = "alert-monitor-body";
+  const title = document.createElement("strong");
+  title.textContent = row.name || "Daily alert rule";
+  const meta = document.createElement("span");
+  meta.textContent = [
+    "Daily",
+    `${normalizeTickerList(row.tickers).length} tickers`,
+    `${row.max_alerts || 12} max alerts`,
+    row.last_run_date ? `last ${relativeDate(row.last_run_date)}` : "not run",
+  ].join(" / ");
+  body.append(title, meta);
+
+  const actions = document.createElement("div");
+  actions.className = "alert-monitor-row-actions";
+  const run = document.createElement("button");
+  run.className = "export-button";
+  run.type = "button";
+  run.textContent = "Run";
+  run.addEventListener("click", () => runAlertRule(panel, state, callbacks, row));
+  const remove = document.createElement("button");
+  remove.className = "download-link saved-watchlist-delete";
+  remove.type = "button";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => deleteAlertRule(panel, state, callbacks, row));
+  actions.append(run, remove);
+
+  item.append(body, actions);
+  return item;
+}
+
+function alertRunRow(callbacks, row) {
+  const item = document.createElement("button");
+  item.className = "research-row alert-run-row";
+  item.type = "button";
+  item.addEventListener("click", () => callbacks.openRun(row));
+
+  const title = document.createElement("strong");
+  const headline = row.digest?.headline || row.error || "Alert run";
+  title.textContent = headline;
+  const meta = document.createElement("span");
+  meta.textContent = [
+    row.status || "success",
+    row.trigger || "manual",
+    `${row.high_alert_count || 0} high`,
+    relativeDate(row.created_at || row.run_date),
+  ].join(" / ");
+
+  item.append(title, meta);
+  return item;
+}
+
+function sectionKicker(label) {
+  const kicker = document.createElement("div");
+  kicker.className = "alert-monitor-kicker";
+  kicker.textContent = label;
+  return kicker;
+}
+
 function createResearchPanel() {
   const root = document.createElement("section");
   root.className = "research-panel";
@@ -548,6 +860,36 @@ function createSavedWatchlistPanel(root) {
       <button class="download-link" data-role="refresh" type="button">Refresh</button>
     </div>
     <div class="research-list saved-watchlist-list" data-role="list" hidden></div>
+  `;
+
+  return {
+    root,
+    actions: root.querySelector('[data-role="actions"]'),
+    list: root.querySelector('[data-role="list"]'),
+    name: root.querySelector('[data-role="name"]'),
+    refresh: root.querySelector('[data-role="refresh"]'),
+    save: root.querySelector('[data-role="save"]'),
+    status: root.querySelector('[data-role="status"]'),
+  };
+}
+
+function createAlertMonitorPanel() {
+  const root = document.createElement("section");
+  root.className = "research-panel alert-monitor-panel";
+  root.hidden = true;
+  root.innerHTML = `
+    <div class="research-head">
+      <div>
+        <div class="panel-label">Alert Monitor</div>
+        <p class="research-status" data-role="status">Sign in to save daily alert rules.</p>
+      </div>
+    </div>
+    <div class="alert-monitor-actions" data-role="actions" hidden>
+      <input data-role="name" autocomplete="off" placeholder="Daily alert name" />
+      <button class="export-button" data-role="save" type="button">Save Rule</button>
+      <button class="download-link" data-role="refresh" type="button">Inbox</button>
+    </div>
+    <div class="research-list alert-monitor-list" data-role="list" hidden></div>
   `;
 
   return {
@@ -638,6 +980,22 @@ function updateSavedWatchlistControls(panel, state) {
   showSavedWatchlistStatus(panel, "Sign in to save watchlists.");
 }
 
+function updateAlertMonitorControls(panel, state) {
+  if (state.user) {
+    panel.actions.hidden = false;
+    panel.save.disabled = false;
+    panel.refresh.disabled = false;
+    showAlertMonitorStatus(panel, "Save daily alert rules or open recent alert runs.");
+    return;
+  }
+
+  panel.actions.hidden = true;
+  panel.list.hidden = true;
+  panel.save.disabled = true;
+  panel.refresh.disabled = true;
+  showAlertMonitorStatus(panel, "Sign in to save daily alert rules.");
+}
+
 function updateAccountControls(account, state) {
   account.signIn.disabled = !state.client || Boolean(state.user);
   account.signOut.disabled = !state.user;
@@ -683,6 +1041,10 @@ function showResearchStatus(panel, message) {
 }
 
 function showSavedWatchlistStatus(panel, message) {
+  panel.status.textContent = message;
+}
+
+function showAlertMonitorStatus(panel, message) {
   panel.status.textContent = message;
 }
 
@@ -806,4 +1168,12 @@ function normalizeTickerList(value) {
     .split(",")
     .map((ticker) => ticker.trim().toUpperCase())
     .filter(Boolean);
+}
+
+function clampNumber(value, minimum, maximum, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  return Math.max(minimum, Math.min(number, maximum));
 }

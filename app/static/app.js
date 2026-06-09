@@ -1,4 +1,5 @@
 import {
+  mountAlertMonitor,
   mountAccountControls,
   mountResearchLibrary,
   mountSavedWatchlistCockpit,
@@ -55,7 +56,7 @@ const fieldRules = {
   "ridge-growth": [...sharedFields],
   "flow-compass": [...sharedFields, "period"],
   cockpit: [...sharedFields, "period"],
-  alerts: [...sharedFields, "period"],
+  alerts: [...sharedFields, "period", "max-alerts", "vol-threshold"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
   volatility: [...sharedFields],
   analysis: [...sharedFields],
@@ -86,6 +87,12 @@ const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
   getRecord: buildResearchRecord,
   openRecord: openSavedResearch,
+});
+mountAlertMonitor({
+  insertAfter: researchLibrary.root || document.querySelector("#chart-form .form-actions"),
+  getDraft: alertRuleDraft,
+  openRun: openSavedAlertRun,
+  runRule: runSavedAlertRule,
 });
 
 document.querySelectorAll(".mode-button").forEach((button) => {
@@ -194,6 +201,8 @@ function payloadFromForm() {
     tickers,
     watchlist_url: data.get("watchlist_url"),
     max_results: Number(data.get("max_results") || 10),
+    max_alerts: Number(data.get("max_alerts") || 12),
+    volatility_threshold: Number(data.get("volatility_threshold") || 0.55),
     period: data.get("period"),
     month: Number(data.get("month")),
     start_date: data.get("start_date"),
@@ -952,6 +961,18 @@ function watchlistDraft() {
   };
 }
 
+function alertRuleDraft() {
+  const payload = payloadFromForm();
+  return {
+    source_url: String(payload.watchlist_url || "").trim(),
+    tickers: payload.tickers || [],
+    max_results: payload.max_results,
+    max_alerts: payload.max_alerts,
+    volatility_threshold: payload.volatility_threshold,
+    period: payload.period,
+  };
+}
+
 function applySavedWatchlist(row) {
   const watchlistUrl = document.querySelector("#watchlist-url");
   const tickers = document.querySelector("#tickers");
@@ -962,6 +983,65 @@ function applySavedWatchlist(row) {
     maxResults.value = row.metadata.max_results;
   }
   setMode("cockpit");
+}
+
+async function runSavedAlertRule(row) {
+  const payload = alertRulePayload(row);
+  clearOutput();
+  setMode("alerts", { clear: false });
+  setLoading(true);
+  try {
+    const response = await fetch("/api/watchlists/alerts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Could not run alert rule");
+    }
+    sourceChip.textContent = data.provider || "provider";
+    state.lastExport = data.export || data;
+    exportButton.disabled = false;
+    researchLibrary.setCanSave(true);
+    renderAlerts(data);
+    renderWarnings(data.meta?.errors || []);
+    return data;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function openSavedAlertRun(row) {
+  setMode("alerts", { clear: false });
+  clearOutput();
+  const payload = row.payload || {
+    alerts: row.alerts || [],
+    digest: row.digest || {},
+    rows: row.rows || [],
+    meta: {
+      alert_count: row.alert_count || 0,
+      high_alert_count: row.high_alert_count || 0,
+    },
+  };
+  state.lastExport = payload;
+  exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  sourceChip.textContent = row.trigger || "saved";
+  renderAlerts(payload);
+}
+
+function alertRulePayload(row) {
+  const tickers = Array.isArray(row.tickers) ? row.tickers : [];
+  return {
+    ticker: tickers[0] || "AAPL",
+    tickers,
+    watchlist_url: row.source_url || "",
+    max_results: Number(row.max_results || row.metadata?.max_results || 10),
+    max_alerts: Number(row.max_alerts || 12),
+    volatility_threshold: Number(row.volatility_threshold || 0.55),
+    period: row.period || "1y",
+  };
 }
 
 function showError(message) {

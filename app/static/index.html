@@ -131,6 +131,22 @@
                 <span>Max results</span>
                 <input id="max-results" name="max_results" type="number" min="1" max="50" step="1" value="10" />
               </label>
+              <label data-field="max-alerts" hidden>
+                <span>Max alerts</span>
+                <input id="max-alerts" name="max_alerts" type="number" min="1" max="50" step="1" value="12" />
+              </label>
+              <label data-field="vol-threshold" hidden>
+                <span>Vol alert >=</span>
+                <input
+                  id="vol-threshold"
+                  name="volatility_threshold"
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value="0.55"
+                />
+              </label>
               <label data-field="period">
                 <span>Period</span>
                 <select id="period" name="period">

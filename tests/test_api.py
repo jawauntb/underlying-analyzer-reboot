@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 from pytest import MonkeyPatch
 
 import app.main as main_module
+from app.alert_scheduler import ScheduledAlertRule
 from app.anthropic import GeneratedText
 from app.charts import RenderedImage
 from app.main import create_app
@@ -210,6 +213,48 @@ class FakeWatchlistClient:
                 WatchlistSymbol(raw="NASDAQ:MSFT", exchange="NASDAQ", symbol="MSFT", ticker="MSFT"),
             ],
         )
+
+
+class FakeAlertStore:
+    def __init__(self, rules: list[ScheduledAlertRule]) -> None:
+        self.rules = rules
+        self.list_calls: list[dict[str, object]] = []
+        self.runs: list[dict[str, object]] = []
+        self.marked: list[dict[str, object]] = []
+
+    def list_due_rules(self, *, run_date: date, force: bool = False) -> list[ScheduledAlertRule]:
+        self.list_calls.append({"run_date": run_date, "force": force})
+        if force:
+            return self.rules
+        return [
+            rule
+            for rule in self.rules
+            if rule.last_run_date is None or rule.last_run_date < run_date
+        ]
+
+    def insert_run(
+        self,
+        *,
+        rule: ScheduledAlertRule,
+        run_date: date,
+        trigger: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.runs.append(
+            {
+                "rule": rule,
+                "run_date": run_date,
+                "trigger": trigger,
+                "status": status,
+                "payload": payload or {},
+                "error": error,
+            }
+        )
+
+    def mark_rule_ran(self, *, rule_id: str, run_date: date) -> None:
+        self.marked.append({"rule_id": rule_id, "run_date": run_date})
 
 
 def test_load_env_file_sets_missing_key(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -518,6 +563,121 @@ def test_watchlist_alerts_endpoint_continues_after_symbol_error() -> None:
     assert payload["meta"]["error_count"] == 1
     assert payload["meta"]["errors"] == [{"ticker": "MSFT", "error": "MSFT unavailable"}]
     assert payload["export"]["mode"] == "watchlist-alerts"
+
+
+def test_alert_scheduler_status_reports_configuration(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    app = create_app()
+    app.config["SUPABASE_URL"] = "https://example.supabase.co"
+    app.config["SUPABASE_SERVICE_ROLE_KEY"] = "service-secret"
+    app.config["ALERT_SCHEDULER_TOKEN"] = "scheduler-secret"
+    client = app.test_client()
+
+    response = client.get("/api/alerts/scheduler/status")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload == {
+        "configured": True,
+        "service_role_configured": True,
+        "token_configured": True,
+        "schedule": "daily",
+    }
+    assert "scheduler-secret" not in response.text
+    assert "service-secret" not in response.text
+
+
+def test_alert_scheduler_run_requires_bearer_token(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    app = create_app()
+    app.config["ALERT_SCHEDULER_TOKEN"] = "scheduler-secret"
+    client = app.test_client()
+
+    response = client.post("/api/alerts/scheduled/run", json={})
+
+    payload = response.get_json()
+    assert response.status_code == 401
+    assert payload["error"] == "Scheduler authorization is required"
+
+
+def test_alert_scheduler_run_processes_due_rule(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Daily watchlist",
+        source_url="https://www.tradingview.com/watchlists/334089913/",
+        tickers=[],
+        period="1y",
+        max_results=2,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        metadata={},
+        last_run_date=None,
+    )
+    store = FakeAlertStore([rule])
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["WATCHLIST_CLIENT"] = FakeWatchlistClient()
+    app.config["ALERT_STORE"] = store
+    app.config["ALERT_SCHEDULER_TOKEN"] = "scheduler-secret"
+    client = app.test_client()
+
+    response = client.post(
+        "/api/alerts/scheduled/run",
+        headers={"Authorization": "Bearer scheduler-secret"},
+        json={"run_date": "2026-06-09", "force": True, "limit": 1},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["run_date"] == "2026-06-09"
+    assert payload["processed"] == 1
+    assert payload["results"][0]["status"] == "success"
+    assert store.list_calls == [{"run_date": date(2026, 6, 9), "force": True}]
+    assert store.marked == [{"rule_id": "rule-1", "run_date": date(2026, 6, 9)}]
+    assert store.runs[0]["trigger"] == "scheduled"
+    assert store.runs[0]["status"] == "success"
+    saved_payload = cast(dict[str, Any], store.runs[0]["payload"])
+    assert saved_payload["meta"]["result_count"] == 2
+    assert saved_payload["export"]["mode"] == "watchlist-alerts"
+
+
+def test_alert_scheduler_run_records_failed_rule(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Daily failures",
+        source_url=None,
+        tickers=["AAPL", "MSFT"],
+        period="1y",
+        max_results=2,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        metadata={},
+        last_run_date=None,
+    )
+    store = FakeAlertStore([rule])
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FailingMarketDataClient()
+    app.config["ALERT_STORE"] = store
+    app.config["ALERT_SCHEDULER_TOKEN"] = "scheduler-secret"
+    client = app.test_client()
+
+    response = client.post(
+        "/api/alerts/scheduled/run",
+        headers={"Authorization": "Bearer scheduler-secret"},
+        json={"run_date": "2026-06-09"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["processed"] == 1
+    assert payload["results"][0]["status"] == "failed"
+    assert "AAPL unavailable" in payload["results"][0]["error"]
+    assert store.marked == [{"rule_id": "rule-1", "run_date": date(2026, 6, 9)}]
+    assert store.runs[0]["status"] == "failed"
 
 
 def test_portfolio_endpoint_can_use_watchlist_url() -> None:
