@@ -869,6 +869,18 @@ textarea {
   border-top: 1px solid var(--line-faint);
 }
 
+.saved-watchlist-cockpit {
+  display: grid;
+  gap: 10px;
+  align-self: end;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(121, 255, 156, 0.18);
+  background:
+    linear-gradient(90deg, rgba(121, 255, 156, 0.07), transparent),
+    rgba(5, 11, 15, 0.58);
+}
+
 .research-head {
   display: flex;
   justify-content: space-between;
@@ -891,6 +903,12 @@ textarea {
   grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
   gap: 9px;
   align-items: stretch;
+}
+
+.saved-watchlist-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(70px, auto) minmax(70px, auto);
+  gap: 8px;
 }
 
 .research-auth input {
@@ -949,6 +967,28 @@ textarea {
   font-size: 0.78rem;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.saved-watchlist-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(70px, auto);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.saved-watchlist-delete {
+  min-height: 44px;
+  border-color: rgba(255, 105, 93, 0.32);
+  color: var(--red);
+}
+
+.cockpit-panel {
+  border-color: rgba(121, 255, 156, 0.22);
+}
+
+.cockpit-table th,
+.cockpit-table td {
+  white-space: nowrap;
 }
 
 .generate-button {
@@ -1916,6 +1956,8 @@ body.is-loading .source-chip::after {
 
   .research-auth,
   .research-actions,
+  .saved-watchlist-actions,
+  .saved-watchlist-row,
   .research-head {
     grid-template-columns: 1fr;
   }

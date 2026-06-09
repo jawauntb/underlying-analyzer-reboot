@@ -123,6 +123,18 @@ class FakeMarketDataClient:
         }
 
 
+class PartiallyFailingMarketDataClient(FakeMarketDataClient):
+    def get_history(self, ticker: str, **kwargs: object) -> HistoryResult:
+        if ticker == "MSFT":
+            raise ValueError("MSFT unavailable")
+        return super().get_history(ticker, **kwargs)
+
+
+class FailingMarketDataClient(FakeMarketDataClient):
+    def get_history(self, ticker: str, **_: object) -> HistoryResult:
+        raise ValueError(f"{ticker} unavailable")
+
+
 class FakeSecClient:
     def get_source_pack(self, ticker: str) -> dict[str, object]:
         return {
@@ -390,6 +402,77 @@ def test_watchlist_resolve_endpoint_returns_limited_tickers() -> None:
     assert response.status_code == 200
     assert payload["tickers"] == ["AAPL"]
     assert payload["watchlist"]["name"] == "Test Watchlist"
+
+
+def test_watchlist_cockpit_endpoint_returns_ranked_rows_from_watchlist() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["WATCHLIST_CLIENT"] = FakeWatchlistClient()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/watchlists/cockpit",
+        json={"watchlist_url": "https://www.tradingview.com/watchlists/334089913/"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert [row["rank"] for row in payload["rows"]] == [1, 2]
+    assert {row["ticker"] for row in payload["rows"]} == {"AAPL", "MSFT"}
+    assert payload["meta"]["result_count"] == 2
+    assert payload["meta"]["error_count"] == 0
+    assert payload["meta"]["watchlist_name"] == "Test Watchlist"
+    assert payload["watchlist"]["name"] == "Test Watchlist"
+    assert payload["export"]["mode"] == "watchlist-cockpit"
+    first = payload["rows"][0]
+    assert first["lane"] in {"Priority", "Watch", "Review", "Risk"}
+    assert first["scanner_score"] is not None
+    assert first["ridge"]["recommendation"]
+    assert first["flow"]["state"]
+    assert first["auction"]["location"]
+
+
+def test_watchlist_cockpit_endpoint_accepts_manual_tickers_and_max_results() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/watchlists/cockpit",
+        json={"tickers": ["AAPL", "MSFT"], "max_results": 1},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert [row["ticker"] for row in payload["rows"]] == ["AAPL"]
+    assert payload["meta"]["watchlist_name"] == "Manual tickers"
+
+
+def test_watchlist_cockpit_endpoint_continues_after_symbol_error() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = PartiallyFailingMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/watchlists/cockpit", json={"tickers": ["AAPL", "MSFT"]})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert [row["ticker"] for row in payload["rows"]] == ["AAPL"]
+    assert payload["meta"]["error_count"] == 1
+    assert payload["meta"]["errors"] == [{"ticker": "MSFT", "error": "MSFT unavailable"}]
+
+
+def test_watchlist_cockpit_endpoint_returns_400_when_all_symbols_fail() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FailingMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/watchlists/cockpit", json={"tickers": ["AAPL", "MSFT"]})
+
+    payload = response.get_json()
+    assert response.status_code == 400
+    assert "AAPL unavailable" in payload["error"]
+    assert "MSFT unavailable" in payload["error"]
 
 
 def test_portfolio_endpoint_can_use_watchlist_url() -> None:

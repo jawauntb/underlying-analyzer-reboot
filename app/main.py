@@ -33,6 +33,7 @@ from app.charts import (
     render_ridge_growth_chart,
     render_volatility_chart,
 )
+from app.cockpit import build_cockpit_row
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
 from app.sec import SecClient, SecDataError
 from app.tools import (
@@ -203,6 +204,20 @@ def create_app() -> Flask:
             )
         except WatchlistError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/watchlists/cockpit")
+    def watchlist_cockpit() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            response = build_cockpit_response(
+                get_market_client(), get_watchlist_client(), payload
+            )
+            return jsonify(response)
+        except (ValueError, WatchlistError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover - defensive request boundary
+            app.logger.exception("Unexpected watchlist cockpit error")
+            return jsonify({"error": f"Unexpected watchlist cockpit error: {exc}"}), 500
 
     @app.post("/api/tools/fax")
     def stock_fax_tool() -> Any:
@@ -768,6 +783,55 @@ def build_analysis_response(
     return response
 
 
+def build_cockpit_response(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    selection = resolve_ticker_selection(payload, watchlist_client)
+    period = str(payload.get("period") or "1y")
+    rows, errors = collect_cockpit_rows(client, selection.tickers, period=period)
+    require_results(rows, errors)
+    rows.sort(key=lambda row: float(row["score"]), reverse=True)
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+
+    providers = sorted({str(row["provider"]) for row in rows})
+    provider = "+".join(providers)
+    meta = batch_meta(
+        [
+            result_payload(
+                str(row["ticker"]),
+                str(row["provider"]),
+                str(row["provider_note"]),
+                row,
+            )
+            for row in rows
+        ],
+        errors,
+        selection.watchlist,
+    )
+    meta["period"] = period
+    export = export_payload(
+        mode="watchlist-cockpit",
+        provider=provider,
+        provider_note="Watchlist cockpit ranking",
+        tickers=[str(row["ticker"]) for row in rows],
+        meta=meta,
+        watchlist=selection.watchlist,
+        image_files=[],
+    )
+    export["rows"] = rows
+    return {
+        "rows": rows,
+        "provider": provider,
+        "provider_note": "Watchlist cockpit ranking",
+        "meta": meta,
+        "watchlist": watchlist_payload(selection.watchlist),
+        "export": export,
+    }
+
+
 def response_payload(
     images: list[RenderedImage],
     provider: str,
@@ -886,6 +950,25 @@ def collect_summaries(
             except (ValueError, MarketDataError) as exc:
                 errors.append({"ticker": ticker, "error": str(exc)})
     return [summary for summary in summary_slots if summary is not None], errors
+
+
+def collect_cockpit_rows(
+    client: MarketDataClient, tickers: list[str], *, period: str
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    row_slots: list[dict[str, Any] | None] = [None] * len(tickers)
+    errors: list[dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(build_cockpit_row, client, ticker, period=period): (index, ticker)
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index, ticker = futures[future]
+            try:
+                row_slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+    return [row for row in row_slots if row is not None], errors
 
 
 def batch_worker_count(tickers: list[str]) -> int:
