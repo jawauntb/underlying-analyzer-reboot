@@ -190,6 +190,7 @@ function bindSavedWatchlistEvents(panel, state, callbacks) {
 function bindAlertMonitorEvents(panel, state, callbacks) {
   panel.save.addEventListener("click", () => saveAlertRule(panel, state, callbacks));
   panel.refresh.addEventListener("click", () => loadAlertMonitor(panel, state, callbacks, false));
+  panel.webhookEnabled.addEventListener("change", () => updateAlertDeliveryFields(panel));
   panel.name.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -472,6 +473,9 @@ async function saveAlertRule(panel, state, callbacks) {
   const maxResults = clampNumber(draft.max_results, 1, 50, 10);
   const maxAlerts = clampNumber(draft.max_alerts, 1, 50, 12);
   const volatilityThreshold = clampNumber(draft.volatility_threshold, 0, 2, 0.55);
+  const webhookEnabled = panel.webhookEnabled.checked;
+  const webhookUrl = panel.webhookUrl.value.trim();
+  const deliveryMinSeverity = panel.deliveryMinSeverity.value === "high" ? "high" : "any";
   let name = panel.name.value.trim();
   const metadata = {
     saved_from: "alert-monitor",
@@ -492,6 +496,11 @@ async function saveAlertRule(panel, state, callbacks) {
       return;
     }
 
+    if (webhookEnabled && !webhookUrl) {
+      showAlertMonitorStatus(panel, "Add a webhook URL or turn webhook delivery off.");
+      return;
+    }
+
     const { error } = await state.client.from("alert_rules").insert({
       user_id: state.user.id,
       name: name || "Daily alert rule",
@@ -503,6 +512,9 @@ async function saveAlertRule(panel, state, callbacks) {
       max_results: maxResults,
       max_alerts: maxAlerts,
       volatility_threshold: volatilityThreshold,
+      delivery_channel: webhookEnabled ? "webhook" : "none",
+      delivery_webhook_url: webhookEnabled ? webhookUrl : null,
+      delivery_min_severity: webhookEnabled ? deliveryMinSeverity : "any",
       metadata,
     });
 
@@ -512,6 +524,10 @@ async function saveAlertRule(panel, state, callbacks) {
     }
 
     panel.name.value = "";
+    panel.webhookEnabled.checked = false;
+    panel.webhookUrl.value = "";
+    panel.deliveryMinSeverity.value = "any";
+    updateAlertDeliveryFields(panel);
     showAlertMonitorStatus(panel, "Saved daily alert rule.");
     await loadAlertMonitor(panel, state, callbacks, true);
   } catch (error) {
@@ -531,21 +547,28 @@ async function loadAlertMonitor(panel, state, callbacks, quiet) {
     showAlertMonitorStatus(panel, "Loading alert monitor...");
   }
 
-  const [rulesResult, runsResult] = await Promise.all([
+  const [rulesResult, runsResult, deliveriesResult] = await Promise.all([
     state.client
       .from("alert_rules")
       .select(
-        "id,name,source_url,tickers,active,schedule,period,max_results,max_alerts,volatility_threshold,last_run_at,last_run_date,metadata,created_at,updated_at",
+        "id,name,source_url,tickers,active,schedule,period,max_results,max_alerts,volatility_threshold,delivery_channel,delivery_webhook_url,delivery_min_severity,last_run_at,last_run_date,metadata,created_at,updated_at",
       )
       .order("updated_at", { ascending: false })
       .limit(ALERT_RULE_LIMIT),
     state.client
       .from("alert_runs")
       .select(
-        "id,alert_rule_id,trigger,status,run_date,alert_count,high_alert_count,digest,alerts,rows,payload,error,created_at",
+        "id,alert_rule_id,trigger,status,run_date,alert_count,high_alert_count,digest,alerts,rows,payload,error,delivery_status,delivery_channel,delivered_at,created_at",
       )
       .order("created_at", { ascending: false })
       .limit(ALERT_RUN_LIMIT),
+    state.client
+      .from("alert_deliveries")
+      .select(
+        "id,alert_run_id,channel,status,destination,response_status,error,created_at",
+      )
+      .order("created_at", { ascending: false })
+      .limit(ALERT_RUN_LIMIT * 3),
   ]);
 
   if (rulesResult.error) {
@@ -556,8 +579,19 @@ async function loadAlertMonitor(panel, state, callbacks, quiet) {
     showAlertMonitorStatus(panel, runsResult.error.message);
     return;
   }
+  if (deliveriesResult.error) {
+    showAlertMonitorStatus(panel, deliveriesResult.error.message);
+    return;
+  }
 
-  renderAlertMonitor(panel, rulesResult.data || [], runsResult.data || [], callbacks, state);
+  renderAlertMonitor(
+    panel,
+    rulesResult.data || [],
+    runsResult.data || [],
+    deliveriesResult.data || [],
+    callbacks,
+    state,
+  );
   if (!quiet) {
     showAlertMonitorStatus(panel, "Alert monitor loaded.");
   }
@@ -714,9 +748,10 @@ function renderSavedWatchlists(panel, rows, callbacks, state) {
   });
 }
 
-function renderAlertMonitor(panel, rules, runs, callbacks, state) {
+function renderAlertMonitor(panel, rules, runs, deliveries, callbacks, state) {
   panel.list.innerHTML = "";
   panel.list.hidden = false;
+  const deliveriesByRun = deliveryMap(deliveries);
 
   const rulesSection = document.createElement("div");
   rulesSection.className = "alert-monitor-section";
@@ -739,7 +774,7 @@ function renderAlertMonitor(panel, rules, runs, callbacks, state) {
     empty.textContent = "No alert runs yet.";
     runsSection.append(empty);
   } else {
-    runs.forEach((row) => runsSection.append(alertRunRow(callbacks, row)));
+    runs.forEach((row) => runsSection.append(alertRunRow(callbacks, row, deliveriesByRun.get(row.id))));
   }
 
   panel.list.append(rulesSection, runsSection);
@@ -758,6 +793,7 @@ function alertRuleRow(panel, state, callbacks, row) {
     "Daily",
     `${normalizeTickerList(row.tickers).length} tickers`,
     `${row.max_alerts || 12} max alerts`,
+    deliveryRuleLabel(row),
     row.last_run_date ? `last ${relativeDate(row.last_run_date)}` : "not run",
   ].join(" / ");
   body.append(title, meta);
@@ -780,7 +816,7 @@ function alertRuleRow(panel, state, callbacks, row) {
   return item;
 }
 
-function alertRunRow(callbacks, row) {
+function alertRunRow(callbacks, row, delivery) {
   const item = document.createElement("button");
   item.className = "research-row alert-run-row";
   item.type = "button";
@@ -794,11 +830,38 @@ function alertRunRow(callbacks, row) {
     row.status || "success",
     row.trigger || "manual",
     `${row.high_alert_count || 0} high`,
+    deliveryRunLabel(row, delivery),
     relativeDate(row.created_at || row.run_date),
   ].join(" / ");
 
   item.append(title, meta);
   return item;
+}
+
+function deliveryMap(deliveries) {
+  const map = new Map();
+  deliveries.forEach((delivery) => {
+    if (delivery.alert_run_id && !map.has(delivery.alert_run_id)) {
+      map.set(delivery.alert_run_id, delivery);
+    }
+  });
+  return map;
+}
+
+function deliveryRuleLabel(row) {
+  if (row.delivery_channel !== "webhook") {
+    return "no delivery";
+  }
+  return row.delivery_min_severity === "high" ? "webhook high only" : "webhook on alerts";
+}
+
+function deliveryRunLabel(row, delivery) {
+  const status = delivery?.status || row.delivery_status;
+  if (!status || status === "none") {
+    return "no delivery";
+  }
+  const channel = delivery?.channel || row.delivery_channel || "delivery";
+  return `${channel} ${status}`;
 }
 
 function sectionKicker(label) {
@@ -889,18 +952,35 @@ function createAlertMonitorPanel() {
       <button class="export-button" data-role="save" type="button">Save Rule</button>
       <button class="download-link" data-role="refresh" type="button">Inbox</button>
     </div>
+    <div class="alert-delivery-fields" data-role="delivery" hidden>
+      <label class="alert-delivery-toggle">
+        <input data-role="webhook-enabled" type="checkbox" />
+        <span>Webhook</span>
+      </label>
+      <input data-role="webhook-url" type="url" autocomplete="off" placeholder="https://hooks.example.com/..." disabled />
+      <select data-role="delivery-min-severity" aria-label="Send when">
+        <option value="any">Any alerts</option>
+        <option value="high">High only</option>
+      </select>
+    </div>
     <div class="research-list alert-monitor-list" data-role="list" hidden></div>
   `;
 
-  return {
+  const panel = {
     root,
     actions: root.querySelector('[data-role="actions"]'),
+    delivery: root.querySelector('[data-role="delivery"]'),
+    deliveryMinSeverity: root.querySelector('[data-role="delivery-min-severity"]'),
     list: root.querySelector('[data-role="list"]'),
     name: root.querySelector('[data-role="name"]'),
     refresh: root.querySelector('[data-role="refresh"]'),
     save: root.querySelector('[data-role="save"]'),
     status: root.querySelector('[data-role="status"]'),
+    webhookEnabled: root.querySelector('[data-role="webhook-enabled"]'),
+    webhookUrl: root.querySelector('[data-role="webhook-url"]'),
   };
+  updateAlertDeliveryFields(panel);
+  return panel;
 }
 
 function createAccountControls(root) {
@@ -983,17 +1063,30 @@ function updateSavedWatchlistControls(panel, state) {
 function updateAlertMonitorControls(panel, state) {
   if (state.user) {
     panel.actions.hidden = false;
+    panel.delivery.hidden = false;
     panel.save.disabled = false;
     panel.refresh.disabled = false;
+    updateAlertDeliveryFields(panel);
     showAlertMonitorStatus(panel, "Save daily alert rules or open recent alert runs.");
     return;
   }
 
   panel.actions.hidden = true;
+  panel.delivery.hidden = true;
   panel.list.hidden = true;
   panel.save.disabled = true;
   panel.refresh.disabled = true;
   showAlertMonitorStatus(panel, "Sign in to save daily alert rules.");
+}
+
+function updateAlertDeliveryFields(panel) {
+  const enabled = Boolean(panel.webhookEnabled?.checked);
+  if (panel.webhookUrl) {
+    panel.webhookUrl.disabled = !enabled;
+  }
+  if (panel.deliveryMinSeverity) {
+    panel.deliveryMinSeverity.disabled = !enabled;
+  }
 }
 
 function updateAccountControls(account, state) {

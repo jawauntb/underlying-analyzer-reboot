@@ -921,6 +921,44 @@ textarea {
   gap: 8px;
 }
 
+.alert-delivery-fields {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr) minmax(112px, auto);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.alert-delivery-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  border: 1px solid rgba(87, 217, 255, 0.24);
+  background: rgba(5, 11, 15, 0.72);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.alert-delivery-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+}
+
+.alert-delivery-fields select,
+.alert-delivery-fields input {
+  min-width: 0;
+}
+
+.alert-delivery-fields input:disabled,
+.alert-delivery-fields select:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
 .research-auth input {
   min-width: 0;
 }
@@ -2166,6 +2204,7 @@ body.is-loading .source-chip::after {
   .saved-watchlist-actions,
   .saved-watchlist-row,
   .alert-monitor-actions,
+  .alert-delivery-fields,
   .alert-monitor-row,
   .alert-monitor-row-actions,
   .research-head {

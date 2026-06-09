@@ -24,10 +24,12 @@ from flask_cors import CORS
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
+    AlertDeliveryResult,
     AlertStoreError,
     ScheduledAlertRule,
     SupabaseAlertStore,
     alert_payload_from_rule,
+    deliver_alert_webhook,
 )
 from app.alerts import (
     DEFAULT_ALERT_LIMIT,
@@ -1035,21 +1037,60 @@ def run_scheduled_alert_rule(
             "error": str(exc),
         }
 
-    alert_store.insert_run(
+    run_id = alert_store.insert_run(
         rule=rule,
         run_date=run_date,
         trigger="scheduled",
         status="success",
         payload=payload,
     )
+    delivery = run_alert_delivery(
+        alert_store,
+        rule=rule,
+        run_date=run_date,
+        alert_run_id=run_id,
+        payload=payload,
+    )
     alert_store.mark_rule_ran(rule_id=rule.id, run_date=run_date)
-    return {
+    result = {
         "rule_id": rule.id,
         "name": rule.name,
         "status": "success",
         "alert_count": payload["meta"]["alert_count"],
         "high_alert_count": payload["meta"]["high_alert_count"],
     }
+    if delivery is not None:
+        result["delivery_status"] = delivery.status
+        result["delivery_channel"] = delivery.channel
+    return result
+
+
+def run_alert_delivery(
+    alert_store: SupabaseAlertStore,
+    *,
+    rule: ScheduledAlertRule,
+    run_date: date,
+    alert_run_id: str | None,
+    payload: dict[str, Any],
+) -> AlertDeliveryResult | None:
+    if rule.delivery_channel != "webhook":
+        return None
+
+    delivery = deliver_alert_webhook(
+        rule=rule,
+        run_date=run_date,
+        alert_run_id=alert_run_id,
+        payload=payload,
+    )
+    if alert_run_id:
+        alert_store.insert_delivery(
+            rule=rule,
+            alert_run_id=alert_run_id,
+            delivery=delivery,
+            payload=payload,
+        )
+        alert_store.update_run_delivery_status(alert_run_id=alert_run_id, delivery=delivery)
+    return delivery
 
 
 def response_payload(
