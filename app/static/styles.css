@@ -1017,17 +1017,176 @@ textarea {
   text-transform: uppercase;
 }
 
-.saved-watchlist-row {
+.saved-watchlist-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(70px, auto);
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid rgba(87, 217, 255, 0.22);
+  background:
+    linear-gradient(90deg, rgba(121, 255, 156, 0.07), transparent),
+    rgba(5, 11, 15, 0.72);
+  padding: 9px;
+}
+
+.saved-watchlist-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: stretch;
+  min-width: 0;
+}
+
+.saved-watchlist-body {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  min-width: 0;
+}
+
+.saved-watchlist-body strong,
+.saved-watchlist-body span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.saved-watchlist-body span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.saved-watchlist-row-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 7px;
+  align-items: stretch;
+}
+
+.saved-watchlist-row-actions .download-link,
+.saved-watchlist-row-actions .export-button {
+  min-height: 40px;
+  padding: 8px 9px;
+  white-space: nowrap;
 }
 
 .saved-watchlist-delete {
   min-height: 44px;
   border-color: rgba(255, 105, 93, 0.32);
   color: var(--red);
+}
+
+.saved-watchlist-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.saved-watchlist-preview[hidden] {
+  display: none;
+}
+
+.saved-watchlist-cockpit-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.saved-watchlist-preview-metric {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border-top: 1px solid rgba(121, 255, 156, 0.22);
+  padding-top: 7px;
+}
+
+.saved-watchlist-preview-metric strong,
+.saved-watchlist-preview-metric span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.saved-watchlist-preview-metric strong {
+  color: var(--green);
+  font-family: var(--pixel-font);
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.saved-watchlist-preview-metric span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.saved-watchlist-queue-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(87, 217, 255, 0.16);
+}
+
+.saved-watchlist-queue-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.saved-watchlist-queue-table th,
+.saved-watchlist-queue-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid rgba(87, 217, 255, 0.12);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.saved-watchlist-queue-table thead th {
+  color: var(--cyan);
+  font-size: 0.66rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.saved-watchlist-queue-table tbody th {
+  color: var(--text);
+  font-family: var(--pixel-font);
+  letter-spacing: 0;
+}
+
+.saved-watchlist-queue-table tr[data-lane="priority"] {
+  background: rgba(121, 255, 156, 0.06);
+}
+
+.saved-watchlist-queue-table tr[data-lane="risk"] {
+  background: rgba(255, 105, 93, 0.06);
+}
+
+.saved-watchlist-lane {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid rgba(121, 255, 156, 0.24);
+  color: var(--green);
+  font-size: 0.66rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.saved-watchlist-queue-table tr[data-lane="risk"] .saved-watchlist-lane {
+  border-color: rgba(255, 105, 93, 0.32);
+  color: var(--red);
+}
+
+.saved-watchlist-preview-foot {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .alert-monitor-list,
@@ -2238,7 +2397,7 @@ body.is-loading .source-chip::after {
   .research-auth,
   .research-actions,
   .saved-watchlist-actions,
-  .saved-watchlist-row,
+  .saved-watchlist-card-head,
   .alert-monitor-actions,
   .alert-delivery-fields,
   .alert-monitor-row,
@@ -2249,6 +2408,11 @@ body.is-loading .source-chip::after {
 
   .alert-delivery-detail {
     grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  }
+
+  .saved-watchlist-row-actions,
+  .saved-watchlist-cockpit-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .research-head {

@@ -82,6 +82,8 @@ mountSavedWatchlistCockpit({
   root: document.querySelector("#saved-watchlists"),
   getDraft: watchlistDraft,
   applyWatchlist: applySavedWatchlist,
+  runCockpit: runSavedCockpit,
+  runAlerts: runSavedAlertRule,
 });
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
@@ -985,6 +987,21 @@ function applySavedWatchlist(row) {
   setMode("cockpit");
 }
 
+async function runSavedCockpit(row) {
+  const payload = watchlistActionPayload(row);
+  clearOutput();
+  setMode("cockpit", { clear: false });
+  setLoading(true);
+  try {
+    await fetchCockpit(payload);
+  } catch (error) {
+    showError(error.message || "Could not run saved cockpit");
+    throw error;
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function runSavedAlertRule(row) {
   const payload = alertRulePayload(row);
   clearOutput();
@@ -1007,6 +1024,9 @@ async function runSavedAlertRule(row) {
     renderAlerts(data);
     renderWarnings(data.meta?.errors || []);
     return data;
+  } catch (error) {
+    showError(error.message || "Could not run alert rule");
+    throw error;
   } finally {
     setLoading(false);
   }
@@ -1031,16 +1051,22 @@ function openSavedAlertRun(row) {
   renderAlerts(payload);
 }
 
-function alertRulePayload(row) {
+function watchlistActionPayload(row) {
   const tickers = Array.isArray(row.tickers) ? row.tickers : [];
   return {
     ticker: tickers[0] || "AAPL",
     tickers,
     watchlist_url: row.source_url || "",
     max_results: Number(row.max_results || row.metadata?.max_results || 10),
+    period: row.period || row.metadata?.period || "1y",
+  };
+}
+
+function alertRulePayload(row) {
+  return {
+    ...watchlistActionPayload(row),
     max_alerts: Number(row.max_alerts || 12),
     volatility_threshold: Number(row.volatility_threshold || 0.55),
-    period: row.period || "1y",
   };
 }
 
