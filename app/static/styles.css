@@ -881,6 +881,10 @@ textarea {
     rgba(5, 11, 15, 0.58);
 }
 
+.alert-monitor-panel {
+  border-top-color: rgba(87, 217, 255, 0.18);
+}
+
 .research-head {
   display: flex;
   justify-content: space-between;
@@ -908,6 +912,12 @@ textarea {
 .saved-watchlist-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(70px, auto) minmax(70px, auto);
+  gap: 8px;
+}
+
+.alert-monitor-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, auto) minmax(70px, auto);
   gap: 8px;
 }
 
@@ -980,6 +990,73 @@ textarea {
   min-height: 44px;
   border-color: rgba(255, 105, 93, 0.32);
   color: var(--red);
+}
+
+.alert-monitor-list,
+.alert-monitor-section {
+  display: grid;
+  gap: 8px;
+}
+
+.alert-monitor-section + .alert-monitor-section {
+  margin-top: 6px;
+}
+
+.alert-monitor-kicker {
+  color: var(--cyan);
+  font-family: var(--pixel-font);
+  font-size: 0.56rem;
+  line-height: 1.7;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.alert-monitor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(146px, auto);
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid rgba(87, 217, 255, 0.22);
+  background:
+    linear-gradient(90deg, rgba(87, 217, 255, 0.08), transparent),
+    rgba(5, 11, 15, 0.68);
+  padding: 10px;
+}
+
+.alert-monitor-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.alert-monitor-body strong,
+.alert-monitor-body span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alert-monitor-body span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.alert-monitor-row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(68px, auto));
+  gap: 8px;
+}
+
+.alert-monitor-row-actions .export-button,
+.alert-monitor-row-actions .download-link {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.alert-run-row {
+  border-color: rgba(255, 201, 74, 0.26);
 }
 
 .cockpit-panel {
@@ -2088,6 +2165,9 @@ body.is-loading .source-chip::after {
   .research-actions,
   .saved-watchlist-actions,
   .saved-watchlist-row,
+  .alert-monitor-actions,
+  .alert-monitor-row,
+  .alert-monitor-row-actions,
   .research-head {
     grid-template-columns: 1fr;
   }

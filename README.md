@@ -8,6 +8,7 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - Nasdaq public historical fallback for daily US equity OHLCV when yfinance fails
 - Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
 - SEC EDGAR source packs for filings, XBRL company facts, and Vision memo citations
+- Supabase-backed saved research, watchlists, daily alert rules, and alert-run inbox
 - JSON exports for generated ticker/watchlist data
 
 ## Data Provider Notes
@@ -89,12 +90,26 @@ railway variable set \
   OPENAI_IMAGE_MODEL=gpt-image-2 \
   SUPABASE_URL=... \
   SUPABASE_ANON_KEY=... \
+  SUPABASE_SERVICE_ROLE_KEY=... \
+  ALERT_SCHEDULER_TOKEN=... \
   SEC_USER_AGENT=...
 railway up
 railway domain
 ```
 
 For magic links, add the Railway URL to Supabase Auth redirect URLs alongside local dev URLs.
+
+Daily alert rules can run from a Railway Function. Create a long random
+`ALERT_SCHEDULER_TOKEN`, set the same value on the Flask service and the function, and point
+`APP_URL` at the production app URL.
+
+```bash
+railway functions new \
+  --path railway-functions/daily-alert-digest.ts \
+  --name daily-alert-digest \
+  --cron "0 11 * * *"
+railway variable set APP_URL=https://your-railway-domain ALERT_SCHEDULER_TOKEN=...
+```
 
 ## Modal Deploy
 
@@ -118,6 +133,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-public-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_DB_PASSWORD=your-db-password
+ALERT_SCHEDULER_TOKEN=long-random-shared-secret
 ```
 
 Apply migrations with the Supabase CLI:
@@ -129,6 +145,10 @@ supabase db push --password "$SUPABASE_DB_PASSWORD"
 
 For magic links, add local and deployed URLs to Supabase Auth redirect URLs, including
 `http://127.0.0.1:5058/*` for local testing and the Modal URL for production.
+
+Alert Monitor uses `alert_rules` and `alert_runs` with owner-scoped RLS. Browser users can save
+and manually run their own rules with the anon key, while the daily scheduler uses the server-only
+service-role key behind `/api/alerts/scheduled/run`.
 
 ## Quality Checks
 

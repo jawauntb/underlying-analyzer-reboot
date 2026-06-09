@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,14 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app.alert_scheduler import (
+    DEFAULT_SCHEDULED_RULE_LIMIT,
+    MAX_SCHEDULED_RULE_LIMIT,
+    AlertStoreError,
+    ScheduledAlertRule,
+    SupabaseAlertStore,
+    alert_payload_from_rule,
+)
 from app.alerts import (
     DEFAULT_ALERT_LIMIT,
     DEFAULT_VOLATILITY_THRESHOLD,
@@ -90,6 +99,9 @@ def create_app() -> Flask:
     app.config["SUPABASE_ANON_KEY"] = public_env(
         "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"
     )
+    app.config["SUPABASE_SERVICE_ROLE_KEY"] = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    app.config["ALERT_SCHEDULER_TOKEN"] = os.getenv("ALERT_SCHEDULER_TOKEN")
+    app.config["ALERT_STORE"] = None
     app.config["TEXT_GENERATOR"] = None
 
     @app.get("/")
@@ -239,6 +251,43 @@ def create_app() -> Flask:
             app.logger.exception("Unexpected watchlist alerts error")
             return jsonify({"error": f"Unexpected watchlist alerts error: {exc}"}), 500
 
+    @app.get("/api/alerts/scheduler/status")
+    def alert_scheduler_status() -> Any:
+        return jsonify(
+            {
+                "configured": alert_scheduler_configured(),
+                "service_role_configured": bool(
+                    current_app.config.get("SUPABASE_SERVICE_ROLE_KEY")
+                ),
+                "token_configured": bool(current_app.config.get("ALERT_SCHEDULER_TOKEN")),
+                "schedule": "daily",
+            }
+        )
+
+    @app.post("/api/alerts/scheduled/run")
+    def scheduled_alert_run() -> Any:
+        auth_error = scheduler_auth_error(request.headers.get("Authorization"))
+        if auth_error:
+            status_code = 503 if auth_error == "Scheduler token is not configured" else 401
+            return jsonify({"error": auth_error}), status_code
+
+        payload = request.get_json(silent=True) or {}
+        try:
+            response = run_scheduled_alert_rules(
+                get_market_client(),
+                get_watchlist_client(),
+                get_alert_store(),
+                run_date=scheduled_run_date(payload),
+                force=bool(payload.get("force")),
+                limit=scheduled_rule_limit(payload),
+            )
+            return jsonify(response)
+        except (ValueError, AlertStoreError, MarketDataError, WatchlistError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover - defensive scheduler boundary
+            app.logger.exception("Unexpected scheduled alert error")
+            return jsonify({"error": f"Unexpected scheduled alert error: {exc}"}), 500
+
     @app.post("/api/tools/fax")
     def stock_fax_tool() -> Any:
         try:
@@ -332,6 +381,37 @@ def get_watchlist_client() -> TradingViewWatchlistClient:
 
 def get_sec_client() -> SecClient:
     return current_app.config["SEC_CLIENT"]
+
+
+def get_alert_store() -> SupabaseAlertStore:
+    configured_store = current_app.config.get("ALERT_STORE")
+    if configured_store is not None:
+        return configured_store
+    return SupabaseAlertStore(
+        supabase_url=str(current_app.config.get("SUPABASE_URL") or ""),
+        service_role_key=str(current_app.config.get("SUPABASE_SERVICE_ROLE_KEY") or ""),
+    )
+
+
+def alert_scheduler_configured() -> bool:
+    return bool(
+        current_app.config.get("SUPABASE_URL")
+        and current_app.config.get("SUPABASE_SERVICE_ROLE_KEY")
+        and current_app.config.get("ALERT_SCHEDULER_TOKEN")
+    )
+
+
+def scheduler_auth_error(header_value: str | None) -> str | None:
+    expected = str(current_app.config.get("ALERT_SCHEDULER_TOKEN") or "")
+    if not expected:
+        return "Scheduler token is not configured"
+    prefix = "Bearer "
+    if not header_value or not header_value.startswith(prefix):
+        return "Scheduler authorization is required"
+    provided = header_value.removeprefix(prefix).strip()
+    if not hmac.compare_digest(provided, expected):
+        return "Scheduler authorization is invalid"
+    return None
 
 
 def public_env(*names: str) -> str | None:
@@ -897,6 +977,81 @@ def build_alerts_response(
     }
 
 
+def run_scheduled_alert_rules(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    alert_store: SupabaseAlertStore,
+    *,
+    run_date: date,
+    force: bool,
+    limit: int,
+) -> dict[str, Any]:
+    rules = alert_store.list_due_rules(run_date=run_date, force=force)[:limit]
+    results = []
+    for rule in rules:
+        result = run_scheduled_alert_rule(
+            client,
+            watchlist_client,
+            alert_store,
+            rule=rule,
+            run_date=run_date,
+        )
+        results.append(result)
+    return {
+        "run_date": run_date.isoformat(),
+        "force": force,
+        "processed": len(results),
+        "results": results,
+    }
+
+
+def run_scheduled_alert_rule(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    alert_store: SupabaseAlertStore,
+    *,
+    rule: ScheduledAlertRule,
+    run_date: date,
+) -> dict[str, Any]:
+    try:
+        payload = build_alerts_response(
+            client,
+            watchlist_client,
+            alert_payload_from_rule(rule),
+        )
+    except Exception as exc:
+        alert_store.insert_run(
+            rule=rule,
+            run_date=run_date,
+            trigger="scheduled",
+            status="failed",
+            error=str(exc),
+        )
+        alert_store.mark_rule_ran(rule_id=rule.id, run_date=run_date)
+        return {
+            "rule_id": rule.id,
+            "name": rule.name,
+            "status": "failed",
+            "error": str(exc),
+        }
+
+    alert_store.insert_run(
+        rule=rule,
+        run_date=run_date,
+        trigger="scheduled",
+        status="success",
+        payload=payload,
+    )
+    alert_store.mark_rule_ran(rule_id=rule.id, run_date=run_date)
+    return {
+        "rule_id": rule.id,
+        "name": rule.name,
+        "status": "success",
+        "alert_count": payload["meta"]["alert_count"],
+        "high_alert_count": payload["meta"]["high_alert_count"],
+    }
+
+
 def response_payload(
     images: list[RenderedImage],
     provider: str,
@@ -971,6 +1126,25 @@ def max_alerts(payload: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         value = DEFAULT_ALERT_LIMIT
     return max(1, min(value, MAX_ALERT_LIMIT))
+
+
+def scheduled_rule_limit(payload: dict[str, Any]) -> int:
+    raw = payload.get("limit") or DEFAULT_SCHEDULED_RULE_LIMIT
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_SCHEDULED_RULE_LIMIT
+    return max(1, min(value, MAX_SCHEDULED_RULE_LIMIT))
+
+
+def scheduled_run_date(payload: dict[str, Any]) -> date:
+    raw = payload.get("run_date")
+    if raw in (None, ""):
+        return datetime.now(UTC).date()
+    try:
+        return date.fromisoformat(str(raw)[:10])
+    except ValueError as exc:
+        raise ValueError("run_date must be an ISO date") from exc
 
 
 def alert_volatility_threshold(payload: dict[str, Any]) -> float:
