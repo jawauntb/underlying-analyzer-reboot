@@ -17,6 +17,7 @@ const modeTitles = {
   "ridge-growth": "Ridge Growth",
   "flow-compass": "Flow Compass",
   cockpit: "Watchlist Cockpit",
+  alerts: "Alert Digest",
   portfolio: "Portfolio",
   volatility: "Volatility",
   analysis: "Stock Brief",
@@ -35,6 +36,8 @@ const modeContracts = {
     "Scores main bias from signed volume, trend, momentum, value location, and relative volatility direction.",
   cockpit:
     "Ranks a watchlist by scanner strength, Ridge state, Flow Compass, auction location, and risk so the first names to inspect are obvious.",
+  alerts:
+    "Turns the cockpit run into a prioritized digest of setups, risk flags, flow shifts, auction breaks, and volatility alerts.",
   portfolio:
     "Builds a watchlist portfolio run; compare return, drawdown, volatility, and benchmark alpha before sizing ideas.",
   volatility:
@@ -52,6 +55,7 @@ const fieldRules = {
   "ridge-growth": [...sharedFields],
   "flow-compass": [...sharedFields, "period"],
   cockpit: [...sharedFields, "period"],
+  alerts: [...sharedFields, "period"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
   volatility: [...sharedFields],
   analysis: [...sharedFields],
@@ -114,6 +118,8 @@ form.addEventListener("submit", async (event) => {
       await fetchAnalysis(payload);
     } else if (state.mode === "cockpit") {
       await fetchCockpit(payload);
+    } else if (state.mode === "alerts") {
+      await fetchAlerts(payload);
     } else {
       await fetchChart(payload);
     }
@@ -250,6 +256,24 @@ async function fetchCockpit(payload) {
   exportButton.disabled = false;
   researchLibrary.setCanSave(true);
   renderCockpit(data);
+  renderWarnings(data.meta?.errors || []);
+}
+
+async function fetchAlerts(payload) {
+  const response = await fetch("/api/watchlists/alerts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Could not build alerts");
+  }
+  sourceChip.textContent = data.provider || "provider";
+  state.lastExport = data.export || data;
+  exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  renderAlerts(data);
   renderWarnings(data.meta?.errors || []);
 }
 
@@ -544,6 +568,123 @@ function renderCockpit(data) {
   stack.className = "brief-stack";
   stack.append(cockpitTable(rows));
   imagesEl.append(stack);
+}
+
+function renderAlerts(data) {
+  imagesEl.innerHTML = "";
+  emptyState.hidden = true;
+  const alerts = data.alerts || data.export?.alerts || [];
+  const digest = data.digest || data.export?.digest || {};
+  summaryEl.innerHTML = "";
+  summaryEl.hidden = false;
+  summaryEl.append(summaryItem("Alerts", alerts.length));
+  summaryEl.append(summaryItem("High", data.meta?.high_alert_count || 0));
+  if (data.meta?.medium_alert_count) {
+    summaryEl.append(summaryItem("Medium", data.meta.medium_alert_count));
+  }
+  if (data.meta?.watchlist_name) {
+    summaryEl.append(summaryItem("Source", data.meta.watchlist_name));
+  }
+  if (data.meta?.period) {
+    summaryEl.append(summaryItem("Window", String(data.meta.period).toUpperCase()));
+  }
+
+  const stack = document.createElement("div");
+  stack.className = "brief-stack";
+  stack.append(alertDigestPanel(digest), alertQueue(alerts));
+  imagesEl.append(stack);
+}
+
+function alertDigestPanel(digest) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel alert-digest-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Alert Digest";
+  const headline = document.createElement("p");
+  headline.className = "alert-headline";
+  headline.textContent = digest.headline || "No alerts returned.";
+  const summary = document.createElement("p");
+  summary.className = "alert-digest-copy";
+  summary.textContent = digest.summary || "";
+  const grid = document.createElement("div");
+  grid.className = "alert-digest-grid";
+  const severity = digest.severity_counts || {};
+  const lanes = digest.lane_counts || {};
+  grid.append(
+    summaryItem("High", severity.High || 0),
+    summaryItem("Medium", severity.Medium || 0),
+    summaryItem("Priority", lanes.Priority || 0),
+    summaryItem("Risk", lanes.Risk || 0),
+  );
+  panel.append(title, headline, summary, grid);
+  if (digest.next_steps?.length) {
+    const list = document.createElement("ul");
+    list.className = "alert-next-steps";
+    digest.next_steps.forEach((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      list.append(item);
+    });
+    panel.append(list);
+  }
+  return panel;
+}
+
+function alertQueue(alerts) {
+  const panel = document.createElement("section");
+  panel.className = "scanner-panel alert-panel";
+  const title = document.createElement("h3");
+  title.textContent = "Alert Queue";
+  panel.append(title);
+  if (!alerts.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No alerts fired for this run.";
+    panel.append(empty);
+    return panel;
+  }
+  const list = document.createElement("div");
+  list.className = "alert-list";
+  alerts.forEach((alert) => list.append(alertCard(alert)));
+  panel.append(list);
+  return panel;
+}
+
+function alertCard(alert) {
+  const card = document.createElement("article");
+  card.className = `alert-card alert-${String(alert.severity || "info").toLowerCase()}`;
+  const head = document.createElement("div");
+  head.className = "alert-card-head";
+  const badge = document.createElement("span");
+  badge.className = "alert-severity";
+  badge.textContent = alert.severity || "Info";
+  const title = document.createElement("strong");
+  title.textContent = `${alert.ticker || "N/A"} - ${alert.title || "Alert"}`;
+  head.append(badge, title);
+
+  const message = document.createElement("p");
+  message.textContent = alert.message || "";
+  const action = document.createElement("p");
+  action.className = "alert-action";
+  action.textContent = alert.action || "";
+
+  const meta = document.createElement("div");
+  meta.className = "alert-meta";
+  [
+    alert.category,
+    alert.lane,
+    `Score ${formatValue(alert.score)}`,
+    `Rank ${formatValue(alert.rank)}`,
+  ]
+    .filter(Boolean)
+    .forEach((value) => {
+      const chip = document.createElement("span");
+      chip.textContent = value;
+      meta.append(chip);
+    });
+
+  card.append(head, message, action, meta);
+  return card;
 }
 
 function cockpitTable(rows) {
@@ -871,13 +1012,22 @@ function buildResearchRecord() {
 
 function openSavedResearch(record) {
   const payload = record.payload || {};
-  const savedMode = record.mode === "watchlist-cockpit" ? "cockpit" : record.mode;
+  const savedModeMap = {
+    "watchlist-cockpit": "cockpit",
+    "watchlist-alerts": "alerts",
+  };
+  const savedMode = savedModeMap[record.mode] || record.mode;
   setMode(modeTitles[savedMode] ? savedMode : state.mode, { clear: false });
   clearOutput();
   state.lastExport = payload;
   exportButton.disabled = false;
   researchLibrary.setCanSave(true);
   sourceChip.textContent = "saved";
+  if (state.mode === "alerts" || payload.alerts || payload.digest) {
+    renderAlerts(payload);
+    renderWarnings(payload.meta?.errors || []);
+    return;
+  }
   if (state.mode === "cockpit" || payload.rows) {
     renderCockpit(payload);
     renderWarnings(payload.meta?.errors || []);
@@ -902,6 +1052,7 @@ function researchTicker(payload) {
     payload.tickers?.[0],
     payload.meta?.tickers?.[0],
     payload.summaries?.[0]?.ticker,
+    payload.alerts?.[0]?.ticker,
   );
 }
 
