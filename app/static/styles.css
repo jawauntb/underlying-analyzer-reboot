@@ -1083,7 +1083,7 @@ textarea {
 
 .alert-monitor-row-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(68px, auto));
+  grid-template-columns: repeat(3, minmax(58px, auto));
   gap: 8px;
 }
 
@@ -1095,6 +1095,42 @@ textarea {
 
 .alert-run-row {
   border-color: rgba(255, 201, 74, 0.26);
+}
+
+.alert-run-card {
+  display: grid;
+  gap: 0;
+}
+
+.alert-delivery-detail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  border: 1px solid rgba(87, 217, 255, 0.18);
+  border-top: 0;
+  background: rgba(5, 11, 15, 0.52);
+}
+
+.alert-delivery-detail dt,
+.alert-delivery-detail dd {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 9px;
+  overflow-wrap: anywhere;
+}
+
+.alert-delivery-detail dt {
+  color: var(--cyan);
+  font-size: 0.62rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.alert-delivery-detail dd {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 900;
 }
 
 .cockpit-panel {
@@ -2209,6 +2245,10 @@ body.is-loading .source-chip::after {
   .alert-monitor-row-actions,
   .research-head {
     grid-template-columns: 1fr;
+  }
+
+  .alert-delivery-detail {
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
   }
 
   .research-head {

@@ -166,7 +166,8 @@ For magic links, add local and deployed URLs to Supabase Auth redirect URLs, inc
 Alert Monitor uses `alert_rules`, `alert_runs`, and `alert_deliveries` with owner-scoped RLS.
 Browser users can save and manually run their own rules with the anon key, while the daily
 scheduler uses the server-only service-role key behind `/api/alerts/scheduled/run`. Rules can also
-deliver scheduled digests to HTTPS webhooks, with delivery history recorded per run.
+deliver scheduled digests to HTTPS webhooks, with delivery history recorded per run. Webhook rules
+can send a server-side test delivery from the Alert Monitor before waiting for the daily scheduler.
 
 ## Quality Checks
 

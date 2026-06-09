@@ -234,6 +234,12 @@ class FakeAlertStore:
             if rule.last_run_date is None or rule.last_run_date < run_date
         ]
 
+    def get_rule_for_user(self, *, rule_id: str, user_id: str) -> ScheduledAlertRule | None:
+        for rule in self.rules:
+            if rule.id == rule_id and rule.user_id == user_id:
+                return rule
+        return None
+
     def insert_run(
         self,
         *,
@@ -725,6 +731,119 @@ def test_deliver_alert_webhook_rejects_local_targets() -> None:
     assert result.destination == "https://127.0.0.1"
     assert "private or local" in str(result.error)
     assert session.requests == []
+
+
+def test_deliver_alert_webhook_test_mode_sends_without_fired_alerts() -> None:
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Test delivery",
+        source_url=None,
+        tickers=["AAPL"],
+        period="1y",
+        max_results=1,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        delivery_channel="webhook",
+        delivery_webhook_url="https://hooks.example.test/underlying",
+        delivery_min_severity="high",
+        metadata={},
+        last_run_date=None,
+    )
+    session = FakeWebhookSession(status_code=204)
+
+    result = deliver_alert_webhook(
+        rule=rule,
+        run_date=date(2026, 6, 9),
+        alert_run_id="run-1",
+        payload={
+            "digest": {"headline": "Webhook test"},
+            "meta": {"alert_count": 0, "high_alert_count": 0, "test": True},
+        },
+        session=cast(Any, session),
+        require_alerts=False,
+    )
+
+    assert result.status == "success"
+    assert result.response_status == 204
+    assert session.requests[0]["url"] == "https://hooks.example.test/underlying"
+
+
+def test_alert_webhook_test_requires_supabase_user_token(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    app = create_app()
+    app.config["SUPABASE_URL"] = "https://example.supabase.co"
+    app.config["SUPABASE_ANON_KEY"] = "public-anon"
+    app.config["SUPABASE_SERVICE_ROLE_KEY"] = "service-secret"
+    client = app.test_client()
+
+    response = client.post("/api/alerts/webhook/test", json={"rule_id": "rule-1"})
+
+    payload = response.get_json()
+    assert response.status_code == 401
+    assert payload["error"] == "Supabase authorization is required"
+
+
+def test_alert_webhook_test_sends_and_records_delivery(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Daily delivery",
+        source_url=None,
+        tickers=["AAPL"],
+        period="1y",
+        max_results=2,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        delivery_channel="webhook",
+        delivery_webhook_url="https://hooks.example.test/underlying",
+        delivery_min_severity="any",
+        metadata={},
+        last_run_date=None,
+    )
+    store = FakeAlertStore([rule])
+    delivery_calls: list[dict[str, object]] = []
+
+    def fake_user_id_from_bearer(header_value: str | None) -> str:
+        assert header_value == "Bearer user-token"
+        return "user-1"
+
+    def fake_deliver_alert_webhook(**kwargs: object) -> AlertDeliveryResult:
+        delivery_calls.append(kwargs)
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="success",
+            destination="https://hooks.example.test",
+            response_status=202,
+        )
+
+    monkeypatch.setattr(main_module, "supabase_user_id_from_bearer", fake_user_id_from_bearer)
+    monkeypatch.setattr(main_module, "deliver_alert_webhook", fake_deliver_alert_webhook)
+    app = create_app()
+    app.config["ALERT_STORE"] = store
+    client = app.test_client()
+
+    response = client.post(
+        "/api/alerts/webhook/test",
+        headers={"Authorization": "Bearer user-token"},
+        json={"rule_id": "rule-1", "run_date": "2026-06-09"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["rule_id"] == "rule-1"
+    assert payload["run_id"] == "run-1"
+    assert payload["delivery"]["status"] == "success"
+    assert store.runs[0]["trigger"] == "manual"
+    assert store.runs[0]["status"] == "success"
+    saved_payload = cast(dict[str, Any], store.runs[0]["payload"])
+    assert saved_payload["digest"]["headline"] == "Webhook test: Daily delivery"
+    assert saved_payload["meta"]["test"] is True
+    assert delivery_calls[0]["require_alerts"] is False
+    assert delivery_calls[0]["alert_run_id"] == "run-1"
+    assert store.deliveries[0]["alert_run_id"] == "run-1"
+    assert store.delivery_updates[0]["alert_run_id"] == "run-1"
 
 
 def test_alert_scheduler_run_processes_due_rule(monkeypatch: MonkeyPatch) -> None:

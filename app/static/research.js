@@ -565,7 +565,7 @@ async function loadAlertMonitor(panel, state, callbacks, quiet) {
     state.client
       .from("alert_deliveries")
       .select(
-        "id,alert_run_id,channel,status,destination,response_status,error,created_at",
+        "id,alert_run_id,channel,status,destination,response_status,error,payload,created_at",
       )
       .order("created_at", { ascending: false })
       .limit(ALERT_RUN_LIMIT * 3),
@@ -638,6 +638,46 @@ async function runAlertRule(panel, state, callbacks, row) {
     showAlertMonitorStatus(panel, "Alert run saved to inbox.");
   } catch (error) {
     showAlertMonitorStatus(panel, error.message || "Could not run alert rule.");
+  }
+}
+
+async function testAlertWebhook(panel, state, callbacks, row, button) {
+  if (!state.user) {
+    showAlertMonitorStatus(panel, "Sign in before testing webhook delivery.");
+    return;
+  }
+  if (row.delivery_channel !== "webhook" || !row.delivery_webhook_url) {
+    showAlertMonitorStatus(panel, "Add webhook delivery to this rule before testing.");
+    return;
+  }
+
+  button.disabled = true;
+  showAlertMonitorStatus(panel, `Testing webhook for ${row.name || "alert rule"}...`);
+  try {
+    const { data: sessionData, error: sessionError } = await state.client.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (sessionError || !token) {
+      throw new Error(sessionError?.message || "Sign in again before testing webhook delivery.");
+    }
+    const response = await fetch("/api/alerts/webhook/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ rule_id: row.id }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not test webhook delivery.");
+    }
+    await loadAlertMonitor(panel, state, callbacks, true);
+    const status = payload.delivery?.status || "sent";
+    showAlertMonitorStatus(panel, `Webhook test ${status}.`);
+  } catch (error) {
+    showAlertMonitorStatus(panel, error.message || "Could not test webhook delivery.");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -805,22 +845,30 @@ function alertRuleRow(panel, state, callbacks, row) {
   run.type = "button";
   run.textContent = "Run";
   run.addEventListener("click", () => runAlertRule(panel, state, callbacks, row));
+  const test = document.createElement("button");
+  test.className = "download-link";
+  test.type = "button";
+  test.textContent = "Test";
+  test.disabled = row.delivery_channel !== "webhook" || !row.delivery_webhook_url;
+  test.addEventListener("click", () => testAlertWebhook(panel, state, callbacks, row, test));
   const remove = document.createElement("button");
   remove.className = "download-link saved-watchlist-delete";
   remove.type = "button";
   remove.textContent = "Delete";
   remove.addEventListener("click", () => deleteAlertRule(panel, state, callbacks, row));
-  actions.append(run, remove);
+  actions.append(run, test, remove);
 
   item.append(body, actions);
   return item;
 }
 
 function alertRunRow(callbacks, row, delivery) {
-  const item = document.createElement("button");
-  item.className = "research-row alert-run-row";
-  item.type = "button";
-  item.addEventListener("click", () => callbacks.openRun(row));
+  const item = document.createElement("div");
+  item.className = "alert-run-card";
+  const button = document.createElement("button");
+  button.className = "research-row alert-run-row";
+  button.type = "button";
+  button.addEventListener("click", () => callbacks.openRun({ ...row, delivery }));
 
   const title = document.createElement("strong");
   const headline = row.digest?.headline || row.error || "Alert run";
@@ -834,7 +882,12 @@ function alertRunRow(callbacks, row, delivery) {
     relativeDate(row.created_at || row.run_date),
   ].join(" / ");
 
-  item.append(title, meta);
+  button.append(title, meta);
+  item.append(button);
+  const detail = deliveryDetail(row, delivery);
+  if (detail) {
+    item.append(detail);
+  }
   return item;
 }
 
@@ -862,6 +915,35 @@ function deliveryRunLabel(row, delivery) {
   }
   const channel = delivery?.channel || row.delivery_channel || "delivery";
   return `${channel} ${status}`;
+}
+
+function deliveryDetail(row, delivery) {
+  const status = delivery?.status || row.delivery_status;
+  if (!status || status === "none") {
+    return null;
+  }
+  const detail = document.createElement("dl");
+  detail.className = "alert-delivery-detail";
+  appendDeliveryMetric(detail, "Status", status);
+  appendDeliveryMetric(detail, "Destination", delivery?.destination || "n/a");
+  appendDeliveryMetric(
+    detail,
+    "HTTP",
+    delivery?.response_status ? String(delivery.response_status) : "n/a",
+  );
+  appendDeliveryMetric(detail, "Time", relativeDate(delivery?.created_at || row.delivered_at));
+  if (delivery?.error) {
+    appendDeliveryMetric(detail, "Error", delivery.error);
+  }
+  return detail;
+}
+
+function appendDeliveryMetric(root, label, value) {
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const description = document.createElement("dd");
+  description.textContent = value || "n/a";
+  root.append(term, description);
 }
 
 function sectionKicker(label) {
