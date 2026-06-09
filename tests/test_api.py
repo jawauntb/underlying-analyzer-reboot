@@ -293,7 +293,11 @@ def test_index_includes_underlying_tool_dock() -> None:
     assert response.status_code == 200
     for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline"):
         assert route in response.data
-    for mode in (b'data-mode="ridge-growth"', b'data-mode="flow-compass"'):
+    for mode in (
+        b'data-mode="ridge-growth"',
+        b'data-mode="flow-compass"',
+        b'data-mode="alerts"',
+    ):
         assert mode in response.data
 
 
@@ -473,6 +477,47 @@ def test_watchlist_cockpit_endpoint_returns_400_when_all_symbols_fail() -> None:
     assert response.status_code == 400
     assert "AAPL unavailable" in payload["error"]
     assert "MSFT unavailable" in payload["error"]
+
+
+def test_watchlist_alerts_endpoint_returns_digest_and_limited_alerts() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["WATCHLIST_CLIENT"] = FakeWatchlistClient()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/watchlists/alerts",
+        json={
+            "watchlist_url": "https://www.tradingview.com/watchlists/334089913/",
+            "max_alerts": 2,
+        },
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert len(payload["alerts"]) <= 2
+    assert payload["digest"]["headline"]
+    assert payload["meta"]["alert_count"] == len(payload["alerts"])
+    assert payload["meta"]["result_count"] == 2
+    assert payload["watchlist"]["name"] == "Test Watchlist"
+    assert payload["export"]["mode"] == "watchlist-alerts"
+    assert payload["export"]["alerts"] == payload["alerts"]
+    assert [row["rank"] for row in payload["rows"]] == [1, 2]
+
+
+def test_watchlist_alerts_endpoint_continues_after_symbol_error() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = PartiallyFailingMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/watchlists/alerts", json={"tickers": ["AAPL", "MSFT"]})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert [row["ticker"] for row in payload["rows"]] == ["AAPL"]
+    assert payload["meta"]["error_count"] == 1
+    assert payload["meta"]["errors"] == [{"ticker": "MSFT", "error": "MSFT unavailable"}]
+    assert payload["export"]["mode"] == "watchlist-alerts"
 
 
 def test_portfolio_endpoint_can_use_watchlist_url() -> None:

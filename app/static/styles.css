@@ -991,6 +991,136 @@ textarea {
   white-space: nowrap;
 }
 
+.alert-digest-panel {
+  border-color: rgba(87, 217, 255, 0.28);
+}
+
+.alert-headline {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 1.08rem;
+  font-weight: 900;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.alert-digest-copy {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-weight: 900;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.alert-digest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.alert-next-steps {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.alert-panel {
+  border-color: rgba(255, 201, 74, 0.26);
+}
+
+.alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.alert-card {
+  display: grid;
+  min-width: 0;
+  gap: 9px;
+  border: 1px solid rgba(87, 217, 255, 0.18);
+  background:
+    linear-gradient(90deg, rgba(87, 217, 255, 0.08), transparent),
+    rgba(3, 8, 11, 0.58);
+  padding: 12px;
+}
+
+.alert-high {
+  border-color: rgba(255, 105, 93, 0.5);
+  background:
+    linear-gradient(90deg, rgba(255, 105, 93, 0.13), transparent),
+    rgba(3, 8, 11, 0.66);
+}
+
+.alert-medium {
+  border-color: rgba(255, 201, 74, 0.42);
+  background:
+    linear-gradient(90deg, rgba(255, 201, 74, 0.11), transparent),
+    rgba(3, 8, 11, 0.64);
+}
+
+.alert-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.alert-card-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.alert-severity,
+.alert-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border: 1px solid rgba(87, 217, 255, 0.26);
+  background: rgba(5, 11, 15, 0.74);
+  color: var(--cyan);
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.alert-high .alert-severity {
+  border-color: rgba(255, 105, 93, 0.56);
+  color: #ffd5d0;
+}
+
+.alert-medium .alert-severity {
+  border-color: rgba(255, 201, 74, 0.58);
+  color: #ffe7a8;
+}
+
+.alert-card p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 900;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.alert-card .alert-action {
+  color: var(--text);
+}
+
+.alert-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .generate-button {
   grid-column: 1 / -1;
   width: 100%;

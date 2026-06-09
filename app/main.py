@@ -20,6 +20,12 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app.alerts import (
+    DEFAULT_ALERT_LIMIT,
+    DEFAULT_VOLATILITY_THRESHOLD,
+    MAX_ALERT_LIMIT,
+    build_alert_digest,
+)
 from app.analysis import build_scanner_rows, summarize_stock
 from app.anthropic import DEFAULT_ANTHROPIC_MODEL, AnthropicError
 from app.charts import (
@@ -218,6 +224,20 @@ def create_app() -> Flask:
         except Exception as exc:  # pragma: no cover - defensive request boundary
             app.logger.exception("Unexpected watchlist cockpit error")
             return jsonify({"error": f"Unexpected watchlist cockpit error: {exc}"}), 500
+
+    @app.post("/api/watchlists/alerts")
+    def watchlist_alerts() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            response = build_alerts_response(
+                get_market_client(), get_watchlist_client(), payload
+            )
+            return jsonify(response)
+        except (ValueError, WatchlistError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover - defensive request boundary
+            app.logger.exception("Unexpected watchlist alerts error")
+            return jsonify({"error": f"Unexpected watchlist alerts error: {exc}"}), 500
 
     @app.post("/api/tools/fax")
     def stock_fax_tool() -> Any:
@@ -832,6 +852,51 @@ def build_cockpit_response(
     }
 
 
+def build_alerts_response(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    cockpit = build_cockpit_response(client, watchlist_client, payload)
+    alert_digest = build_alert_digest(
+        cockpit["rows"],
+        max_alerts=max_alerts(payload),
+        volatility_threshold=alert_volatility_threshold(payload),
+    )
+    alerts = alert_digest["alerts"]
+    digest = alert_digest["digest"]
+    meta = {
+        **cockpit["meta"],
+        "alert_count": len(alerts),
+        "high_alert_count": digest["severity_counts"].get("High", 0),
+        "medium_alert_count": digest["severity_counts"].get("Medium", 0),
+        "info_alert_count": digest["severity_counts"].get("Info", 0),
+        "volatility_threshold": alert_volatility_threshold(payload),
+    }
+    export = {
+        **cockpit["export"],
+        "generated_at": datetime.now(UTC).isoformat(),
+        "mode": "watchlist-alerts",
+        "provider_note": "Watchlist alert digest",
+        "tickers": [str(row["ticker"]) for row in cockpit["rows"]],
+        "image_files": [],
+        "meta": meta,
+    }
+    export["rows"] = cockpit["rows"]
+    export["alerts"] = alerts
+    export["digest"] = digest
+    return {
+        "alerts": alerts,
+        "digest": digest,
+        "rows": cockpit["rows"],
+        "provider": cockpit["provider"],
+        "provider_note": "Watchlist alert digest",
+        "meta": meta,
+        "watchlist": cockpit["watchlist"],
+        "export": export,
+    }
+
+
 def response_payload(
     images: list[RenderedImage],
     provider: str,
@@ -897,6 +962,28 @@ def max_results(payload: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         value = DEFAULT_MAX_RESULTS
     return max(1, min(value, MAX_RESULTS_CAP))
+
+
+def max_alerts(payload: dict[str, Any]) -> int:
+    raw = payload.get("max_alerts") or DEFAULT_ALERT_LIMIT
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_ALERT_LIMIT
+    return max(1, min(value, MAX_ALERT_LIMIT))
+
+
+def alert_volatility_threshold(payload: dict[str, Any]) -> float:
+    raw = payload.get("volatility_threshold")
+    if raw in (None, ""):
+        return DEFAULT_VOLATILITY_THRESHOLD
+    if not isinstance(raw, int | float | str):
+        return DEFAULT_VOLATILITY_THRESHOLD
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_VOLATILITY_THRESHOLD
+    return max(0.0, min(value, 2.0))
 
 
 def collect_benchmark(
