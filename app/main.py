@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import requests
 from flask import (
     Flask,
     Response,
@@ -75,6 +76,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
 RIDGE_GROWTH_PERIODS = ("6mo", "1y", "2y")
+
+
+class SupabaseAuthError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -266,6 +271,26 @@ def create_app() -> Flask:
             }
         )
 
+    @app.post("/api/alerts/webhook/test")
+    def alert_webhook_test() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            user_id = supabase_user_id_from_bearer(request.headers.get("Authorization"))
+            response = run_alert_webhook_test(
+                get_alert_store(),
+                user_id=user_id,
+                rule_id=str(payload.get("rule_id") or "").strip(),
+                run_date=scheduled_run_date(payload),
+            )
+            return jsonify(response)
+        except SupabaseAuthError as exc:
+            return jsonify({"error": str(exc)}), 401
+        except (ValueError, AlertStoreError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover - defensive delivery boundary
+            app.logger.exception("Unexpected webhook test error")
+            return jsonify({"error": f"Unexpected webhook test error: {exc}"}), 500
+
     @app.post("/api/alerts/scheduled/run")
     def scheduled_alert_run() -> Any:
         auth_error = scheduler_auth_error(request.headers.get("Authorization"))
@@ -414,6 +439,43 @@ def scheduler_auth_error(header_value: str | None) -> str | None:
     if not hmac.compare_digest(provided, expected):
         return "Scheduler authorization is invalid"
     return None
+
+
+def supabase_user_id_from_bearer(header_value: str | None) -> str:
+    prefix = "Bearer "
+    if not header_value or not header_value.startswith(prefix):
+        raise SupabaseAuthError("Supabase authorization is required")
+    token = header_value.removeprefix(prefix).strip()
+    if not token:
+        raise SupabaseAuthError("Supabase authorization is required")
+
+    supabase_url = str(current_app.config.get("SUPABASE_URL") or "").rstrip("/")
+    supabase_anon_key = str(current_app.config.get("SUPABASE_ANON_KEY") or "")
+    if not supabase_url or not supabase_anon_key:
+        raise SupabaseAuthError("Supabase auth is not configured")
+
+    try:
+        response = requests.get(
+            f"{supabase_url}/auth/v1/user",
+            headers={
+                "apikey": supabase_anon_key,
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise SupabaseAuthError("Supabase authorization could not be verified") from exc
+    if response.status_code >= 400:
+        raise SupabaseAuthError("Supabase authorization is invalid")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise SupabaseAuthError("Supabase authorization is invalid") from exc
+    user_id = str(data.get("id") or "").strip()
+    if not user_id:
+        raise SupabaseAuthError("Supabase authorization is invalid")
+    return user_id
 
 
 def public_env(*names: str) -> str | None:
@@ -1091,6 +1153,105 @@ def run_alert_delivery(
         )
         alert_store.update_run_delivery_status(alert_run_id=alert_run_id, delivery=delivery)
     return delivery
+
+
+def run_alert_webhook_test(
+    alert_store: SupabaseAlertStore,
+    *,
+    user_id: str,
+    rule_id: str,
+    run_date: date,
+) -> dict[str, Any]:
+    if not rule_id:
+        raise ValueError("rule_id is required")
+
+    rule = alert_store.get_rule_for_user(rule_id=rule_id, user_id=user_id)
+    if rule is None:
+        raise ValueError("Alert rule was not found")
+    if rule.delivery_channel != "webhook" or not rule.delivery_webhook_url:
+        raise ValueError("Alert rule does not have webhook delivery configured")
+
+    payload = alert_webhook_test_payload(rule=rule, run_date=run_date)
+    run_id = alert_store.insert_run(
+        rule=rule,
+        run_date=run_date,
+        trigger="manual",
+        status="success",
+        payload=payload,
+    )
+    delivery = deliver_alert_webhook(
+        rule=rule,
+        run_date=run_date,
+        alert_run_id=run_id,
+        payload=payload,
+        require_alerts=False,
+    )
+    if run_id:
+        alert_store.insert_delivery(
+            rule=rule,
+            alert_run_id=run_id,
+            delivery=delivery,
+            payload=payload,
+        )
+        alert_store.update_run_delivery_status(alert_run_id=run_id, delivery=delivery)
+    return {
+        "rule_id": rule.id,
+        "run_id": run_id,
+        "delivery": alert_delivery_response(delivery),
+        "digest": payload["digest"],
+        "meta": payload["meta"],
+    }
+
+
+def alert_webhook_test_payload(
+    *,
+    rule: ScheduledAlertRule,
+    run_date: date,
+) -> dict[str, Any]:
+    ticker = rule.tickers[0] if rule.tickers else "TEST"
+    return {
+        "digest": {
+            "headline": f"Webhook test: {rule.name}",
+            "summary": "Test delivery from The Underlying Alert Monitor.",
+            "severity_counts": {"High": 0, "Medium": 0, "Info": 1},
+            "next_steps": ["Confirm this payload reached the expected destination."],
+        },
+        "alerts": [
+            {
+                "ticker": ticker,
+                "severity": "Info",
+                "signal": "Webhook test",
+                "message": "This is a test alert delivery.",
+                "action": "No market action required.",
+            }
+        ],
+        "rows": [],
+        "provider": "alert-monitor",
+        "provider_note": "Webhook test delivery",
+        "meta": {
+            "alert_count": 1,
+            "high_alert_count": 0,
+            "medium_alert_count": 0,
+            "info_alert_count": 1,
+            "run_date": run_date.isoformat(),
+            "test": True,
+        },
+        "export": {
+            "mode": "alert-webhook-test",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "tickers": rule.tickers,
+        },
+    }
+
+
+def alert_delivery_response(delivery: AlertDeliveryResult) -> dict[str, Any]:
+    return {
+        "channel": delivery.channel,
+        "status": delivery.status,
+        "destination": delivery.destination,
+        "response_status": delivery.response_status,
+        "error": delivery.error,
+    }
 
 
 def response_payload(

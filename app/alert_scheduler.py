@@ -84,6 +84,21 @@ class SupabaseAlertStore:
             if rule.last_run_date is None or rule.last_run_date < run_date
         ]
 
+    def get_rule_for_user(self, *, rule_id: str, user_id: str) -> ScheduledAlertRule | None:
+        rows = self._request(
+            "GET",
+            "alert_rules",
+            params={
+                "select": "*",
+                "id": f"eq.{rule_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        )
+        if isinstance(rows, list) and rows:
+            return scheduled_rule_from_row(rows[0])
+        return None
+
     def insert_run(
         self,
         *,
@@ -308,6 +323,7 @@ def deliver_alert_webhook(
     alert_run_id: str | None,
     payload: dict[str, Any],
     session: requests.Session | None = None,
+    require_alerts: bool = True,
 ) -> AlertDeliveryResult:
     destination_url = rule.delivery_webhook_url
     if rule.delivery_channel != "webhook" or not destination_url:
@@ -327,14 +343,14 @@ def deliver_alert_webhook(
     meta = meta_value if isinstance(meta_value, dict) else {}
     alert_count = int(meta.get("alert_count") or 0)
     high_alert_count = int(meta.get("high_alert_count") or 0)
-    if alert_count <= 0:
+    if require_alerts and alert_count <= 0:
         return AlertDeliveryResult(
             channel="webhook",
             status="skipped",
             destination=redacted_webhook_destination(webhook_url),
             error="No alerts fired.",
         )
-    if rule.delivery_min_severity == "high" and high_alert_count <= 0:
+    if require_alerts and rule.delivery_min_severity == "high" and high_alert_count <= 0:
         return AlertDeliveryResult(
             channel="webhook",
             status="skipped",
