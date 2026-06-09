@@ -88,6 +88,7 @@ mountSavedWatchlistCockpit({
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#chart-form .form-actions"),
   getRecord: buildResearchRecord,
+  getTicker: () => payloadFromForm().ticker,
   openRecord: openSavedResearch,
 });
 mountAlertMonitor({

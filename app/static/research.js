@@ -3,6 +3,7 @@ const RECENT_LIMIT = 5;
 const ALERT_RULE_LIMIT = 8;
 const ALERT_RUN_LIMIT = 5;
 const WATCHLIST_PREVIEW_LIMIT = 5;
+const TIMELINE_LIMIT = 12;
 
 let configPromise = null;
 let authPromise = null;
@@ -26,7 +27,7 @@ export function mountAccountControls({ root }) {
   initAuth();
 }
 
-export function mountResearchLibrary({ insertAfter, getRecord, modeFilter, openRecord }) {
+export function mountResearchLibrary({ insertAfter, getRecord, getTicker, modeFilter, openRecord }) {
   if (!insertAfter) {
     return { root: null, setCanSave() {} };
   }
@@ -47,7 +48,7 @@ export function mountResearchLibrary({ insertAfter, getRecord, modeFilter, openR
     },
   };
 
-  setupResearchLibrary(panel, state, { getRecord, modeFilter, openRecord });
+  setupResearchLibrary(panel, state, { getRecord, getTicker, modeFilter, openRecord });
   return { ...controls, root: panel.root };
 }
 
@@ -95,7 +96,7 @@ export function mountAlertMonitor({ insertAfter, getDraft, openRun, runRule }) {
   };
 }
 
-export function mountSavedWatchlistCockpit({ root, getDraft, applyWatchlist }) {
+export function mountSavedWatchlistCockpit({ root, getDraft, applyWatchlist, runCockpit, runAlerts }) {
   if (!root) {
     return { refresh() {} };
   }
@@ -105,7 +106,7 @@ export function mountSavedWatchlistCockpit({ root, getDraft, applyWatchlist }) {
     client: null,
     user: null,
   };
-  const callbacks = { getDraft, applyWatchlist };
+  const callbacks = { getDraft, applyWatchlist, runCockpit, runAlerts };
   bindSavedWatchlistEvents(panel, state, callbacks);
   subscribeAuth(async (auth) => {
     state.client = auth.client;
@@ -175,6 +176,13 @@ function bindResearchEvents(panel, state, callbacks) {
   panel.signOut.addEventListener("click", () => signOutSession(panel, state));
   panel.save.addEventListener("click", () => saveResearch(panel, state, callbacks));
   panel.recent.addEventListener("click", () => loadRecentResearch(panel, state, callbacks, false));
+  panel.timeline.addEventListener("click", () => loadTickerTimeline(panel, state, callbacks, false));
+  panel.timelineTicker.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadTickerTimeline(panel, state, callbacks, false);
+    }
+  });
 }
 
 function bindSavedWatchlistEvents(panel, state, callbacks) {
@@ -367,6 +375,51 @@ async function loadRecentResearch(panel, state, callbacks, quiet) {
   if (!quiet) {
     showResearchStatus(panel, data?.length ? "Recent research loaded." : "No saved research yet.");
   }
+}
+
+async function loadTickerTimeline(panel, state, callbacks, quiet) {
+  if (!state.user) {
+    showResearchStatus(panel, "Sign in to load a ticker timeline.");
+    return;
+  }
+
+  const ticker = timelineTicker(panel, callbacks);
+  if (!ticker) {
+    showResearchStatus(panel, "Enter a ticker for the timeline.");
+    panel.timelineTicker.focus();
+    return;
+  }
+
+  panel.timelineTicker.value = ticker;
+  if (!quiet) {
+    showResearchStatus(panel, `Loading ${ticker} timeline...`);
+  }
+
+  const { data, error } = await state.client
+    .from("research_runs")
+    .select("id,title,mode,ticker,summary,created_at,payload")
+    .ilike("ticker", ticker)
+    .order("created_at", { ascending: false })
+    .limit(TIMELINE_LIMIT);
+
+  if (error) {
+    showResearchStatus(panel, error.message);
+    return;
+  }
+
+  renderTickerTimeline(panel, data || [], callbacks, ticker);
+  if (!quiet) {
+    showResearchStatus(panel, data?.length ? `${ticker} timeline loaded.` : `No saved ${ticker} research yet.`);
+  }
+}
+
+function timelineTicker(panel, callbacks) {
+  const typed = panel.timelineTicker.value.trim().toUpperCase();
+  if (typed) {
+    return typed;
+  }
+  const record = callbacks.getRecord?.();
+  return normalizeTicker(record?.ticker || callbacks.getTicker?.());
 }
 
 async function saveSavedWatchlist(panel, state, callbacks) {
@@ -740,6 +793,175 @@ function renderRecentResearch(panel, rows, callbacks) {
     item.append(title, meta);
     panel.list.append(item);
   });
+}
+
+function renderTickerTimeline(panel, rows, callbacks, ticker) {
+  panel.list.innerHTML = "";
+  panel.list.hidden = false;
+
+  const root = document.createElement("section");
+  root.className = "ticker-timeline";
+  root.append(timelineHeader(rows, ticker));
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = `No saved ${ticker} research yet.`;
+    root.append(empty);
+    panel.list.append(root);
+    return;
+  }
+
+  const latest = rows[0];
+  const previous = rows[1];
+  const insight = document.createElement("p");
+  insight.className = "ticker-timeline-insight";
+  insight.textContent = timelineChangeText(latest, previous, ticker);
+  root.append(insight);
+
+  const list = document.createElement("div");
+  list.className = "ticker-timeline-list";
+  rows.forEach((row, index) => list.append(timelineRunCard(row, callbacks, index)));
+  root.append(list);
+  panel.list.append(root);
+}
+
+function timelineHeader(rows, ticker) {
+  const header = document.createElement("div");
+  header.className = "ticker-timeline-head";
+  const title = document.createElement("div");
+  title.className = "ticker-timeline-title";
+  const strong = document.createElement("strong");
+  strong.textContent = `${ticker} Timeline`;
+  const span = document.createElement("span");
+  span.textContent = rows.length ? `${rows.length} saved runs` : "No saved runs";
+  title.append(strong, span);
+
+  const metrics = document.createElement("div");
+  metrics.className = "ticker-timeline-metrics";
+  const modes = new Set(rows.map((row) => row.mode).filter(Boolean));
+  metrics.append(
+    previewMetric("Runs", rows.length),
+    previewMetric("Modes", modes.size),
+    previewMetric("Latest", relativeDate(rows[0]?.created_at) || "N/A"),
+  );
+  header.append(title, metrics);
+  return header;
+}
+
+function timelineRunCard(row, callbacks, index) {
+  const card = document.createElement("article");
+  card.className = "ticker-timeline-run";
+  const button = document.createElement("button");
+  button.className = "research-row ticker-timeline-open";
+  button.type = "button";
+  button.addEventListener("click", () => callbacks.openRecord(row));
+
+  const title = document.createElement("strong");
+  title.textContent = row.title || `${row.ticker || "Ticker"} research`;
+  const meta = document.createElement("span");
+  meta.textContent = [index === 0 ? "Latest" : null, row.mode, relativeDate(row.created_at)]
+    .filter(Boolean)
+    .join(" / ");
+  button.append(title, meta);
+
+  const signals = timelineSignals(row);
+  const chips = document.createElement("div");
+  chips.className = "ticker-timeline-chips";
+  [
+    ["Lane", signals.lane],
+    ["Score", formatCompactValue(signals.score)],
+    ["Flow", signals.flow],
+    ["Ridge", signals.ridge],
+    ["Auction", signals.auction],
+    ["Price", formatTimelineCurrency(signals.price)],
+  ]
+    .filter(([_label, value]) => value && value !== "N/A")
+    .forEach(([label, value]) => {
+      const chip = document.createElement("span");
+      chip.textContent = `${label}: ${value}`;
+      chips.append(chip);
+    });
+
+  card.append(button);
+  if (chips.children.length) {
+    card.append(chips);
+  }
+  return card;
+}
+
+function timelineChangeText(latest, previous, ticker) {
+  if (!previous) {
+    return `First saved run in the ${ticker} notebook.`;
+  }
+
+  const latestSignals = timelineSignals(latest);
+  const previousSignals = timelineSignals(previous);
+  const changes = [];
+  appendSignalChange(changes, "Lane", previousSignals.lane, latestSignals.lane);
+  appendSignalChange(changes, "Flow", previousSignals.flow, latestSignals.flow);
+  appendSignalChange(changes, "Ridge", previousSignals.ridge, latestSignals.ridge);
+  appendSignalChange(changes, "Auction", previousSignals.auction, latestSignals.auction);
+  appendScoreChange(changes, previousSignals.score, latestSignals.score);
+  appendPriceChange(changes, previousSignals.price, latestSignals.price);
+
+  if (!changes.length) {
+    return `No headline metric changed since the prior saved ${ticker} run.`;
+  }
+  return `Changed since prior run: ${changes.join("; ")}.`;
+}
+
+function appendSignalChange(changes, label, previous, latest) {
+  if (previous && latest && previous !== latest) {
+    changes.push(`${label} ${previous} -> ${latest}`);
+  }
+}
+
+function appendScoreChange(changes, previous, latest) {
+  const previousNumber = Number(previous);
+  const latestNumber = Number(latest);
+  if (!Number.isFinite(previousNumber) || !Number.isFinite(latestNumber)) {
+    return;
+  }
+  const delta = latestNumber - previousNumber;
+  if (Math.abs(delta) >= 0.01) {
+    changes.push(`Score ${delta >= 0 ? "+" : ""}${formatCompactValue(delta)}`);
+  }
+}
+
+function appendPriceChange(changes, previous, latest) {
+  const previousNumber = Number(previous);
+  const latestNumber = Number(latest);
+  if (!Number.isFinite(previousNumber) || !Number.isFinite(latestNumber) || previousNumber === 0) {
+    return;
+  }
+  const delta = (latestNumber - previousNumber) / previousNumber;
+  if (Math.abs(delta) >= 0.001) {
+    changes.push(`Price ${delta >= 0 ? "+" : ""}${formatTimelinePercent(delta)}`);
+  }
+}
+
+function timelineSignals(row) {
+  const payload = row.payload || {};
+  const ticker = normalizeTicker(
+    row.ticker || payload.ticker || payload.Ticker || payload.meta?.ticker || payload.tickers?.[0],
+  );
+  const cockpitRow = Array.isArray(payload.rows)
+    ? payload.rows.find((candidate) => normalizeTicker(candidate.ticker) === ticker)
+    : null;
+  const summary = payload.summary || cockpitRow?.summary || {};
+  const ridge = payload.ridge || cockpitRow?.ridge || {};
+  const flow = payload.flow || payload.flow_compass || cockpitRow?.flow || {};
+  const auction = payload.auction || cockpitRow?.auction || {};
+
+  return {
+    lane: firstValue(cockpitRow?.lane, payload.lane, payload.meta?.lane),
+    score: firstNumber(cockpitRow?.score, payload.score, payload.meta?.score),
+    flow: firstValue(flow.state, flow.signal),
+    ridge: firstValue(ridge.recommendation, ridge.state),
+    auction: firstValue(auction.location),
+    price: firstNumber(cockpitRow?.price, summary.price, payload.price, payload.meta?.price),
+  };
 }
 
 function renderSavedWatchlists(panel, rows, callbacks, state) {
@@ -1200,6 +1422,10 @@ function createResearchPanel() {
       <button class="export-button" data-role="save" type="button" disabled>Save Research</button>
       <button class="download-link" data-role="recent" type="button">Recent</button>
     </div>
+    <div class="research-timeline-controls" data-role="timeline-controls" hidden>
+      <input data-role="timeline-ticker" autocomplete="off" placeholder="Ticker timeline" />
+      <button class="download-link" data-role="timeline" type="button">Timeline</button>
+    </div>
     <div class="research-list" data-role="list" hidden></div>
   `;
 
@@ -1214,6 +1440,9 @@ function createResearchPanel() {
     signIn: root.querySelector('[data-role="signin"]'),
     signOut: root.querySelector('[data-role="signout"]'),
     status: root.querySelector('[data-role="status"]'),
+    timeline: root.querySelector('[data-role="timeline"]'),
+    timelineControls: root.querySelector('[data-role="timeline-controls"]'),
+    timelineTicker: root.querySelector('[data-role="timeline-ticker"]'),
   };
 }
 
@@ -1340,16 +1569,20 @@ function updateResearchControls(panel, state) {
   if (state.user) {
     panel.auth.hidden = true;
     panel.actions.hidden = false;
+    panel.timelineControls.hidden = false;
     panel.signOut.hidden = false;
     panel.save.disabled = !state.canSave;
+    panel.timeline.disabled = false;
     showResearchStatus(panel, `Signed in as ${state.user.email || "Supabase user"}.`);
     return;
   }
 
   panel.auth.hidden = false;
   panel.actions.hidden = true;
+  panel.timelineControls.hidden = true;
   panel.signOut.hidden = true;
   panel.save.disabled = true;
+  panel.timeline.disabled = true;
   showResearchStatus(panel, "Sign in to save generated research.");
 }
 
@@ -1564,12 +1797,18 @@ function relativeDate(value) {
 
 function normalizeTickerList(value) {
   if (Array.isArray(value)) {
-    return value.map((ticker) => String(ticker).trim().toUpperCase()).filter(Boolean);
+    return value.map((ticker) => normalizeTicker(ticker)).filter(Boolean);
   }
   return String(value || "")
     .split(",")
-    .map((ticker) => ticker.trim().toUpperCase())
+    .map((ticker) => normalizeTicker(ticker))
     .filter(Boolean);
+}
+
+function normalizeTicker(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
 function clampNumber(value, minimum, maximum, fallback) {
@@ -1578,4 +1817,34 @@ function clampNumber(value, minimum, maximum, fallback) {
     return fallback;
   }
   return Math.max(minimum, Math.min(number, maximum));
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== undefined && value !== null && String(value).trim() !== "");
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) {
+      return number;
+    }
+  }
+  return null;
+}
+
+function formatTimelineCurrency(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return `$${number.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function formatTimelinePercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return `${formatCompactValue(number * 100)}%`;
 }
