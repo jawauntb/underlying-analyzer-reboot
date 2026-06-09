@@ -2,6 +2,7 @@ const CONFIG_ENDPOINT = "/api/config";
 const RECENT_LIMIT = 5;
 const ALERT_RULE_LIMIT = 8;
 const ALERT_RUN_LIMIT = 5;
+const WATCHLIST_PREVIEW_LIMIT = 5;
 
 let configPromise = null;
 let authPromise = null;
@@ -754,38 +755,264 @@ function renderSavedWatchlists(panel, rows, callbacks, state) {
   }
 
   rows.forEach((row) => {
-    const item = document.createElement("div");
-    item.className = "saved-watchlist-row";
-
-    const load = document.createElement("button");
-    load.className = "research-row";
-    load.type = "button";
-    load.addEventListener("click", () => {
-      callbacks.applyWatchlist(row);
-      showSavedWatchlistStatus(panel, `Loaded ${row.name || "watchlist"}.`);
-    });
-
-    const title = document.createElement("strong");
-    title.textContent = row.name || "Saved watchlist";
-    const meta = document.createElement("span");
-    meta.textContent = [
-      `${normalizeTickerList(row.tickers).length} tickers`,
-      row.source_url ? "TradingView" : "Manual",
-      relativeDate(row.updated_at || row.created_at),
-    ]
-      .filter(Boolean)
-      .join(" / ");
-    load.append(title, meta);
-
-    const remove = document.createElement("button");
-    remove.className = "download-link saved-watchlist-delete";
-    remove.type = "button";
-    remove.textContent = "Delete";
-    remove.addEventListener("click", () => deleteSavedWatchlist(panel, state, callbacks, row));
-
-    item.append(load, remove);
-    panel.list.append(item);
+    panel.list.append(savedWatchlistCard(panel, state, callbacks, row));
   });
+}
+
+function savedWatchlistCard(panel, state, callbacks, row) {
+  const item = document.createElement("article");
+  item.className = "saved-watchlist-card";
+
+  const head = document.createElement("div");
+  head.className = "saved-watchlist-card-head";
+
+  const body = document.createElement("div");
+  body.className = "saved-watchlist-body";
+  const title = document.createElement("strong");
+  title.textContent = row.name || "Saved watchlist";
+  const meta = document.createElement("span");
+  meta.textContent = [
+    `${normalizeTickerList(row.tickers).length} tickers`,
+    row.source_url ? "TradingView" : "Manual",
+    relativeDate(row.updated_at || row.created_at),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  body.append(title, meta);
+
+  const actions = document.createElement("div");
+  actions.className = "saved-watchlist-row-actions";
+
+  const load = document.createElement("button");
+  load.className = "download-link";
+  load.type = "button";
+  load.textContent = "Load";
+  load.addEventListener("click", () => {
+    callbacks.applyWatchlist(row);
+    showSavedWatchlistStatus(panel, `Loaded ${row.name || "watchlist"}.`);
+  });
+
+  const rank = document.createElement("button");
+  rank.className = "export-button";
+  rank.type = "button";
+  rank.textContent = "Rank";
+
+  const cockpit = document.createElement("button");
+  cockpit.className = "download-link";
+  cockpit.type = "button";
+  cockpit.textContent = "Cockpit";
+  cockpit.disabled = !callbacks.runCockpit;
+  cockpit.addEventListener("click", () =>
+    runSavedWatchlistAction(panel, row, callbacks.runCockpit, "Opening cockpit...", "Cockpit loaded."),
+  );
+
+  const alerts = document.createElement("button");
+  alerts.className = "download-link";
+  alerts.type = "button";
+  alerts.textContent = "Alerts";
+  alerts.disabled = !callbacks.runAlerts;
+  alerts.addEventListener("click", () =>
+    runSavedWatchlistAction(panel, row, callbacks.runAlerts, "Opening alerts...", "Alert digest loaded."),
+  );
+
+  const remove = document.createElement("button");
+  remove.className = "download-link saved-watchlist-delete";
+  remove.type = "button";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => deleteSavedWatchlist(panel, state, callbacks, row));
+
+  actions.append(load, rank, cockpit, alerts, remove);
+  head.append(body, actions);
+
+  const preview = document.createElement("div");
+  preview.className = "saved-watchlist-preview";
+  preview.hidden = true;
+  rank.addEventListener("click", () => previewSavedWatchlistCockpit(panel, row, preview, rank));
+
+  item.append(head, preview);
+  return item;
+}
+
+async function runSavedWatchlistAction(panel, row, callback, loadingMessage, doneMessage) {
+  if (!callback) {
+    return;
+  }
+  showSavedWatchlistStatus(panel, loadingMessage);
+  try {
+    await callback(row);
+    showSavedWatchlistStatus(panel, doneMessage);
+  } catch (error) {
+    showSavedWatchlistStatus(panel, error.message || "Could not run saved watchlist.");
+  }
+}
+
+async function previewSavedWatchlistCockpit(panel, row, preview, button) {
+  button.disabled = true;
+  preview.hidden = false;
+  preview.innerHTML = "";
+  const loading = document.createElement("p");
+  loading.className = "research-empty";
+  loading.textContent = "Ranking watchlist...";
+  preview.append(loading);
+  showSavedWatchlistStatus(panel, `Ranking ${row.name || "watchlist"}...`);
+
+  try {
+    const response = await fetch("/api/watchlists/cockpit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(savedWatchlistCockpitPayload(row)),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Could not rank watchlist");
+    }
+    renderSavedWatchlistPreview(preview, data);
+    const rows = data.rows || [];
+    showSavedWatchlistStatus(
+      panel,
+      rows.length ? `Ranked ${rows.length} names from ${row.name || "watchlist"}.` : "No cockpit rows returned.",
+    );
+  } catch (error) {
+    preview.innerHTML = "";
+    const message = document.createElement("p");
+    message.className = "research-empty";
+    message.textContent = error.message || "Could not rank watchlist.";
+    preview.append(message);
+    showSavedWatchlistStatus(panel, message.textContent);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function savedWatchlistCockpitPayload(row) {
+  const tickers = normalizeTickerList(row.tickers);
+  return {
+    ticker: tickers[0] || "AAPL",
+    tickers,
+    watchlist_url: row.source_url || "",
+    max_results: clampNumber(row.max_results || row.metadata?.max_results, 1, 50, 10),
+    period: row.period || row.metadata?.period || "1y",
+  };
+}
+
+function renderSavedWatchlistPreview(root, data) {
+  const rows = data.rows || [];
+  root.innerHTML = "";
+
+  const summary = document.createElement("div");
+  summary.className = "saved-watchlist-cockpit-summary";
+  const priorityCount = rows.filter((row) => row.lane === "Priority").length;
+  const riskCount = rows.filter((row) => row.lane === "Risk").length;
+  const averageScore = rows.length
+    ? rows.reduce((total, row) => total + Number(row.score || 0), 0) / rows.length
+    : 0;
+  summary.append(
+    previewMetric("Top", rows[0]?.ticker || "N/A"),
+    previewMetric("Priority", priorityCount),
+    previewMetric("Risk", riskCount),
+    previewMetric("Avg", formatCompactValue(averageScore)),
+  );
+  if (data.meta?.error_count) {
+    summary.append(previewMetric("Skipped", data.meta.error_count));
+  }
+  root.append(summary);
+
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "research-empty";
+    empty.textContent = "No cockpit rows returned.";
+    root.append(empty);
+    return;
+  }
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "saved-watchlist-queue-wrap";
+  const table = document.createElement("table");
+  table.className = "saved-watchlist-queue-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Ticker</th>
+        <th>Lane</th>
+        <th>Score</th>
+        <th>Flow</th>
+        <th>Ridge</th>
+        <th>Auction</th>
+      </tr>
+    </thead>
+  `;
+  const body = document.createElement("tbody");
+  rows.slice(0, WATCHLIST_PREVIEW_LIMIT).forEach((row) => body.append(savedWatchlistQueueRow(row)));
+  table.append(body);
+  tableWrap.append(table);
+  root.append(tableWrap);
+
+  const foot = document.createElement("p");
+  foot.className = "saved-watchlist-preview-foot";
+  foot.textContent = `Showing ${Math.min(rows.length, WATCHLIST_PREVIEW_LIMIT)} of ${rows.length}`;
+  if (data.meta?.period) {
+    foot.textContent += ` / ${String(data.meta.period).toUpperCase()}`;
+  }
+  root.append(foot);
+}
+
+function savedWatchlistQueueRow(row) {
+  const tr = document.createElement("tr");
+  tr.dataset.lane = String(row.lane || "Review").toLowerCase();
+  const values = [
+    row.rank,
+    row.ticker,
+    row.lane,
+    formatCompactValue(row.score),
+    compactFlowLabel(row),
+    row.ridge?.recommendation || "N/A",
+    row.auction?.location || "N/A",
+  ];
+  values.forEach((value, index) => {
+    const cell = document.createElement(index === 1 ? "th" : "td");
+    if (index === 1) {
+      cell.scope = "row";
+    }
+    if (index === 2) {
+      const pill = document.createElement("span");
+      pill.className = "saved-watchlist-lane";
+      pill.textContent = value || "Review";
+      cell.append(pill);
+    } else {
+      cell.textContent = value;
+    }
+    tr.append(cell);
+  });
+  return tr;
+}
+
+function previewMetric(label, value) {
+  const metric = document.createElement("div");
+  metric.className = "saved-watchlist-preview-metric";
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  const span = document.createElement("span");
+  span.textContent = label;
+  metric.append(strong, span);
+  return metric;
+}
+
+function compactFlowLabel(row) {
+  const state = row.flow?.state || "N/A";
+  const score = row.flow?.score;
+  return Number.isFinite(Number(score)) ? `${state} ${formatCompactValue(Number(score))}` : state;
+}
+
+function formatCompactValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return String(value || "N/A");
+  }
+  if (Number.isInteger(number)) {
+    return String(number);
+  }
+  return Math.abs(number) >= 100 ? number.toFixed(0) : number.toFixed(2);
 }
 
 function renderAlertMonitor(panel, rules, runs, deliveries, callbacks, state) {

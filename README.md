@@ -72,6 +72,11 @@ Regression, and Brief generate one result per resolved ticker. The `Export JSON`
 the structured result data, including resolved tickers, watchlist metadata, per-symbol metrics, and
 any skipped-symbol errors.
 
+Signed-in users can save manual or TradingView watchlists from the terminal form. Saved watchlists
+now include a compact cockpit queue: `Rank` expands the saved list into a top-name table with lane,
+score, Flow Compass, Ridge, and auction location, while `Cockpit` and `Alerts` launch full runs from
+that saved list.
+
 ## Railway Deploy
 
 Railway is the production host for this Flask app. The Procfile starts Gunicorn on Railway's
