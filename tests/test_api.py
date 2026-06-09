@@ -10,7 +10,7 @@ import pandas as pd
 from pytest import MonkeyPatch
 
 import app.main as main_module
-from app.alert_scheduler import ScheduledAlertRule
+from app.alert_scheduler import AlertDeliveryResult, ScheduledAlertRule, deliver_alert_webhook
 from app.anthropic import GeneratedText
 from app.charts import RenderedImage
 from app.main import create_app
@@ -219,6 +219,8 @@ class FakeAlertStore:
     def __init__(self, rules: list[ScheduledAlertRule]) -> None:
         self.rules = rules
         self.list_calls: list[dict[str, object]] = []
+        self.deliveries: list[dict[str, object]] = []
+        self.delivery_updates: list[dict[str, object]] = []
         self.runs: list[dict[str, object]] = []
         self.marked: list[dict[str, object]] = []
 
@@ -241,7 +243,7 @@ class FakeAlertStore:
         status: str,
         payload: dict[str, Any] | None = None,
         error: str | None = None,
-    ) -> None:
+    ) -> str | None:
         self.runs.append(
             {
                 "rule": rule,
@@ -252,9 +254,55 @@ class FakeAlertStore:
                 "error": error,
             }
         )
+        return f"run-{len(self.runs)}"
+
+    def insert_delivery(
+        self,
+        *,
+        rule: ScheduledAlertRule,
+        alert_run_id: str,
+        delivery: AlertDeliveryResult,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.deliveries.append(
+            {
+                "rule": rule,
+                "alert_run_id": alert_run_id,
+                "delivery": delivery,
+                "payload": payload or {},
+            }
+        )
+
+    def update_run_delivery_status(
+        self,
+        *,
+        alert_run_id: str,
+        delivery: AlertDeliveryResult,
+    ) -> None:
+        self.delivery_updates.append(
+            {
+                "alert_run_id": alert_run_id,
+                "delivery": delivery,
+            }
+        )
 
     def mark_rule_ran(self, *, rule_id: str, run_date: date) -> None:
         self.marked.append({"rule_id": rule_id, "run_date": run_date})
+
+
+class FakeWebhookResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+class FakeWebhookSession:
+    def __init__(self, status_code: int = 202) -> None:
+        self.status_code = status_code
+        self.requests: list[dict[str, object]] = []
+
+    def post(self, url: str, *, json: dict[str, Any], timeout: int) -> FakeWebhookResponse:
+        self.requests.append({"url": url, "json": json, "timeout": timeout})
+        return FakeWebhookResponse(self.status_code)
 
 
 def test_load_env_file_sets_missing_key(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -600,6 +648,85 @@ def test_alert_scheduler_run_requires_bearer_token(monkeypatch: MonkeyPatch) -> 
     assert payload["error"] == "Scheduler authorization is required"
 
 
+def test_deliver_alert_webhook_posts_digest_payload() -> None:
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Daily delivery",
+        source_url=None,
+        tickers=["AAPL"],
+        period="1y",
+        max_results=1,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        delivery_channel="webhook",
+        delivery_webhook_url="https://hooks.example.test/secret/path",
+        delivery_min_severity="any",
+        metadata={},
+        last_run_date=None,
+    )
+    session = FakeWebhookSession(status_code=202)
+
+    result = deliver_alert_webhook(
+        rule=rule,
+        run_date=date(2026, 6, 9),
+        alert_run_id="run-1",
+        payload={
+            "digest": {"headline": "Two alerts"},
+            "meta": {"alert_count": 2, "high_alert_count": 1},
+            "alerts": [{"ticker": "AAPL"}],
+            "rows": [{"ticker": "AAPL"}],
+        },
+        session=cast(Any, session),
+    )
+
+    assert result == AlertDeliveryResult(
+        channel="webhook",
+        status="success",
+        destination="https://hooks.example.test",
+        response_status=202,
+    )
+    assert session.requests[0]["url"] == "https://hooks.example.test/secret/path"
+    request_payload = cast(dict[str, Any], session.requests[0]["json"])
+    assert request_payload["type"] == "underlying.alert_digest"
+    assert request_payload["rule"]["id"] == "rule-1"
+    assert request_payload["run"] == {"id": "run-1", "date": "2026-06-09"}
+    assert session.requests[0]["timeout"] == 15
+
+
+def test_deliver_alert_webhook_rejects_local_targets() -> None:
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Local delivery",
+        source_url=None,
+        tickers=["AAPL"],
+        period="1y",
+        max_results=1,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        delivery_channel="webhook",
+        delivery_webhook_url="https://127.0.0.1/hook",
+        delivery_min_severity="any",
+        metadata={},
+        last_run_date=None,
+    )
+    session = FakeWebhookSession()
+
+    result = deliver_alert_webhook(
+        rule=rule,
+        run_date=date(2026, 6, 9),
+        alert_run_id="run-1",
+        payload={"meta": {"alert_count": 1, "high_alert_count": 1}},
+        session=cast(Any, session),
+    )
+
+    assert result.status == "failed"
+    assert result.destination == "https://127.0.0.1"
+    assert "private or local" in str(result.error)
+    assert session.requests == []
+
+
 def test_alert_scheduler_run_processes_due_rule(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
     rule = ScheduledAlertRule(
@@ -612,6 +739,9 @@ def test_alert_scheduler_run_processes_due_rule(monkeypatch: MonkeyPatch) -> Non
         max_results=2,
         max_alerts=3,
         volatility_threshold=0.55,
+        delivery_channel="none",
+        delivery_webhook_url=None,
+        delivery_min_severity="any",
         metadata={},
         last_run_date=None,
     )
@@ -641,6 +771,65 @@ def test_alert_scheduler_run_processes_due_rule(monkeypatch: MonkeyPatch) -> Non
     saved_payload = cast(dict[str, Any], store.runs[0]["payload"])
     assert saved_payload["meta"]["result_count"] == 2
     assert saved_payload["export"]["mode"] == "watchlist-alerts"
+    assert store.deliveries == []
+    assert store.delivery_updates == []
+
+
+def test_alert_scheduler_run_delivers_webhook_rule(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
+    rule = ScheduledAlertRule(
+        id="rule-1",
+        user_id="user-1",
+        name="Daily delivery",
+        source_url="https://www.tradingview.com/watchlists/334089913/",
+        tickers=[],
+        period="1y",
+        max_results=2,
+        max_alerts=3,
+        volatility_threshold=0.55,
+        delivery_channel="webhook",
+        delivery_webhook_url="https://hooks.example.test/underlying",
+        delivery_min_severity="any",
+        metadata={},
+        last_run_date=None,
+    )
+    store = FakeAlertStore([rule])
+    delivery_calls: list[dict[str, object]] = []
+
+    def fake_deliver_alert_webhook(**kwargs: object) -> AlertDeliveryResult:
+        delivery_calls.append(kwargs)
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="success",
+            destination="https://hooks.example.test",
+            response_status=204,
+        )
+
+    monkeypatch.setattr(main_module, "deliver_alert_webhook", fake_deliver_alert_webhook)
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    app.config["WATCHLIST_CLIENT"] = FakeWatchlistClient()
+    app.config["ALERT_STORE"] = store
+    app.config["ALERT_SCHEDULER_TOKEN"] = "scheduler-secret"
+    client = app.test_client()
+
+    response = client.post(
+        "/api/alerts/scheduled/run",
+        headers={"Authorization": "Bearer scheduler-secret"},
+        json={"run_date": "2026-06-09", "force": True, "limit": 1},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["results"][0]["status"] == "success"
+    assert payload["results"][0]["delivery_status"] == "success"
+    assert payload["results"][0]["delivery_channel"] == "webhook"
+    assert delivery_calls[0]["alert_run_id"] == "run-1"
+    assert delivery_calls[0]["run_date"] == date(2026, 6, 9)
+    assert store.deliveries[0]["alert_run_id"] == "run-1"
+    delivery = cast(AlertDeliveryResult, store.deliveries[0]["delivery"])
+    assert delivery.status == "success"
+    assert store.delivery_updates[0]["alert_run_id"] == "run-1"
 
 
 def test_alert_scheduler_run_records_failed_rule(monkeypatch: MonkeyPatch) -> None:
@@ -655,6 +844,9 @@ def test_alert_scheduler_run_records_failed_rule(monkeypatch: MonkeyPatch) -> No
         max_results=2,
         max_alerts=3,
         volatility_threshold=0.55,
+        delivery_channel="none",
+        delivery_webhook_url=None,
+        delivery_min_severity="any",
         metadata={},
         last_run_date=None,
     )

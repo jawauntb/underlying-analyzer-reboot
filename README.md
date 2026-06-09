@@ -99,9 +99,26 @@ railway domain
 
 For magic links, add the Railway URL to Supabase Auth redirect URLs alongside local dev URLs.
 
-Daily alert rules can run from a Railway Function. Create a long random
-`ALERT_SCHEDULER_TOKEN`, set the same value on the Flask service and the function, and point
-`APP_URL` at the production app URL.
+Daily alert rules can run from a Railway cron service or Function. Create a long random
+`ALERT_SCHEDULER_TOKEN`, set the same value on the Flask service and the scheduled job, and point
+`APP_URL` at the production app URL. Railway cron schedules use UTC.
+
+Cron service fallback:
+
+```bash
+railway add --image oven/bun:1 --service daily-alert-digest
+railway variable set --service daily-alert-digest APP_URL=https://your-railway-domain ALERT_SCHEDULER_TOKEN=...
+```
+
+Set the `daily-alert-digest` service start command to:
+
+```bash
+bun -e 'const res = await fetch(`${process.env.APP_URL}/api/alerts/scheduled/run`, { method: "POST", headers: { Authorization: `Bearer ${process.env.ALERT_SCHEDULER_TOKEN}`, "Content-Type": "application/json" }, body: "{}" }); const text = await res.text(); console.log(text); if (!res.ok) process.exit(1);'
+```
+
+Then set the service cron schedule, for example `0 11 * * *`.
+
+Function path:
 
 ```bash
 railway functions new \
@@ -146,9 +163,10 @@ supabase db push --password "$SUPABASE_DB_PASSWORD"
 For magic links, add local and deployed URLs to Supabase Auth redirect URLs, including
 `http://127.0.0.1:5058/*` for local testing and the Modal URL for production.
 
-Alert Monitor uses `alert_rules` and `alert_runs` with owner-scoped RLS. Browser users can save
-and manually run their own rules with the anon key, while the daily scheduler uses the server-only
-service-role key behind `/api/alerts/scheduled/run`.
+Alert Monitor uses `alert_rules`, `alert_runs`, and `alert_deliveries` with owner-scoped RLS.
+Browser users can save and manually run their own rules with the anon key, while the daily
+scheduler uses the server-only service-role key behind `/api/alerts/scheduled/run`. Rules can also
+deliver scheduled digests to HTTPS webhooks, with delivery history recorded per run.
 
 ## Quality Checks
 

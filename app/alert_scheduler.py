@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
 DEFAULT_SCHEDULED_RULE_LIMIT = 25
 MAX_SCHEDULED_RULE_LIMIT = 100
+WEBHOOK_TIMEOUT_SECONDS = 15
 
 
 class AlertStoreError(RuntimeError):
+    pass
+
+
+class AlertDeliveryError(ValueError):
     pass
 
 
@@ -26,8 +32,20 @@ class ScheduledAlertRule:
     max_results: int
     max_alerts: int
     volatility_threshold: float
+    delivery_channel: str
+    delivery_webhook_url: str | None
+    delivery_min_severity: str
     metadata: dict[str, Any]
     last_run_date: date | None
+
+
+@dataclass(frozen=True)
+class AlertDeliveryResult:
+    channel: str
+    status: str
+    destination: str | None = None
+    response_status: int | None = None
+    error: str | None = None
 
 
 class SupabaseAlertStore:
@@ -75,13 +93,14 @@ class SupabaseAlertStore:
         status: str,
         payload: dict[str, Any] | None = None,
         error: str | None = None,
-    ) -> None:
+    ) -> str | None:
         payload_data = payload or {}
         meta_value = payload_data.get("meta")
         meta = meta_value if isinstance(meta_value, dict) else {}
-        self._request(
+        rows = self._request(
             "POST",
             "alert_runs",
+            params={"select": "id"},
             json=[
                 {
                     "alert_rule_id": rule.id,
@@ -98,6 +117,56 @@ class SupabaseAlertStore:
                     "error": error,
                 }
             ],
+            headers={"Prefer": "return=representation"},
+        )
+        if isinstance(rows, list) and rows:
+            return str(rows[0].get("id") or "") or None
+        return None
+
+    def insert_delivery(
+        self,
+        *,
+        rule: ScheduledAlertRule,
+        alert_run_id: str,
+        delivery: AlertDeliveryResult,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._request(
+            "POST",
+            "alert_deliveries",
+            json=[
+                {
+                    "alert_run_id": alert_run_id,
+                    "alert_rule_id": rule.id,
+                    "user_id": rule.user_id,
+                    "channel": delivery.channel,
+                    "status": delivery.status,
+                    "destination": delivery.destination,
+                    "response_status": delivery.response_status,
+                    "error": delivery.error,
+                    "payload": payload or {},
+                }
+            ],
+            headers={"Prefer": "return=minimal"},
+        )
+
+    def update_run_delivery_status(
+        self,
+        *,
+        alert_run_id: str,
+        delivery: AlertDeliveryResult,
+    ) -> None:
+        self._request(
+            "PATCH",
+            "alert_runs",
+            params={"id": f"eq.{alert_run_id}"},
+            json={
+                "delivery_status": delivery.status,
+                "delivery_channel": delivery.channel,
+                "delivered_at": (
+                    datetime.now(UTC).isoformat() if delivery.status == "success" else None
+                ),
+            },
             headers={"Prefer": "return=minimal"},
         )
 
@@ -164,6 +233,9 @@ def scheduled_rule_from_row(row: dict[str, Any]) -> ScheduledAlertRule:
         volatility_threshold=bounded_float(
             row.get("volatility_threshold"), default=0.55, minimum=0.0, maximum=2.0
         ),
+        delivery_channel=delivery_channel(row.get("delivery_channel")),
+        delivery_webhook_url=string_or_none(row.get("delivery_webhook_url")),
+        delivery_min_severity=delivery_min_severity(row.get("delivery_min_severity")),
         metadata=metadata,
         last_run_date=parse_date(row.get("last_run_date")),
     )
@@ -217,3 +289,133 @@ def parse_date(value: Any) -> date | None:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def delivery_channel(value: Any) -> str:
+    channel = str(value or "none").strip().lower()
+    return channel if channel in {"none", "webhook"} else "none"
+
+
+def delivery_min_severity(value: Any) -> str:
+    severity = str(value or "any").strip().lower()
+    return severity if severity in {"any", "high"} else "any"
+
+
+def deliver_alert_webhook(
+    *,
+    rule: ScheduledAlertRule,
+    run_date: date,
+    alert_run_id: str | None,
+    payload: dict[str, Any],
+    session: requests.Session | None = None,
+) -> AlertDeliveryResult:
+    destination_url = rule.delivery_webhook_url
+    if rule.delivery_channel != "webhook" or not destination_url:
+        return AlertDeliveryResult(channel="webhook", status="skipped")
+
+    try:
+        webhook_url = validate_webhook_url(destination_url)
+    except AlertDeliveryError as exc:
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="failed",
+            destination=redacted_webhook_destination(destination_url),
+            error=str(exc),
+        )
+
+    meta_value = payload.get("meta")
+    meta = meta_value if isinstance(meta_value, dict) else {}
+    alert_count = int(meta.get("alert_count") or 0)
+    high_alert_count = int(meta.get("high_alert_count") or 0)
+    if alert_count <= 0:
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="skipped",
+            destination=redacted_webhook_destination(webhook_url),
+            error="No alerts fired.",
+        )
+    if rule.delivery_min_severity == "high" and high_alert_count <= 0:
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="skipped",
+            destination=redacted_webhook_destination(webhook_url),
+            error="No High severity alerts fired.",
+        )
+
+    request_session = session or requests.Session()
+    body = {
+        "type": "underlying.alert_digest",
+        "rule": {
+            "id": rule.id,
+            "name": rule.name,
+            "delivery_min_severity": rule.delivery_min_severity,
+        },
+        "run": {
+            "id": alert_run_id,
+            "date": run_date.isoformat(),
+        },
+        "digest": payload.get("digest") or {},
+        "meta": meta,
+        "alerts": payload.get("alerts") or [],
+        "rows": payload.get("rows") or [],
+    }
+    try:
+        response = request_session.post(webhook_url, json=body, timeout=WEBHOOK_TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="failed",
+            destination=redacted_webhook_destination(webhook_url),
+            error=str(exc),
+        )
+
+    if response.status_code >= 400:
+        return AlertDeliveryResult(
+            channel="webhook",
+            status="failed",
+            destination=redacted_webhook_destination(webhook_url),
+            response_status=response.status_code,
+            error=f"Webhook returned HTTP {response.status_code}.",
+        )
+
+    return AlertDeliveryResult(
+        channel="webhook",
+        status="success",
+        destination=redacted_webhook_destination(webhook_url),
+        response_status=response.status_code,
+    )
+
+
+def validate_webhook_url(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https":
+        raise AlertDeliveryError("Webhook URL must use https.")
+    if parsed.username or parsed.password:
+        raise AlertDeliveryError("Webhook URL cannot include credentials.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise AlertDeliveryError("Webhook URL must include a hostname.")
+    host = hostname.lower()
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        raise AlertDeliveryError("Webhook URL cannot target local hosts.")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return value.strip()
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise AlertDeliveryError("Webhook URL cannot target private or local networks.")
+    return value.strip()
+
+
+def redacted_webhook_destination(value: str) -> str | None:
+    parsed = urlparse(value.strip())
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    return f"{parsed.scheme}://{parsed.hostname}"
