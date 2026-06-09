@@ -117,6 +117,13 @@ class FakeMarketDataClient:
             "recommendationKey": "buy",
             "targetMeanPrice": 180.0,
             "numberOfAnalystOpinions": 12,
+            "earningsTimestamp": 1_767_225_600,
+            "earningsTimestampStart": 1_767_225_600,
+            "earningsTimestampEnd": 1_767_312_000,
+            "isEarningsDateEstimate": True,
+            "forwardEps": 7.25,
+            "trailingEps": 6.85,
+            "earningsGrowth": 0.14,
             "heldPercentInsiders": 0.04,
             "heldPercentInstitutions": 0.62,
             "companyOfficers": [
@@ -152,6 +159,12 @@ class FakeSecClient:
                     "filing_date": "2025-10-31",
                     "report_date": "2025-09-27",
                     "url": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                },
+                "8-K": {
+                    "form": "8-K",
+                    "filing_date": "2026-01-03",
+                    "report_date": "2026-01-03",
+                    "url": "https://www.sec.gov/Archives/example/aapl-8k.htm",
                 }
             },
             "Filing Sections": {
@@ -180,6 +193,16 @@ class FakeSecClient:
                     "Source URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
                 },
             },
+            "Earnings Sections": {
+                "Earnings Release": {
+                    "Item": "Item 2.02",
+                    "Heading": "Results Of Operations And Financial Condition",
+                    "Snippet": "Apple reported record revenue and stronger services margins.",
+                    "Form": "8-K",
+                    "Filing Date": "2026-01-03",
+                    "Source URL": "https://www.sec.gov/Archives/example/aapl-8k.htm",
+                }
+            },
             "Company Facts": {
                 "Revenue": {
                     "Value": 391_035_000_000,
@@ -196,6 +219,13 @@ class FakeSecClient:
                     "Form": "10-K",
                     "Filing Date": "2025-10-31",
                     "URL": "https://www.sec.gov/Archives/example/aapl-10k.htm",
+                },
+                {
+                    "Label": "SEC 8-K Item 2.02 Earnings Release",
+                    "Type": "earnings-section",
+                    "Form": "8-K",
+                    "Filing Date": "2026-01-03",
+                    "URL": "https://www.sec.gov/Archives/example/aapl-8k.htm",
                 }
             ],
             "Errors": [],
@@ -1052,7 +1082,12 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
     assert payload["Financial Quality"]["Revenue Growth"] == 0.18
     assert payload["Management Snapshot"]["Executive Officers"][0]["Name"] == "Jane Analyst"
     assert payload["SEC Source Pack"]["CIK"] == "0000320193"
+    assert payload["Earnings Source Pack"]["Status"] == "available"
+    assert payload["Earnings Source Pack"]["SEC 8-K Sections"]["Earnings Release"]["Item"] == (
+        "Item 2.02"
+    )
     assert payload["Data Coverage"]["SEC Filings / MD&A"] == "available"
+    assert payload["Data Coverage"]["Earnings Transcript / Guidance"] == "available"
     assert payload["Volatility Metrics"]
     assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
     assert payload["Anthropic Report"] == "Stock Fax narrative."
@@ -1094,6 +1129,9 @@ def test_vision_tool_returns_market_memo() -> None:
     assert "Do not issue a personal buy/sell recommendation" not in prompt
     assert "Jane Analyst" in prompt
     assert "SEC 10-K Item 1 Business" in prompt
+    assert "Earnings Source Pack" in prompt
+    assert "SEC 8-K Item 2.02 Earnings Release" in prompt
+    assert "Apple reported record revenue" in prompt
     assert "RevenueFromContractWithCustomerExcludingAssessedTax" in prompt
 
 
@@ -1125,6 +1163,7 @@ def test_vision_stream_tool_returns_ndjson_events() -> None:
         "Equity Performance And Positioning"
     )
     assert events[-1]["export"]["report"]["SEC Source Pack"]["CIK"] == "0000320193"
+    assert events[-1]["export"]["report"]["Earnings Source Pack"]["Status"] == "available"
     assert generator.calls[0]["max_tokens"] == 3200
 
 

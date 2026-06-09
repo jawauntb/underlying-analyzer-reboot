@@ -317,7 +317,12 @@ function renderVisionFrame(data, options = {}) {
   body.className = "memo-body";
 
   header.append(titleGroup, meta);
-  article.append(header, body);
+  article.append(header);
+  const sourcePanel = visionSourcePanel(data);
+  if (sourcePanel) {
+    article.append(sourcePanel);
+  }
+  article.append(body);
   resultEl.append(article);
   return { article, body, status };
 }
@@ -342,6 +347,106 @@ function memoChip(value) {
 function memoCharts(data) {
   const charts = data["Memo Charts"] || data.charts || data.export?.memo_charts || [];
   return Array.isArray(charts) ? charts : [];
+}
+
+function visionSourcePanel(data) {
+  const report = visionReport(data);
+  const coverage = report["Data Coverage"] || {};
+  const earnings = report["Earnings Source Pack"] || {};
+  const sec = report["SEC Source Pack"] || {};
+  if (!Object.keys(coverage).length && !Object.keys(earnings).length && !Object.keys(sec).length) {
+    return null;
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "memo-source-panel";
+  const head = document.createElement("div");
+  head.className = "memo-source-head";
+  const title = document.createElement("span");
+  title.className = "memo-eyebrow";
+  title.textContent = "Source Coverage";
+  const status = document.createElement("strong");
+  status.textContent = sourceStatusLine(sec, earnings);
+  head.append(title, status);
+
+  const grid = document.createElement("div");
+  grid.className = "memo-source-grid";
+  [
+    ["SEC / MD&A", coverage["SEC Filings / MD&A"]],
+    ["Earnings", coverage["Earnings Transcript / Guidance"]],
+    ["XBRL Facts", Object.keys(sec["Company Facts"] || {}).length || "N/A"],
+    ["Citations", sourceCitationCount(sec, earnings)],
+  ].forEach(([label, value]) => grid.append(sourceMetric(label, value)));
+
+  panel.append(head, grid);
+  const event = earnings["Latest Earnings Event"];
+  if (event && Object.keys(event).length) {
+    panel.append(earningsEventBlock(event));
+  }
+  return panel;
+}
+
+function visionReport(data) {
+  return data.Report || data.export?.report || {};
+}
+
+function sourceStatusLine(sec, earnings) {
+  const secStatus = sec.Status || "not supplied";
+  const earningsStatus = earnings.Status || "not supplied";
+  return `SEC ${secStatus} / Earnings ${earningsStatus}`;
+}
+
+function sourceCitationCount(sec, earnings) {
+  const citations = [
+    ...(Array.isArray(sec.Citations) ? sec.Citations : []),
+    ...(Array.isArray(earnings.Citations) ? earnings.Citations : []),
+  ];
+  return new Set(
+    citations.map((citation) => `${citation?.Label || ""}:${citation?.URL || ""}`)
+  ).size;
+}
+
+function sourceMetric(label, value) {
+  const item = document.createElement("div");
+  item.className = "memo-source-metric";
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = formatSourceMetricValue(value);
+  item.append(labelEl, valueEl);
+  return item;
+}
+
+function formatSourceMetricValue(value) {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return formatValue(value);
+}
+
+function earningsEventBlock(event) {
+  const block = document.createElement("div");
+  block.className = "memo-source-event";
+  const title = document.createElement("strong");
+  title.textContent = [event.Type, event.Item, event["Filing Date"] || event["Next Earnings Date"]]
+    .filter(Boolean)
+    .join(" / ");
+  block.append(title);
+  const summary = event.Summary;
+  if (summary) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = compactText(summary, 260);
+    block.append(paragraph);
+  }
+  return block;
+}
+
+function compactText(value, limit) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit - 1).trim()}...`;
 }
 
 function updateMemoBody(body, markdown, streaming, charts = []) {

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 import app.sec as sec_module
-from app.sec import SecClient, SecDataError, extract_filing_sections
+from app.sec import SecClient, SecDataError, extract_earnings_sections, extract_filing_sections
 
 TEST_USER_AGENT = "Test Company contact@example.com"
 
@@ -49,8 +49,12 @@ class FakeSession:
             return FakeResponse(payload=submissions_payload())
         if url.endswith("/aapl-20250927.htm"):
             return FakeResponse(text=filing_html())
+        if url.endswith("/aapl-8k.htm"):
+            return FakeResponse(text=earnings_8k_html())
         if url == "https://cdn.yahoofinance.com/prod/sec-filings/aapl-20250927.htm":
             return FakeResponse(text=filing_html())
+        if url == "https://cdn.yahoofinance.com/prod/sec-filings/aapl-8k.htm":
+            return FakeResponse(text=earnings_8k_html())
         if url == "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json":
             return FakeResponse(payload=companyfacts_payload())
         return FakeResponse(status_code=404, text="missing")
@@ -77,11 +81,17 @@ def test_sec_client_builds_source_pack() -> None:
     assert pack["Filings"]["10-K"]["filing_date"] == "2025-10-31"
     assert pack["Filing Sections"]["Business"]["Item"] == "Item 1"
     assert "sells products" in pack["Filing Sections"]["Business"]["Snippet"]
+    assert pack["Earnings Sections"]["Earnings Release"]["Item"] == "Item 2.02"
+    assert "record revenue" in pack["Earnings Sections"]["Earnings Release"]["Snippet"]
     assert pack["Company Facts"]["Revenue"]["Value"] == 391_035_000_000
     assert pack["Company Facts"]["Revenue"]["Concept"] == (
         "RevenueFromContractWithCustomerExcludingAssessedTax"
     )
     assert any(citation["Label"] == "SEC 10-K Item 1 Business" for citation in pack["Citations"])
+    assert any(
+        citation["Label"] == "SEC 8-K Item 2.02 Earnings Release"
+        for citation in pack["Citations"]
+    )
     assert session.requests[0][1]["User-Agent"] == TEST_USER_AGENT
 
 
@@ -109,7 +119,16 @@ def test_sec_client_uses_yahoo_filing_fallback_when_sec_is_blocked(
                     "exhibits": {
                         "10-K": "https://cdn.yahoofinance.com/prod/sec-filings/aapl-20250927.htm"
                     },
-                }
+                },
+                {
+                    "date": date(2026, 1, 3),
+                    "type": "8-K",
+                    "title": "Current report",
+                    "edgarUrl": "https://finance.yahoo.com/sec-filing/AAPL/0000320193-26-000010_320193",
+                    "exhibits": {
+                        "8-K": "https://cdn.yahoofinance.com/prod/sec-filings/aapl-8k.htm"
+                    },
+                },
             ]
 
     monkeypatch.setattr(sec_module.yf, "Ticker", FakeTicker)
@@ -122,6 +141,7 @@ def test_sec_client_uses_yahoo_filing_fallback_when_sec_is_blocked(
     assert pack["CIK"] == "0000320193"
     assert pack["Filings"]["10-K"]["filing_date"] == "2025-10-31"
     assert "Business" in pack["Filing Sections"]
+    assert "Earnings Release" in pack["Earnings Sections"]
     assert "SEC direct API was unavailable" in pack["Errors"][1]
 
 
@@ -134,7 +154,7 @@ def test_sec_client_caches_source_packs_and_url_payloads() -> None:
 
     assert first == second
     assert first is not second
-    assert len(session.requests) == 4
+    assert len(session.requests) == 5
 
 
 def test_sec_request_gate_is_shared_across_client_instances(
@@ -230,6 +250,14 @@ def test_extract_filing_sections_uses_real_sections_not_table_of_contents() -> N
     assert sections["MD&A"]["Snippet"].startswith("Item 7. Management's Discussion")
 
 
+def test_extract_earnings_sections_from_8k_event_text() -> None:
+    sections = extract_earnings_sections(earnings_8k_html())
+
+    assert sections["Earnings Release"]["Item"] == "Item 2.02"
+    assert "record revenue" in sections["Earnings Release"]["Snippet"]
+    assert sections["Event Update"]["Item"] == "Item 7.01"
+
+
 def submissions_payload() -> dict[str, Any]:
     return {
         "cik": "0000320193",
@@ -318,5 +346,29 @@ def filing_html() -> str:
       <h1>Item 7. Management's Discussion and Analysis</h1>
       <p>{mda}</p>
       <h1>Item 7A. Quantitative and Qualitative Disclosures</h1>
+    </body></html>
+    """
+
+
+def earnings_8k_html() -> str:
+    release = " ".join(
+        [
+            "Apple reported record revenue, expanding services margin, and higher diluted EPS."
+        ]
+        * 10
+    )
+    update = " ".join(
+        [
+            "Management will host an earnings call and provided a cautious demand outlook."
+        ]
+        * 8
+    )
+    return f"""
+    <html><body>
+      <h1>Item 2.02 Results of Operations and Financial Condition</h1>
+      <p>{release}</p>
+      <h1>Item 7.01 Regulation FD Disclosure</h1>
+      <p>{update}</p>
+      <h1>Item 9.01 Financial Statements and Exhibits</h1>
     </body></html>
     """

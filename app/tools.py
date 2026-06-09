@@ -4,7 +4,7 @@ import json
 import os
 import time
 from collections.abc import Iterator, Mapping
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -96,6 +96,7 @@ def build_stock_fax_data(
     summary = summarize_stock(client, symbol)
     profile = client.get_profile(symbol)
     sec_source_pack = build_sec_source_pack(sec_client, symbol)
+    earnings_source_pack = build_earnings_source_pack(profile, sec_source_pack, symbol)
     data = history.data
     close = data["Adj Close"].dropna()
     returns = close.pct_change().dropna()
@@ -126,6 +127,7 @@ def build_stock_fax_data(
         "Analyst And Ownership Signals": analyst_ownership_signals(profile),
         "Management Snapshot": management_snapshot(profile),
         "SEC Source Pack": sec_source_pack,
+        "Earnings Source Pack": earnings_source_pack,
         "Volatility Metrics": volatility_metrics(close),
         "Regression Trend": regression_trend(close),
         "EMAs Summary": ema_summary(close),
@@ -135,7 +137,7 @@ def build_stock_fax_data(
             "Value Area Low (VAL)": val,
         },
         "Signal Summary": signal_summary(close, returns, poc),
-        "Data Coverage": data_coverage(profile, sec_source_pack),
+        "Data Coverage": data_coverage(profile, sec_source_pack, earnings_source_pack),
         "Export Rows": price_rows(history),
     }
 
@@ -152,6 +154,145 @@ def build_sec_source_pack(sec_client: SecClient | None, ticker: str) -> dict[str
             "Ticker": ticker,
             "Errors": [str(exc)],
         }
+
+
+def build_earnings_source_pack(
+    profile: Mapping[str, Any], sec_source_pack: Mapping[str, Any], ticker: str
+) -> dict[str, Any]:
+    sec_sections = mapping_or_empty(sec_source_pack.get("Earnings Sections"))
+    calendar = earnings_calendar(profile)
+    metrics = earnings_metrics(profile)
+    citations = [
+        citation
+        for citation in list_or_empty(sec_source_pack.get("Citations"))
+        if isinstance(citation, Mapping) and citation.get("Type") == "earnings-section"
+    ]
+    if calendar:
+        citations.append(
+            {
+                "Label": "Yahoo Finance profile earnings calendar",
+                "Type": "profile-field",
+                "Provider": "Yahoo Finance profile",
+            }
+        )
+
+    status = "available" if sec_sections else "partial" if calendar or metrics else "not supplied"
+    return {
+        "Status": status,
+        "Provider": "SEC EDGAR + Yahoo Finance profile",
+        "Ticker": ticker,
+        "Latest Earnings Event": latest_earnings_event(sec_sections, calendar),
+        "SEC 8-K Sections": sec_sections,
+        "Calendar": calendar,
+        "Earnings Metrics": metrics,
+        "Citations": citations,
+        "Errors": earnings_source_errors(sec_source_pack, sec_sections, calendar, metrics),
+    }
+
+
+def earnings_calendar(profile: Mapping[str, Any]) -> dict[str, Any]:
+    fields = {
+        "Next Earnings Timestamp": "earningsTimestamp",
+        "Next Earnings Window Start": "earningsTimestampStart",
+        "Next Earnings Window End": "earningsTimestampEnd",
+        "Earnings Call Start": "earningsCallTimestampStart",
+        "Earnings Call End": "earningsCallTimestampEnd",
+        "Most Recent Quarter": "mostRecentQuarter",
+    }
+    calendar: dict[str, Any] = {}
+    for label, key in fields.items():
+        value = profile.get(key)
+        normalized = normalize_earnings_date(value)
+        if normalized:
+            calendar[label] = normalized
+    estimate = profile.get("isEarningsDateEstimate")
+    if isinstance(estimate, bool):
+        calendar["Date Is Estimate"] = estimate
+    return calendar
+
+
+def earnings_metrics(profile: Mapping[str, Any]) -> dict[str, Any]:
+    fields = {
+        "Trailing EPS": "trailingEps",
+        "Forward EPS": "forwardEps",
+        "Current Year EPS": "epsCurrentYear",
+        "Next Year EPS": "epsNextYear",
+        "Earnings Quarterly Growth": "earningsQuarterlyGrowth",
+        "Earnings Growth": "earningsGrowth",
+        "Revenue Growth": "revenueGrowth",
+    }
+    metrics = {}
+    for label, key in fields.items():
+        value = profile.get(key)
+        if not missing_profile_value(value):
+            metrics[label] = value
+    return metrics
+
+
+def normalize_earnings_date(value: Any) -> str | None:
+    if missing_profile_value(value):
+        return None
+    if isinstance(value, int | float):
+        if value <= 0:
+            return None
+        return datetime.fromtimestamp(value, UTC).date().isoformat()
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat())
+    text = str(value).strip()
+    return text or None
+
+
+def latest_earnings_event(
+    sec_sections: Mapping[str, Any], calendar: Mapping[str, Any]
+) -> dict[str, Any]:
+    for label in ("Earnings Release", "Event Update"):
+        section = sec_sections.get(label)
+        if isinstance(section, Mapping):
+            return {
+                "Type": f"SEC 8-K {label}",
+                "Item": section.get("Item"),
+                "Filing Date": section.get("Filing Date"),
+                "Report Date": section.get("Report Date"),
+                "Source URL": section.get("Source URL"),
+                "Summary": section.get("Snippet"),
+            }
+    if calendar:
+        return {
+            "Type": "Earnings calendar",
+            "Next Earnings Date": calendar.get("Next Earnings Timestamp")
+            or calendar.get("Next Earnings Window Start"),
+            "Date Is Estimate": calendar.get("Date Is Estimate"),
+        }
+    return {}
+
+
+def earnings_source_errors(
+    sec_source_pack: Mapping[str, Any],
+    sec_sections: Mapping[str, Any],
+    calendar: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+) -> list[str]:
+    errors = [
+        str(error)
+        for error in list_or_empty(sec_source_pack.get("Errors"))
+        if isinstance(error, str) and ("8-K" in error or "earnings" in error.lower())
+    ]
+    if not sec_sections:
+        errors.append("No SEC 8-K Item 2.02 earnings release text was extracted.")
+    if not calendar:
+        errors.append("No earnings calendar fields were supplied by the profile provider.")
+    if not metrics:
+        errors.append("No earnings estimate or EPS fields were supplied by the profile provider.")
+    return errors
+
+
+def mapping_or_empty(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def list_or_empty(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
 
 
 def business_context(profile: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -270,7 +411,11 @@ def management_snapshot(profile: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def data_coverage(profile: Mapping[str, Any], sec_source_pack: Mapping[str, Any]) -> dict[str, str]:
+def data_coverage(
+    profile: Mapping[str, Any],
+    sec_source_pack: Mapping[str, Any],
+    earnings_source_pack: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
     checks = {
         "Business Description": ("longBusinessSummary",),
         "Sector And Industry": ("sector", "industry"),
@@ -287,6 +432,9 @@ def data_coverage(profile: Mapping[str, Any], sec_source_pack: Mapping[str, Any]
     for label, keys in checks.items():
         if label == "SEC Filings / MD&A":
             coverage[label] = sec_coverage(sec_source_pack)
+            continue
+        if label == "Earnings Transcript / Guidance":
+            coverage[label] = earnings_coverage(earnings_source_pack or {})
             continue
         if not keys:
             coverage[label] = "not supplied"
@@ -306,6 +454,18 @@ def sec_coverage(sec_source_pack: Mapping[str, Any]) -> str:
     if status == "available" and (sections or facts):
         return "available"
     if status == "partial" or sections or facts:
+        return "partial"
+    return "not supplied"
+
+
+def earnings_coverage(earnings_source_pack: Mapping[str, Any]) -> str:
+    status = earnings_source_pack.get("Status")
+    sections = earnings_source_pack.get("SEC 8-K Sections")
+    calendar = earnings_source_pack.get("Calendar")
+    metrics = earnings_source_pack.get("Earnings Metrics")
+    if status == "available" and sections:
+        return "available"
+    if status in {"available", "partial"} or sections or calendar or metrics:
         return "partial"
     return "not supplied"
 
@@ -632,13 +792,15 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "When a normal analyst workstream is missing, say 'not supplied' and move it to "
         "the diligence agenda. When SEC Source Pack data is supplied, cite it inline with "
         "labels like (SEC 10-K Item 1, filed YYYY-MM-DD) or (SEC XBRL Revenue, filed "
-        "YYYY-MM-DD). Do not cite SEC fields that are absent.\n\n"
+        "YYYY-MM-DD). When Earnings Source Pack data is supplied, cite it inline with "
+        "labels like (SEC 8-K Item 2.02, filed YYYY-MM-DD) or (Earnings Calendar, "
+        "source Yahoo Finance profile). Do not cite SEC or earnings fields that are absent.\n\n"
         "Analytical standards:\n"
         "- Anchor every claim to a supplied field or clearly label it as an inference.\n"
         "- Discuss business quality, sector/industry context, equity performance, valuation, "
         "financial quality, management/execution, risk, and scenario levels.\n"
         "- Do not use generic catalysts like 'earnings could move the stock' unless the "
-        "data contains a concrete earnings/guidance item.\n"
+        "data contains a concrete earnings, event, guidance, calendar, or EPS item.\n"
         "- The memo must end with an analyst research rating. Treat the rating as a "
         "data-conditioned research classification, not personalized investment advice. Use "
         "exactly one rating from this scale: Strong Buy, Buy, Hold, Neutral, Sell, Strong "
@@ -662,16 +824,17 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "6. **Price Map** - a markdown table covering current price, 52-week high/low, VAH, "
         "VAL, POC, EMA21, EMA55, regression channel bounds, and any clear scenario trigger.\n"
         "7. **Catalysts, Risks, And Variant Perception** - separate data-supported items from "
-        "research gaps. Use SEC Risk Factors when supplied. Include downside risks, upside "
-        "evidence, and what the market may be under/overweighting based only on supplied "
-        "fields.\n"
+        "research gaps. Use SEC Risk Factors and Earnings Source Pack items when supplied. "
+        "Include downside risks, upside evidence, and what the market may be under/overweighting "
+        "based only on supplied fields.\n"
         "8. **Scenario Framework** - bullish, base, and bearish cases with specific levels "
         "or fundamental conditions that would confirm or invalidate each case.\n"
         "9. **Research Gaps / Next Diligence** - list only the missing or weak workstreams: "
         "SEC Business, Risk Factors, MD&A, XBRL financial statements, proxy/management "
-        "compensation, latest earnings transcript, guidance, and peer-comparison work. If a "
-        "SEC item was supplied, do not describe that item as missing; instead mention any "
-        "limits in extraction depth or recency.\n"
+        "compensation, latest earnings transcript, slide deck, guidance, and peer-comparison "
+        "work. If a SEC or Earnings Source Pack item was supplied, do not describe that item "
+        "as missing; instead mention limits such as transcript/slides not supplied, extraction "
+        "depth, or recency.\n"
         "10. **Final Rating** - this must be the final section at the bottom of the memo "
         "after the full analysis. Choose exactly one: Strong Buy, Buy, Hold, Neutral, Sell, "
         "or Strong Sell. State the rating in bold on the first line as "

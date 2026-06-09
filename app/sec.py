@@ -64,6 +64,33 @@ SECTION_SPECS = {
     },
 }
 
+EARNINGS_SECTION_SPECS = {
+    "Earnings Release": {
+        "item": "Item 2.02",
+        "heading": "Results Of Operations And Financial Condition",
+        "starts": [
+            r"\bItem\s+2\.02\.?\s+Results\s+of\s+Operations\s+and\s+Financial\s+Condition\b"
+        ],
+        "ends": [
+            r"\bItem\s+2\.03\b",
+            r"\bItem\s+7\.01\b",
+            r"\bItem\s+8\.01\b",
+            r"\bItem\s+9\.01\b",
+            r"\bSIGNATURES?\b",
+        ],
+    },
+    "Event Update": {
+        "item": "Item 7.01",
+        "heading": "Regulation FD Disclosure",
+        "starts": [r"\bItem\s+7\.01\.?\s+Regulation\s+FD\s+Disclosure\b"],
+        "ends": [
+            r"\bItem\s+8\.01\b",
+            r"\bItem\s+9\.01\b",
+            r"\bSIGNATURES?\b",
+        ],
+    },
+}
+
 FACT_SPECS = [
     (
         "Revenue",
@@ -230,10 +257,17 @@ class SecClient:
         submissions = self.submissions(cik)
         filings = latest_filings(submissions)
         sections, section_errors = self.filing_sections(filings)
+        earnings_sections, earnings_errors = self.earnings_sections(filings)
         facts, fact_errors = self.company_facts(cik)
-        errors = section_errors + fact_errors
-        citations = source_citations(filings, sections, facts)
-        status = "available" if sections or facts else "partial" if filings else "unavailable"
+        errors = section_errors + earnings_errors + fact_errors
+        citations = source_citations(filings, sections, facts, earnings_sections)
+        status = (
+            "available"
+            if sections or facts or earnings_sections
+            else "partial"
+            if filings
+            else "unavailable"
+        )
         return {
             "Status": status,
             "Provider": "SEC EDGAR",
@@ -245,6 +279,7 @@ class SecClient:
             "Exchanges": submissions.get("exchanges") or [],
             "Filings": filings,
             "Filing Sections": sections,
+            "Earnings Sections": earnings_sections,
             "Company Facts": facts,
             "Citations": citations,
             "Errors": errors,
@@ -260,6 +295,7 @@ class SecClient:
                 "Ticker": symbol,
                 "Filings": {},
                 "Filing Sections": {},
+                "Earnings Sections": {},
                 "Company Facts": {},
                 "Citations": [],
                 "Errors": [reason, f"Yahoo SEC filings fallback failed: {exc}"],
@@ -271,6 +307,7 @@ class SecClient:
                 "Ticker": symbol,
                 "Filings": {},
                 "Filing Sections": {},
+                "Earnings Sections": {},
                 "Company Facts": {},
                 "Citations": [],
                 "Errors": [reason, "Yahoo SEC filings response was malformed"],
@@ -278,8 +315,9 @@ class SecClient:
 
         selected = latest_yahoo_filings(filings)
         sections, section_errors = self.yahoo_filing_sections(selected)
-        citations = source_citations(selected, sections, {})
-        status = "partial" if selected or sections else "unavailable"
+        earnings_sections, earnings_errors = self.yahoo_earnings_sections(selected)
+        citations = source_citations(selected, sections, {}, earnings_sections)
+        status = "partial" if selected or sections or earnings_sections else "unavailable"
         return {
             "Status": status,
             "Provider": "Yahoo Finance SEC filings mirror",
@@ -291,6 +329,7 @@ class SecClient:
             "Exchanges": [],
             "Filings": selected,
             "Filing Sections": sections,
+            "Earnings Sections": earnings_sections,
             "Company Facts": {},
             "Citations": citations,
             "Errors": [
@@ -298,6 +337,7 @@ class SecClient:
                 "SEC direct API was unavailable; using Yahoo-hosted copies of SEC filings. "
                 "SEC XBRL company facts are not available from this fallback.",
                 *section_errors,
+                *earnings_errors,
             ],
         }
 
@@ -331,6 +371,14 @@ class SecClient:
             if label not in sections
         ]
         return sections, missing
+
+    def yahoo_earnings_sections(
+        self, filings: Mapping[str, dict[str, Any]]
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        source = filings.get("8-K")
+        if not source:
+            return {}, ["Yahoo fallback did not include an 8-K earnings filing"]
+        return self.event_filing_sections(source, source_label="Yahoo-hosted SEC 8-K")
 
     def cik_for_ticker(self, ticker: str) -> str:
         symbol = clean_ticker(ticker)
@@ -396,6 +444,39 @@ class SecClient:
             if label not in sections
         ]
         return sections, missing
+
+    def earnings_sections(
+        self, filings: Mapping[str, dict[str, Any]]
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        source = filings.get("8-K")
+        if not source:
+            return {}, ["No 8-K filing found in SEC submissions"]
+        return self.event_filing_sections(source, source_label="SEC 8-K")
+
+    def event_filing_sections(
+        self, source: Mapping[str, Any], *, source_label: str
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        url = source.get("url")
+        if not isinstance(url, str):
+            return {}, [f"{source_label} did not include a primary document URL"]
+        try:
+            text = self.fetch_text(url)
+        except (SecDataError, requests.RequestException) as exc:
+            return {}, [f"Could not fetch {source_label} document: {exc}"]
+
+        extracted = extract_earnings_sections(text)
+        sections = {}
+        for label, section in extracted.items():
+            sections[label] = {
+                **section,
+                "Form": source.get("form"),
+                "Filing Date": source.get("filing_date"),
+                "Report Date": source.get("report_date"),
+                "Source URL": url,
+            }
+        if sections:
+            return sections, []
+        return {}, [f"{source_label} did not include Item 2.02 or 7.01 earnings/event text"]
 
     def company_facts(self, cik: str) -> tuple[dict[str, dict[str, Any]], list[str]]:
         try:
@@ -651,6 +732,25 @@ def extract_filing_sections(document: str) -> dict[str, dict[str, str]]:
     return sections
 
 
+def extract_earnings_sections(document: str) -> dict[str, dict[str, str]]:
+    text = normalize_document_text(document)
+    sections = {}
+    for label, spec in EARNINGS_SECTION_SPECS.items():
+        excerpt = extract_between(
+            text,
+            starts=tuple(spec["starts"]),
+            ends=tuple(spec["ends"]),
+            min_length=80,
+        )
+        if excerpt:
+            sections[label] = {
+                "Item": str(spec["item"]),
+                "Heading": str(spec["heading"]),
+                "Snippet": trim_text(excerpt, limit=1400),
+            }
+    return sections
+
+
 def normalize_document_text(document: str) -> str:
     text = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", document)
     text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</h[1-6]>", "\n", text)
@@ -662,7 +762,13 @@ def normalize_document_text(document: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def extract_between(text: str, *, starts: tuple[str, ...], ends: tuple[str, ...]) -> str | None:
+def extract_between(
+    text: str,
+    *,
+    starts: tuple[str, ...],
+    ends: tuple[str, ...],
+    min_length: int = 250,
+) -> str | None:
     candidates = []
     for start_pattern in starts:
         for start_match in re.finditer(start_pattern, text, flags=re.IGNORECASE):
@@ -672,7 +778,7 @@ def extract_between(text: str, *, starts: tuple[str, ...], ends: tuple[str, ...]
                 if end_match:
                     end_index = min(end_index, start_match.end() + end_match.start())
             candidate = text[start_match.start() : end_index].strip()
-            if len(candidate) >= 250:
+            if len(candidate) >= min_length:
                 candidates.append(candidate)
     if not candidates:
         return None
@@ -751,6 +857,7 @@ def source_citations(
     filings: Mapping[str, dict[str, Any]],
     sections: Mapping[str, dict[str, Any]],
     facts: Mapping[str, dict[str, Any]],
+    earnings_sections: Mapping[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     citations: list[dict[str, Any]] = []
     for label, section in sections.items():
@@ -758,6 +865,17 @@ def source_citations(
             {
                 "Label": f"SEC {section.get('Form')} {section.get('Item')} {label}",
                 "Type": "filing-section",
+                "Form": section.get("Form"),
+                "Filing Date": section.get("Filing Date"),
+                "Report Date": section.get("Report Date"),
+                "URL": section.get("Source URL"),
+            }
+        )
+    for label, section in (earnings_sections or {}).items():
+        citations.append(
+            {
+                "Label": f"SEC {section.get('Form')} {section.get('Item')} {label}",
+                "Type": "earnings-section",
                 "Form": section.get("Form"),
                 "Filing Date": section.get("Filing Date"),
                 "Report Date": section.get("Report Date"),
