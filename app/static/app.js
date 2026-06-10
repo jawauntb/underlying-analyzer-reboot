@@ -72,10 +72,13 @@ const warningsEl = document.querySelector("#warnings");
 const emptyState = document.querySelector("#empty-state");
 const sourceChip = document.querySelector("#source-chip");
 const summaryEl = document.querySelector("#summary");
+const outputPanel = document.querySelector(".output-panel");
 const generateButton = document.querySelector("#generate");
 const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
+const formActionsEl = document.querySelector("#chart-form .form-actions");
+const mobileLayoutQuery = window.matchMedia("(max-width: 680px)");
 const chartViewer = createChartViewer();
 mountAccountControls({ root: document.querySelector("#account-control") });
 mountSavedWatchlistCockpit({
@@ -86,17 +89,19 @@ mountSavedWatchlistCockpit({
   runAlerts: runSavedAlertRule,
 });
 const researchLibrary = mountResearchLibrary({
-  insertAfter: document.querySelector("#chart-form .form-actions"),
+  insertAfter: formActionsEl,
   getRecord: buildResearchRecord,
   getTicker: () => payloadFromForm().ticker,
   openRecord: openSavedResearch,
 });
-mountAlertMonitor({
-  insertAfter: researchLibrary.root || document.querySelector("#chart-form .form-actions"),
+const alertMonitor = mountAlertMonitor({
+  insertAfter: researchLibrary.root || formActionsEl,
   getDraft: alertRuleDraft,
   openRun: openSavedAlertRun,
   runRule: runSavedAlertRule,
 });
+syncSecondaryPanelPlacement();
+mobileLayoutQuery.addEventListener("change", syncSecondaryPanelPlacement);
 
 document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => {
@@ -133,8 +138,10 @@ form.addEventListener("submit", async (event) => {
     } else {
       await fetchChart(payload);
     }
+    focusOutputOnMobile();
   } catch (error) {
     showError(error.message || "Request failed");
+    focusOutputOnMobile();
   } finally {
     setLoading(false);
   }
@@ -190,6 +197,26 @@ function setMode(mode, options = {}) {
   if (options.clear !== false) {
     clearOutput();
   }
+}
+
+function syncSecondaryPanelPlacement() {
+  if (!formActionsEl || !outputPanel) {
+    return;
+  }
+  const panels = [researchLibrary.root, alertMonitor.root].filter(Boolean);
+  let anchor = mobileLayoutQuery.matches ? outputPanel : formActionsEl;
+  panels.forEach((panel) => {
+    anchor.after(panel);
+    anchor = panel;
+  });
+}
+
+function focusOutputOnMobile() {
+  if (!mobileLayoutQuery.matches) {
+    return;
+  }
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  outputPanel?.scrollIntoView({ block: "start", behavior });
 }
 
 function payloadFromForm() {
@@ -313,11 +340,15 @@ function renderImages(images) {
 
     const actions = document.createElement("div");
     actions.className = "chart-actions";
-    actions.append(
-      chartActionButton("Inspect", () => openChartViewer({ src, filename })),
-      chartActionLink("Open PNG", src, filename, false),
-      chartActionLink("Download", src, filename, true),
+    const inspectButton = chartActionButton("Inspect chart", () =>
+      openChartViewer({ src, filename }),
     );
+    inspectButton.classList.add("chart-action-primary");
+    const openLink = chartActionLink("Open PNG", src, filename, false);
+    openLink.classList.add("chart-action-secondary");
+    const downloadLink = chartActionLink("Download", src, filename, true);
+    downloadLink.classList.add("chart-action-secondary");
+    actions.append(inspectButton, openLink, downloadLink);
 
     card.append(previewButton, actions);
     imagesEl.append(card);
