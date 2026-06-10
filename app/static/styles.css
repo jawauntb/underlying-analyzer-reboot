@@ -2359,6 +2359,304 @@ body.is-loading .source-chip::after {
   line-height: 1.5;
 }
 
+.research-packet {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin-top: 18px;
+  border: 1px solid rgba(121, 255, 156, 0.26);
+  background:
+    linear-gradient(135deg, rgba(121, 255, 156, 0.08), transparent 34%),
+    linear-gradient(315deg, rgba(255, 201, 74, 0.06), transparent 44%),
+    rgba(4, 10, 12, 0.92);
+  padding: 16px;
+  scroll-margin-top: 18px;
+}
+
+.research-packet:focus-visible {
+  outline: 2px solid rgba(121, 255, 156, 0.74);
+  outline-offset: 3px;
+}
+
+.packet-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.72fr);
+  gap: 16px;
+  align-items: start;
+  border-bottom: 1px solid rgba(121, 255, 156, 0.2);
+  padding-bottom: 14px;
+}
+
+.packet-header h2 {
+  margin: 0;
+  color: var(--amber);
+  font-family: var(--pixel-font);
+  font-size: 1rem;
+  line-height: 1.7;
+  letter-spacing: 0;
+  text-shadow: 0 0 18px rgba(255, 201, 74, 0.2);
+}
+
+.packet-meta,
+.packet-metric-grid,
+.packet-highlight-grid,
+.packet-source-grid {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.packet-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.packet-meta div,
+.packet-metric,
+.packet-data-block,
+.packet-source-block,
+.packet-source-note {
+  min-width: 0;
+  border: 1px solid rgba(245, 200, 75, 0.16);
+  background: rgba(5, 12, 16, 0.72);
+}
+
+.packet-meta div,
+.packet-metric {
+  padding: 9px;
+}
+
+.packet-meta dt,
+.packet-metric span,
+.packet-rows dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+}
+
+.packet-meta dd,
+.packet-metric strong,
+.packet-rows dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-weight: 950;
+  line-height: 1.35;
+}
+
+.packet-meta dd,
+.packet-metric strong {
+  display: block;
+  margin-top: 5px;
+}
+
+.packet-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(87, 217, 255, 0.18);
+  background:
+    linear-gradient(90deg, rgba(87, 217, 255, 0.06), transparent),
+    rgba(3, 8, 11, 0.58);
+  padding: 13px;
+}
+
+.packet-section h3,
+.packet-data-block h4,
+.packet-source-block h3,
+.packet-subblock h4 {
+  margin: 0;
+  color: var(--amber);
+  font-family: var(--pixel-font);
+  font-size: 0.7rem;
+  line-height: 1.7;
+  letter-spacing: 0;
+}
+
+.packet-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.packet-highlight-grid,
+.packet-source-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.packet-data-block,
+.packet-source-block {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.packet-rows {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(0, 1fr);
+  margin: 0;
+}
+
+.packet-rows dt,
+.packet-rows dd {
+  border-top: 1px solid rgba(245, 200, 75, 0.14);
+  padding: 8px 0;
+}
+
+.packet-rows dt:nth-of-type(1),
+.packet-rows dd:nth-of-type(1) {
+  border-top: 0;
+}
+
+.packet-memo-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.packet-memo-body p,
+.packet-memo-body ul,
+.packet-empty {
+  margin: 0;
+  color: var(--text);
+  font-weight: 850;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.packet-memo-body ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+}
+
+.packet-chart-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.packet-chart {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(87, 217, 255, 0.2);
+  background: rgba(3, 8, 11, 0.68);
+  padding: 11px;
+}
+
+.packet-chart img {
+  display: block;
+  width: 100%;
+  max-height: 500px;
+  object-fit: contain;
+  border: 1px solid rgba(87, 217, 255, 0.22);
+  background: #030608;
+  box-shadow: 0 18px 34px var(--hard-shadow);
+}
+
+.packet-chart figcaption {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.packet-chart figcaption strong {
+  color: var(--text-strong);
+}
+
+.packet-source-block .packet-source-block {
+  border-color: rgba(87, 217, 255, 0.14);
+  background: rgba(3, 8, 11, 0.42);
+}
+
+.packet-subblock {
+  display: grid;
+  gap: 8px;
+}
+
+.packet-source-note {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+}
+
+.packet-source-note strong,
+.packet-citation strong {
+  color: var(--text-strong);
+  overflow-wrap: anywhere;
+}
+
+.packet-source-note p {
+  margin: 0;
+  color: var(--text);
+  font-weight: 850;
+  line-height: 1.5;
+}
+
+.packet-citation-list,
+.packet-warning-list,
+.packet-checklist {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.packet-citation,
+.packet-warning-list li,
+.packet-checklist li {
+  min-width: 0;
+  border: 1px solid rgba(245, 200, 75, 0.14);
+  background: rgba(5, 12, 16, 0.64);
+  padding: 9px;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 850;
+  line-height: 1.5;
+}
+
+.packet-citation {
+  display: grid;
+  gap: 5px;
+}
+
+.packet-citation span {
+  color: var(--muted);
+}
+
+.packet-citation a {
+  color: var(--cyan);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.packet-warning-list li {
+  border-color: rgba(255, 201, 74, 0.3);
+  color: #ffe7a8;
+}
+
+.packet-checklist li {
+  display: flex;
+  gap: 9px;
+}
+
+.packet-checklist li::before {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  margin-top: 5px;
+  border: 1px solid rgba(87, 217, 255, 0.72);
+  content: "";
+}
+
+.packet-empty {
+  color: var(--muted);
+}
+
 .stream-cursor {
   display: inline-block;
   width: 10px;
@@ -2624,6 +2922,14 @@ body.is-loading .source-chip::after {
     grid-template-columns: 1fr;
   }
 
+  .packet-header,
+  .packet-meta,
+  .packet-metric-grid,
+  .packet-highlight-grid,
+  .packet-source-grid {
+    grid-template-columns: 1fr;
+  }
+
   .memo-meta {
     display: grid;
     grid-template-columns: 1fr;
@@ -2753,6 +3059,20 @@ body.is-loading .source-chip::after {
 
   .memo-source-head,
   .memo-source-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-packet,
+  .packet-section {
+    padding: 12px;
+  }
+
+  .packet-header,
+  .packet-meta,
+  .packet-metric-grid,
+  .packet-highlight-grid,
+  .packet-source-grid,
+  .packet-rows {
     grid-template-columns: 1fr;
   }
 
@@ -2887,6 +3207,7 @@ body.is-loading .source-chip::after {
   .masthead,
   .home-brief,
   .tool-form,
+  .chart-viewer,
   .download-link,
   .source-chip,
   .empty-state,
@@ -2920,6 +3241,16 @@ body.is-loading .source-chip::after {
     padding: 0;
   }
 
+  body.printing-research-packet .output-head,
+  body.printing-research-packet .summary-grid,
+  body.printing-research-packet .tool-result > :not(.research-packet) {
+    display: none !important;
+  }
+
+  body.printing-research-packet .research-packet {
+    display: grid !important;
+  }
+
   .output-head {
     border-bottom: 2px solid #111111;
     margin-bottom: 16px;
@@ -2943,20 +3274,74 @@ body.is-loading .source-chip::after {
   .memo-card,
   .memo-chart,
   .report-section,
-  .memo-table-wrap {
+  .memo-table-wrap,
+  .research-packet,
+  .packet-section,
+  .packet-metric,
+  .packet-data-block,
+  .packet-source-block,
+  .packet-source-note,
+  .packet-chart,
+  .packet-citation,
+  .packet-warning-list li,
+  .packet-checklist li {
     break-inside: avoid;
     border-color: #c7c7c7;
     background: #ffffff;
     box-shadow: none;
   }
 
+  .research-packet {
+    gap: 12px;
+    margin-top: 0;
+    padding: 0;
+  }
+
+  .packet-header {
+    grid-template-columns: minmax(0, 1fr);
+    border-bottom: 2px solid #111111;
+    padding-bottom: 10px;
+  }
+
+  .packet-meta,
+  .packet-highlight-grid,
+  .packet-source-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .packet-metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .summary-item span,
   .report-row span,
-  .memo-chip {
+  .memo-chip,
+  .packet-meta dt,
+  .packet-metric span,
+  .packet-rows dt,
+  .packet-citation span,
+  .packet-chart figcaption,
+  .packet-empty {
     color: #4a4a4a;
   }
 
   .summary-item strong,
+  .packet-header h2,
+  .packet-section h3,
+  .packet-data-block h4,
+  .packet-source-block h3,
+  .packet-subblock h4,
+  .packet-meta dd,
+  .packet-metric strong,
+  .packet-rows dd,
+  .packet-memo-body p,
+  .packet-memo-body ul,
+  .packet-source-note strong,
+  .packet-source-note p,
+  .packet-citation,
+  .packet-citation strong,
+  .packet-warning-list li,
+  .packet-checklist li,
   .memo-card p,
   .memo-body p,
   .memo-body ul,
@@ -2966,6 +3351,22 @@ body.is-loading .source-chip::after {
   .memo-table th,
   .memo-table td {
     color: #111111 !important;
+  }
+
+  .packet-citation a {
+    color: #111111 !important;
+    text-decoration: none;
+  }
+
+  .packet-chart img {
+    max-height: 4.8in;
+    border-color: #c7c7c7;
+    background: #ffffff;
+    box-shadow: none;
+  }
+
+  .packet-checklist li::before {
+    border-color: #111111;
   }
 
   .memo-meta {
