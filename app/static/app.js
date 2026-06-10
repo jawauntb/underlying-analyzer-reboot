@@ -340,11 +340,15 @@ function renderImages(images) {
 
     const actions = document.createElement("div");
     actions.className = "chart-actions";
-    actions.append(
-      chartActionButton("Inspect", () => openChartViewer({ src, filename })),
-      chartActionLink("Open PNG", src, filename, false),
-      chartActionLink("Download", src, filename, true),
+    const inspectButton = chartActionButton("Inspect chart", () =>
+      openChartViewer({ src, filename }),
     );
+    inspectButton.classList.add("chart-action-primary");
+    const openLink = chartActionLink("Open PNG", src, filename, false);
+    openLink.classList.add("chart-action-secondary");
+    const downloadLink = chartActionLink("Download", src, filename, true);
+    downloadLink.classList.add("chart-action-secondary");
+    actions.append(inspectButton, openLink, downloadLink);
 
     card.append(previewButton, actions);
     imagesEl.append(card);

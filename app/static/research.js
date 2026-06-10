@@ -1404,15 +1404,17 @@ function sectionKicker(label) {
 }
 
 function createResearchPanel() {
-  const root = document.createElement("section");
+  const root = document.createElement("details");
   root.className = "research-panel";
   root.hidden = true;
   root.innerHTML = `
+    <summary class="utility-summary">
+      <span class="panel-label">Library</span>
+      <span class="utility-summary-note">Save and reopen runs</span>
+    </summary>
+    <div class="utility-body">
     <div class="research-head">
-      <div>
-        <div class="panel-label">Library</div>
-        <p class="research-status" data-role="status">Sign in to save generated research.</p>
-      </div>
+      <p class="research-status" data-role="status">Sign in to save generated research.</p>
       <button class="download-link research-signout" data-role="signout" type="button" hidden>Sign out</button>
     </div>
     <div class="research-auth" data-role="auth">
@@ -1428,6 +1430,7 @@ function createResearchPanel() {
       <button class="download-link" data-role="timeline" type="button">Timeline</button>
     </div>
     <div class="research-list" data-role="list" hidden></div>
+    </div>
   `;
 
   return {
@@ -1476,15 +1479,17 @@ function createSavedWatchlistPanel(root) {
 }
 
 function createAlertMonitorPanel() {
-  const root = document.createElement("section");
+  const root = document.createElement("details");
   root.className = "research-panel alert-monitor-panel";
   root.hidden = true;
   root.innerHTML = `
+    <summary class="utility-summary">
+      <span class="panel-label">Alert Monitor</span>
+      <span class="utility-summary-note">Rules and inbox</span>
+    </summary>
+    <div class="utility-body">
     <div class="research-head">
-      <div>
-        <div class="panel-label">Alert Monitor</div>
-        <p class="research-status" data-role="status">Sign in to save daily alert rules.</p>
-      </div>
+      <p class="research-status" data-role="status">Sign in to save daily alert rules.</p>
     </div>
     <div class="alert-monitor-actions" data-role="actions" hidden>
       <input data-role="name" autocomplete="off" placeholder="Daily alert name" />
@@ -1503,6 +1508,7 @@ function createAlertMonitorPanel() {
       </select>
     </div>
     <div class="research-list alert-monitor-list" data-role="list" hidden></div>
+    </div>
   `;
 
   const panel = {
