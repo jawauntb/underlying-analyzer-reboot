@@ -95,6 +95,9 @@ exportButton.addEventListener("click", () => {
 
 pdfButton.addEventListener("click", () => {
   if (lastExport) {
+    if (pathKey === "vision") {
+      prepareResearchPacketPrint({ focus: true });
+    }
     window.print();
   }
 });
@@ -103,6 +106,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !memoChartViewer.root.hidden) {
     closeMemoChartViewer();
   }
+});
+
+window.addEventListener("afterprint", () => {
+  document.body.classList.remove("printing-research-packet");
 });
 
 function boot() {
@@ -127,7 +134,7 @@ function createPdfButton() {
   button.className = "export-button pdf-button";
   button.id = "tool-export-pdf";
   button.type = "button";
-  button.textContent = "Export PDF";
+  button.textContent = pathKey === "vision" ? "Packet PDF" : "Export PDF";
   button.disabled = true;
   exportButton.after(button);
   return button;
@@ -281,7 +288,7 @@ function renderToolResult(data) {
 
 function renderVision(data) {
   const frame = renderVisionFrame(data);
-  updateMemoBody(frame.body, data["Market Memo"] || "", false, memoCharts(data));
+  updateMemoBody(frame.body, visionMemo(data), false, memoCharts(data));
 }
 
 function renderVisionFrame(data, options = {}) {
@@ -299,15 +306,15 @@ function renderVisionFrame(data, options = {}) {
   eyebrow.className = "memo-eyebrow";
   eyebrow.textContent = "Market Memo";
   const heading = document.createElement("h3");
-  heading.textContent = `${data.Ticker || data.meta?.ticker || "Vision"} Vision`;
+  heading.textContent = `${visionTicker(data) || "Vision"} Vision`;
   titleGroup.append(eyebrow, heading);
 
   const meta = document.createElement("div");
   meta.className = "memo-meta";
   meta.append(
-    memoChip(data["Text Provider"] || "anthropic"),
-    memoChip(data["Text Model"] || "model"),
-    memoChip(data.provider || data.Report?.Provider || "market data"),
+    memoChip(visionTextProvider(data) || "anthropic"),
+    memoChip(visionTextModel(data) || "model"),
+    memoChip(data.provider || visionReport(data).Provider || "market data"),
   );
   const status = memoChip(options.streaming ? "Streaming" : "Complete");
   status.classList.add("memo-status");
@@ -328,12 +335,12 @@ function renderVisionFrame(data, options = {}) {
 }
 
 function visionSummaryItems(data) {
-  const report = data.Report || {};
+  const report = visionReport(data);
   return [
-    ["Ticker", data.Ticker || report.Ticker],
+    ["Ticker", visionTicker(data) || report.Ticker],
     ["Price", report.Snapshot?.Price],
     ["Setup", report["Signal Summary"]?.Setup],
-    ["Model", data["Text Model"] || data["Text Provider"] || "Generated"],
+    ["Model", visionTextModel(data) || visionTextProvider(data) || "Generated"],
   ];
 }
 
@@ -345,7 +352,8 @@ function memoChip(value) {
 }
 
 function memoCharts(data) {
-  const charts = data["Memo Charts"] || data.charts || data.export?.memo_charts || [];
+  const charts =
+    data["Memo Charts"] || data.memo_charts || data.charts || data.export?.memo_charts || [];
   return Array.isArray(charts) ? charts : [];
 }
 
@@ -387,7 +395,560 @@ function visionSourcePanel(data) {
 }
 
 function visionReport(data) {
-  return data.Report || data.export?.report || {};
+  return data.Report || data.report || data.export?.report || {};
+}
+
+function visionMemo(data) {
+  return firstString(data["Market Memo"], data.market_memo, data.text, data.export?.market_memo);
+}
+
+function visionTicker(data) {
+  return firstString(
+    data.Ticker,
+    data.ticker,
+    data.Report?.Ticker,
+    data.report?.Ticker,
+    data.meta?.ticker,
+    data.export?.ticker,
+    data.export?.meta?.ticker,
+    data.tickers?.[0],
+    data.export?.tickers?.[0],
+  );
+}
+
+function visionTextProvider(data) {
+  return firstString(data["Text Provider"], data.text_provider, data.export?.text_provider);
+}
+
+function visionTextModel(data) {
+  return firstString(data["Text Model"], data.text_model, data.export?.text_model);
+}
+
+function chartErrors(data) {
+  const errors = data["Chart Errors"] || data.chart_errors || data.export?.chart_errors || [];
+  return Array.isArray(errors) ? errors : [];
+}
+
+function prepareResearchPacketPrint({ focus = false } = {}) {
+  if (!lastExport || pathKey !== "vision") {
+    return null;
+  }
+  const packet = renderResearchPacket(lastExport);
+  document.body.classList.add("printing-research-packet");
+  if (focus) {
+    packet.scrollIntoView({ block: "start", behavior: "smooth" });
+    packet.focus({ preventScroll: true });
+  }
+  return packet;
+}
+
+function renderResearchPacket(payload) {
+  const data = visionPacketData(payload || {});
+  resultEl.querySelector("[data-research-packet]")?.remove();
+
+  const packet = document.createElement("section");
+  packet.className = "research-packet";
+  packet.dataset.researchPacket = "true";
+  packet.tabIndex = -1;
+  packet.append(
+    packetHeader(data),
+    packetCoverageSection(data),
+    packetMemoSection(data),
+    packetChartsSection(data),
+    packetHighlightsSection(data),
+    packetSourcesSection(data),
+    packetWarningsSection(data),
+    packetDiligenceSection(data),
+  );
+  resultEl.append(packet);
+  return packet;
+}
+
+function visionPacketData(payload) {
+  const report = visionReport(payload);
+  const sec = objectOrEmpty(report["SEC Source Pack"]);
+  const earnings = objectOrEmpty(report["Earnings Source Pack"]);
+  return {
+    ticker: visionTicker(payload) || "Vision",
+    generatedAt: firstString(
+      payload.generated_at,
+      payload["Generated At"],
+      payload.export?.generated_at,
+    ),
+    textProvider: visionTextProvider(payload),
+    textModel: visionTextModel(payload),
+    provider: firstString(payload.provider, report.Provider, payload.export?.provider),
+    providerNote: firstString(
+      payload.provider_note,
+      report["Provider Note"],
+      payload.export?.provider_note,
+    ),
+    memo: visionMemo(payload),
+    report,
+    charts: memoCharts(payload),
+    chartErrors: chartErrors(payload),
+    sec,
+    earnings,
+    coverage: objectOrEmpty(report["Data Coverage"]),
+  };
+}
+
+function packetHeader(data) {
+  const header = document.createElement("header");
+  header.className = "packet-header";
+
+  const titleGroup = document.createElement("div");
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "memo-eyebrow";
+  eyebrow.textContent = "Research Packet";
+  const title = document.createElement("h2");
+  title.textContent = `${data.ticker} Tear Sheet`;
+  titleGroup.append(eyebrow, title);
+
+  const meta = document.createElement("dl");
+  meta.className = "packet-meta";
+  [
+    ["Generated", formatPacketDate(data.generatedAt)],
+    ["Text Model", data.textModel || data.textProvider || "not supplied"],
+    ["Text Provider", data.textProvider || "not supplied"],
+    ["Data Provider", data.provider || "not supplied"],
+    ["Provider Note", data.providerNote || "not supplied"],
+  ].forEach(([label, value]) => meta.append(packetMetaItem(label, value)));
+
+  header.append(titleGroup, meta);
+  return header;
+}
+
+function packetMetaItem(label, value) {
+  const wrapper = document.createElement("div");
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const detail = document.createElement("dd");
+  detail.textContent = value;
+  wrapper.append(term, detail);
+  return wrapper;
+}
+
+function packetCoverageSection(data) {
+  const section = packetSection("Source Coverage");
+  section.append(
+    packetMetricGrid([
+      ["SEC Status", data.sec.Status || "not supplied"],
+      ["Earnings Status", data.earnings.Status || "not supplied"],
+      ["XBRL Facts", secFactCount(data.sec)],
+      ["Citations", sourceCitationCount(data.sec, data.earnings)],
+    ]),
+  );
+
+  const coverageRows = packetRows(data.coverage);
+  if (coverageRows) {
+    section.append(coverageRows);
+  } else {
+    section.append(packetEmpty("Data Coverage: not supplied"));
+  }
+  return section;
+}
+
+function packetMetricGrid(items) {
+  const grid = document.createElement("div");
+  grid.className = "packet-metric-grid";
+  items.forEach(([label, value]) => {
+    const item = document.createElement("div");
+    item.className = "packet-metric";
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = formatSourceMetricValue(value);
+    item.append(labelEl, valueEl);
+    grid.append(item);
+  });
+  return grid;
+}
+
+function packetMemoSection(data) {
+  const section = packetSection("Vision Memo");
+  const body = document.createElement("div");
+  body.className = "packet-memo-body";
+  if (data.memo.trim()) {
+    renderMarkdown(data.memo, body, []);
+  } else {
+    body.append(packetEmpty("Vision memo: not supplied"));
+  }
+  section.append(body);
+  return section;
+}
+
+function packetChartsSection(data) {
+  const section = packetSection("Memo Charts");
+  if (!data.charts.length) {
+    section.append(packetEmpty("Memo Charts: not supplied"));
+    return section;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "packet-chart-grid";
+  data.charts.forEach((chart) => grid.append(packetChartFigure(chart)));
+  section.append(grid);
+  return section;
+}
+
+function packetChartFigure(chart) {
+  const image = chart.image || chart;
+  const filename = image.filename || `${chart.key || "memo-chart"}.png`;
+  const figure = document.createElement("figure");
+  figure.className = "packet-chart";
+
+  const title = document.createElement("figcaption");
+  const label = document.createElement("span");
+  label.className = "memo-eyebrow";
+  label.textContent = chart.placement || "Memo Chart";
+  const name = document.createElement("strong");
+  name.textContent = chart.title || filename;
+  const caption = document.createElement("p");
+  caption.textContent = chart.caption || chart.description || filename;
+  title.append(label, name, caption);
+
+  if (image.data) {
+    const img = document.createElement("img");
+    img.src = `data:${image.mime || "image/png"};base64,${image.data}`;
+    img.alt = chart.title || filename;
+    img.loading = "lazy";
+    figure.append(img);
+  } else {
+    figure.append(packetEmpty(`${chart.title || filename}: image not supplied`));
+  }
+  figure.append(title);
+  return figure;
+}
+
+function packetHighlightsSection(data) {
+  const section = packetSection("Stock Fax Highlights");
+  const grid = document.createElement("div");
+  grid.className = "packet-highlight-grid";
+  [
+    ["Snapshot", data.report.Snapshot],
+    ["Signal Summary", data.report["Signal Summary"]],
+    ["Auction Levels", data.report["Auction Market Theory Price Levels"]],
+    ["Valuation", data.report["Valuation Context"]],
+    ["Financial Quality", data.report["Financial Quality"]],
+    ["Volatility", data.report["Volatility Metrics"]],
+  ].forEach(([title, value]) => grid.append(packetDataBlock(title, value)));
+  section.append(grid);
+  return section;
+}
+
+function packetSourcesSection(data) {
+  const section = packetSection("Citations And Earnings Sources");
+  const grid = document.createElement("div");
+  grid.className = "packet-source-grid";
+  grid.append(packetCitationGroup("SEC Citations", data.sec.Citations));
+  grid.append(packetEarningsGroup(data.earnings));
+  section.append(grid);
+  return section;
+}
+
+function packetCitationGroup(title, citations) {
+  const article = document.createElement("article");
+  article.className = "packet-source-block";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  article.append(heading);
+
+  const unique = uniqueCitations(citations);
+  if (!unique.length) {
+    article.append(packetEmpty(`${title}: not supplied`));
+    return article;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "packet-citation-list";
+  unique.forEach((citation) => list.append(packetCitationItem(citation)));
+  article.append(list);
+  return article;
+}
+
+function packetEarningsGroup(earnings) {
+  const article = document.createElement("article");
+  article.className = "packet-source-block";
+  const heading = document.createElement("h3");
+  heading.textContent = "Earnings Source Pack";
+  article.append(heading);
+
+  const event = objectOrEmpty(earnings["Latest Earnings Event"]);
+  const eventRows = packetRows(event);
+  if (eventRows) {
+    const eventBlock = document.createElement("div");
+    eventBlock.className = "packet-subblock";
+    const eventHeading = document.createElement("h4");
+    eventHeading.textContent = "Latest Event";
+    eventBlock.append(eventHeading, eventRows);
+    article.append(eventBlock);
+  } else {
+    article.append(packetEmpty("Latest Earnings Event: not supplied"));
+  }
+
+  const sections = objectEntries(earnings["SEC 8-K Sections"]);
+  if (sections.length) {
+    const sectionList = document.createElement("div");
+    sectionList.className = "packet-subblock";
+    const sectionHeading = document.createElement("h4");
+    sectionHeading.textContent = "SEC 8-K Sections";
+    sectionList.append(sectionHeading);
+    sections.forEach(([label, section]) => {
+      const card = document.createElement("div");
+      card.className = "packet-source-note";
+      const title = document.createElement("strong");
+      title.textContent = `${label}: ${formatValue(section.Item || section.Heading)}`;
+      const snippet = document.createElement("p");
+      snippet.textContent = compactText(section.Snippet || section.Summary, 320);
+      card.append(title, snippet);
+      sectionList.append(card);
+    });
+    article.append(sectionList);
+  }
+
+  article.append(packetCitationGroup("Earnings Citations", earnings.Citations));
+  return article;
+}
+
+function packetWarningsSection(data) {
+  const section = packetSection("Warnings And Errors");
+  const warnings = visionWarnings(data);
+  if (!warnings.length) {
+    section.append(packetEmpty("Warnings: none reported"));
+    return section;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "packet-warning-list";
+  warnings.forEach((warning) => {
+    const item = document.createElement("li");
+    item.textContent = warning;
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+function packetDiligenceSection(data) {
+  const section = packetSection("Next Diligence");
+  const items = diligenceItems(data.coverage);
+  const list = document.createElement("ul");
+  list.className = "packet-checklist";
+  items.forEach((item) => {
+    const row = document.createElement("li");
+    row.textContent = item;
+    list.append(row);
+  });
+  section.append(list);
+  return section;
+}
+
+function packetSection(title) {
+  const section = document.createElement("section");
+  section.className = "packet-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.append(heading);
+  return section;
+}
+
+function packetDataBlock(title, value) {
+  const article = document.createElement("article");
+  article.className = "packet-data-block";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  article.append(heading);
+  const rows = packetRows(value);
+  article.append(rows || packetEmpty(`${title}: not supplied`));
+  return article;
+}
+
+function packetRows(value) {
+  const entries = objectEntries(value);
+  if (!entries.length) {
+    return null;
+  }
+
+  const rows = document.createElement("dl");
+  rows.className = "packet-rows";
+  entries.forEach(([label, item]) => {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = formatPacketValue(item);
+    rows.append(term, detail);
+  });
+  return rows;
+}
+
+function packetCitationItem(citation) {
+  const item = document.createElement("li");
+  item.className = "packet-citation";
+  const label = document.createElement("strong");
+  label.textContent =
+    firstString(citation.Label, citation.Form, citation.Type, citation.Provider) || "Citation";
+  item.append(label);
+
+  const meta = [
+    citation.Type,
+    citation.Form,
+    citation["Filing Date"],
+    citation.Provider,
+  ].filter(Boolean);
+  if (meta.length) {
+    const metaEl = document.createElement("span");
+    metaEl.textContent = meta.map((value) => formatValue(value)).join(" / ");
+    item.append(metaEl);
+  }
+
+  const url = firstString(citation.URL, citation["Source URL"]);
+  if (url) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = url;
+    item.append(link);
+  } else {
+    const missing = document.createElement("span");
+    missing.textContent = "URL: not supplied";
+    item.append(missing);
+  }
+  return item;
+}
+
+function packetEmpty(message) {
+  const empty = document.createElement("p");
+  empty.className = "packet-empty";
+  empty.textContent = message;
+  return empty;
+}
+
+function visionWarnings(data) {
+  const warnings = [];
+  data.chartErrors.forEach((error) => {
+    warnings.push(`Chart Error: ${chartErrorText(error)}`);
+  });
+  listOf(data.sec.Errors).forEach((error) =>
+    warnings.push(`SEC Source Pack: ${formatValue(error)}`),
+  );
+  listOf(data.earnings.Errors).forEach((error) =>
+    warnings.push(`Earnings Source Pack: ${formatValue(error)}`),
+  );
+  objectEntries(data.coverage)
+    .filter(([, status]) => isCoverageGap(status))
+    .forEach(([label, status]) => warnings.push(`${label}: ${formatValue(status)}`));
+
+  if (!data.memo.trim()) {
+    warnings.push("Vision memo: not supplied");
+  }
+  if (!data.charts.length) {
+    warnings.push("Memo Charts: not supplied");
+  }
+  if (!data.sec.Status) {
+    warnings.push("SEC Source Pack: not supplied");
+  }
+  if (!data.earnings.Status) {
+    warnings.push("Earnings Source Pack: not supplied");
+  }
+
+  return [...new Set(warnings.filter(Boolean))];
+}
+
+function diligenceItems(coverage) {
+  const entries = objectEntries(coverage);
+  if (!entries.length) {
+    return ["Data Coverage: not supplied"];
+  }
+
+  const gaps = entries.filter(([, status]) => isCoverageGap(status));
+  if (!gaps.length) {
+    return ["No partial or missing coverage items flagged by Data Coverage."];
+  }
+  return gaps.map(([label, status]) => `Resolve ${label} coverage (${formatValue(status)}).`);
+}
+
+function isCoverageGap(value) {
+  return /partial|not supplied|unavailable|not configured/i.test(String(value || ""));
+}
+
+function chartErrorText(error) {
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const name = firstString(error.chart, error.key, error.title, error.placement);
+    const message = firstString(error.error, error.message, error.reason) || formatValue(error);
+    return name ? `${name}: ${message}` : message;
+  }
+  return formatValue(error);
+}
+
+function uniqueCitations(citations) {
+  const seen = new Set();
+  return listOf(citations)
+    .filter((citation) => citation && typeof citation === "object")
+    .filter((citation) => {
+      const key = [
+        citation.Label,
+        citation.Type,
+        citation.Form,
+        citation["Filing Date"],
+        citation.URL,
+        citation["Source URL"],
+      ]
+        .filter(Boolean)
+        .join(":");
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function secFactCount(sec) {
+  return objectEntries(sec["Company Facts"]).length;
+}
+
+function formatPacketDate(value) {
+  if (!value) {
+    return "not supplied";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatPacketValue(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = objectEntries(value);
+    if (entries.length) {
+      return entries.map(([label, child]) => `${label}: ${formatValue(child)}`).join(" / ");
+    }
+  }
+  return formatValue(value).replace(/\s+/g, " ");
+}
+
+function objectOrEmpty(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function objectEntries(value) {
+  return Object.entries(objectOrEmpty(value));
+}
+
+function listOf(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function sourceStatusLine(sec, earnings) {
@@ -881,6 +1442,7 @@ function formatValue(value) {
 
 function clearOutput() {
   closeMemoChartViewer();
+  document.body.classList.remove("printing-research-packet");
   resultEl.innerHTML = "";
   summaryEl.innerHTML = "";
   summaryEl.hidden = true;
