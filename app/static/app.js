@@ -79,6 +79,15 @@ const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const formActionsEl = document.querySelector("#chart-form .form-actions");
 const mobileLayoutQuery = window.matchMedia("(max-width: 680px)");
+const commandTickersInput = document.querySelector("#command-tickers");
+const commandModeSelect = document.querySelector("#command-mode");
+const commandPeriodSelect = document.querySelector("#command-period");
+const commandMonthSelect = document.querySelector("#command-month");
+const commandPreview = document.querySelector("#command-preview");
+const commandRunButton = document.querySelector("#command-run");
+const formTickersInput = document.querySelector("#tickers");
+const formPeriodSelect = document.querySelector("#period");
+const formMonthSelect = document.querySelector("#month");
 const chartViewer = createChartViewer();
 mountAccountControls({ root: document.querySelector("#account-control") });
 mountSavedWatchlistCockpit({
@@ -107,6 +116,34 @@ document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => {
     setMode(button.dataset.mode);
   });
+});
+
+commandTickersInput.addEventListener("input", () => {
+  formTickersInput.value = commandTickersInput.value;
+  updateCommandPreview();
+});
+
+commandModeSelect.addEventListener("change", () => {
+  setMode(commandModeSelect.value);
+});
+
+commandPeriodSelect.addEventListener("change", () => {
+  formPeriodSelect.value = commandPeriodSelect.value;
+  updateCommandPreview();
+});
+
+commandMonthSelect.addEventListener("change", () => {
+  formMonthSelect.value = commandMonthSelect.value;
+  updateCommandPreview();
+});
+
+formTickersInput.addEventListener("input", syncCommandFromForm);
+formPeriodSelect.addEventListener("change", syncCommandFromForm);
+formMonthSelect.addEventListener("change", syncCommandFromForm);
+
+commandRunButton.addEventListener("click", () => {
+  syncFormFromCommand();
+  form.requestSubmit(generateButton);
 });
 
 exportButton.addEventListener("click", () => {
@@ -149,6 +186,7 @@ form.addEventListener("submit", async (event) => {
 
 async function boot() {
   setDefaultDates();
+  syncCommandFromForm();
   syncModeCopy();
   syncFields();
   try {
@@ -184,6 +222,9 @@ function syncModeCopy() {
   outputTitle.textContent = modeTitles[state.mode];
   modeContractEl.textContent = contract;
   outputContractEl.textContent = contract;
+  commandModeSelect.value = state.mode;
+  syncCommandFields();
+  updateCommandPreview();
 }
 
 function setMode(mode, options = {}) {
@@ -209,6 +250,84 @@ function syncSecondaryPanelPlacement() {
     anchor.after(panel);
     anchor = panel;
   });
+}
+
+function syncFormFromCommand() {
+  formTickersInput.value = commandTickersInput.value;
+  if (commandPeriodSelect.closest("[data-command-field]").hidden === false) {
+    formPeriodSelect.value = commandPeriodSelect.value;
+  }
+  if (commandMonthSelect.closest("[data-command-field]").hidden === false) {
+    formMonthSelect.value = commandMonthSelect.value;
+  }
+}
+
+function syncCommandFromForm() {
+  commandTickersInput.value = formTickersInput.value;
+  commandPeriodSelect.value = formPeriodSelect.value;
+  commandMonthSelect.value = formMonthSelect.value;
+  updateCommandPreview();
+}
+
+function syncCommandFields() {
+  document.querySelectorAll("[data-command-field]").forEach((field) => {
+    const name = field.dataset.commandField;
+    field.hidden =
+      (name === "period" && !["auction", "regression", "flow-compass", "cockpit", "alerts"].includes(state.mode)) ||
+      (name === "month" && state.mode !== "performance");
+  });
+}
+
+function updateCommandPreview() {
+  const ticker = commandTickersInput.value
+    .split(",")
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(",");
+  const parts = [ticker || "TICKER", commandLabel(state.mode)];
+  if (state.mode === "performance") {
+    parts.push(monthLabel(commandMonthSelect.value));
+  } else if (["auction", "regression", "flow-compass", "cockpit", "alerts"].includes(state.mode)) {
+    parts.push(commandPeriodSelect.value.toUpperCase());
+  }
+  commandPreview.textContent = parts.join(" ");
+}
+
+function commandLabel(mode) {
+  return (
+    {
+      auction: "auction",
+      performance: "month-map",
+      regression: "regression",
+      "ridge-growth": "ridge",
+      "flow-compass": "compass",
+      cockpit: "cockpit",
+      alerts: "alerts",
+      portfolio: "portfolio",
+      volatility: "volatility",
+      analysis: "brief",
+    }[mode] || mode
+  );
+}
+
+function monthLabel(value) {
+  return (
+    {
+      1: "jan",
+      2: "feb",
+      3: "mar",
+      4: "apr",
+      5: "may",
+      6: "jun",
+      7: "jul",
+      8: "aug",
+      9: "sep",
+      10: "oct",
+      11: "nov",
+      12: "dec",
+    }[Number(value)] || "month"
+  );
 }
 
 function focusOutputOnMobile() {

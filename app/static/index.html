@@ -89,28 +89,115 @@
         </div>
       </section>
 
+      <section class="panel command-panel" aria-labelledby="command-title">
+        <div class="command-head">
+          <div>
+            <div class="panel-label">Command</div>
+            <h2 id="command-title">Ticker, mode, run.</h2>
+          </div>
+          <code id="command-preview" class="command-preview">AAPL auction 1Y</code>
+        </div>
+        <div class="command-bar" aria-label="Quick terminal command">
+          <label class="command-field command-field-ticker">
+            <span>Ticker(s)</span>
+            <input id="command-tickers" value="AAPL" autocomplete="off" inputmode="text" />
+          </label>
+          <label class="command-field command-field-mode">
+            <span>Mode</span>
+            <select id="command-mode">
+              <optgroup label="Charts">
+                <option value="auction">Auction</option>
+                <option value="performance">Month Map</option>
+                <option value="regression">Regression</option>
+              </optgroup>
+              <optgroup label="Signals">
+                <option value="ridge-growth">Ridge</option>
+                <option value="flow-compass">Compass</option>
+                <option value="volatility">Volatility</option>
+              </optgroup>
+              <optgroup label="Lists">
+                <option value="cockpit">Cockpit</option>
+                <option value="portfolio">Portfolio</option>
+              </optgroup>
+              <optgroup label="Research">
+                <option value="analysis">Brief</option>
+              </optgroup>
+              <optgroup label="Monitor">
+                <option value="alerts">Alerts</option>
+              </optgroup>
+            </select>
+          </label>
+          <label class="command-field" data-command-field="period">
+            <span>Window</span>
+            <select id="command-period">
+              <option value="1mo">1M</option>
+              <option value="3mo">3M</option>
+              <option value="6mo">6M</option>
+              <option value="1y" selected>1Y</option>
+              <option value="2y">2Y</option>
+              <option value="5y">5Y</option>
+              <option value="10y">10Y</option>
+            </select>
+          </label>
+          <label class="command-field" data-command-field="month" hidden>
+            <span>Month</span>
+            <select id="command-month">
+              <option value="1">Jan</option>
+              <option value="2">Feb</option>
+              <option value="3">Mar</option>
+              <option value="4">Apr</option>
+              <option value="5">May</option>
+              <option value="6">Jun</option>
+              <option value="7">Jul</option>
+              <option value="8">Aug</option>
+              <option value="9">Sep</option>
+              <option value="10">Oct</option>
+              <option value="11">Nov</option>
+              <option value="12">Dec</option>
+            </select>
+          </label>
+          <button class="command-run" id="command-run" type="button">Run</button>
+        </div>
+      </section>
+
       <section class="workspace">
         <aside class="panel tools-panel">
           <div class="panel-label">Modes</div>
           <p id="mode-contract" class="mode-contract">
             Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
           </p>
-          <div class="mode-grid" role="tablist" aria-label="Chart mode">
-            <button class="mode-button active" data-mode="auction" type="button">Auction</button>
-            <button class="mode-button" data-mode="performance" type="button">Month Map</button>
-            <button class="mode-button" data-mode="regression" type="button">Regression</button>
-            <button class="mode-button" data-mode="ridge-growth" type="button">Ridge</button>
-            <button class="mode-button" data-mode="flow-compass" type="button">Compass</button>
-            <button class="mode-button" data-mode="cockpit" type="button">Cockpit</button>
-            <button class="mode-button" data-mode="alerts" type="button">Alerts</button>
-            <button class="mode-button" data-mode="portfolio" type="button">Portfolio</button>
-            <button class="mode-button" data-mode="volatility" type="button">Volatility</button>
-            <button class="mode-button" data-mode="analysis" type="button">Brief</button>
+          <div class="mode-grid" role="group" aria-label="Analysis mode">
+            <div class="mode-group">
+              <div class="mode-group-label">Charts</div>
+              <button class="mode-button active" data-mode="auction" type="button">Auction</button>
+              <button class="mode-button" data-mode="performance" type="button">Month Map</button>
+              <button class="mode-button" data-mode="regression" type="button">Regression</button>
+            </div>
+            <div class="mode-group">
+              <div class="mode-group-label">Signals</div>
+              <button class="mode-button" data-mode="ridge-growth" type="button">Ridge</button>
+              <button class="mode-button" data-mode="flow-compass" type="button">Compass</button>
+              <button class="mode-button" data-mode="volatility" type="button">Volatility</button>
+            </div>
+            <div class="mode-group">
+              <div class="mode-group-label">Lists</div>
+              <button class="mode-button" data-mode="cockpit" type="button">Cockpit</button>
+              <button class="mode-button" data-mode="portfolio" type="button">Portfolio</button>
+            </div>
+            <div class="mode-group">
+              <div class="mode-group-label">Research</div>
+              <button class="mode-button" data-mode="analysis" type="button">Brief</button>
+            </div>
+            <div class="mode-group">
+              <div class="mode-group-label">Monitor</div>
+              <button class="mode-button" data-mode="alerts" type="button">Alerts</button>
+            </div>
           </div>
         </aside>
 
         <section class="panel form-panel">
           <form id="chart-form">
+            <div class="panel-label">Run settings</div>
             <div class="form-grid">
               <label>
                 <span>Ticker(s)</span>
@@ -202,7 +289,7 @@
         <section class="panel output-panel">
           <div class="output-head">
             <div>
-              <div class="panel-label">Output</div>
+              <div class="panel-label">Packet</div>
               <h2 id="output-title">Auction Levels</h2>
               <p id="output-contract" class="output-contract">
                 Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
@@ -223,7 +310,7 @@
               <img src="/static/assets/toro.png" alt="" />
             </div>
             <span>Ready</span>
-            <strong>Awaiting signal</strong>
+            <strong>Awaiting run</strong>
           </div>
         </section>
       </section>
