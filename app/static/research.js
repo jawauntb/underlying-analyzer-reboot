@@ -90,6 +90,7 @@ export function mountAlertMonitor({ insertAfter, getDraft, openRun, runRule }) {
   });
   initAuth();
   return {
+    root: panel.root,
     refresh() {
       return loadAlertMonitor(panel, state, callbacks, false);
     },

@@ -2949,7 +2949,8 @@ body.is-loading .source-chip::after {
 
   .masthead {
     grid-template-columns: 54px 1fr;
-    padding: 14px;
+    gap: 12px;
+    padding: 12px;
   }
 
   .icon-link {
@@ -2967,29 +2968,68 @@ body.is-loading .source-chip::after {
   }
 
   .home-brief {
-    padding: 16px;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 12px;
   }
 
   .home-brief h2 {
-    font-size: 0.9rem;
+    font-size: 0.82rem;
+    line-height: 1.58;
+    word-break: break-word;
   }
 
   .home-brief p {
-    font-size: 0.94rem;
+    margin-top: 8px;
+    font-size: 0.88rem;
+    line-height: 1.45;
   }
 
   .home-brief-actions {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+    gap: 8px;
+    margin-top: 12px;
   }
 
   .brief-primary,
   .brief-secondary {
     width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+  }
+
+  .home-brief-console {
+    display: none;
   }
 
   .tool-dock {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    grid-template-columns: none;
+    gap: 8px;
+    margin: 0 -2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 12px 2px 2px;
+    scroll-snap-type: x proximity;
+  }
+
+  .tool-link {
+    flex: 0 0 108px;
+    min-height: 48px;
+    gap: 8px;
+    padding: 7px;
+    scroll-snap-align: start;
+  }
+
+  .tool-link img {
+    width: 28px;
+    height: 28px;
+  }
+
+  .tool-link span {
+    font-size: 0.74rem;
   }
 
   .account-auth,
@@ -3002,18 +3042,73 @@ body.is-loading .source-chip::after {
     text-align: center;
   }
 
-  .mode-grid,
   .summary-grid,
   .brief-grid {
     grid-template-columns: 1fr;
   }
 
+  .workspace {
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .tools-panel,
+  .form-panel,
+  .output-panel,
+  .tool-form,
+  .tool-output {
+    padding: 14px;
+  }
+
+  .tools-panel .panel-label {
+    margin-bottom: 8px;
+  }
+
+  .mode-contract {
+    display: none;
+  }
+
+  .mode-grid {
+    display: flex;
+    gap: 8px;
+    margin: 0 -2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 0 2px 2px;
+    scroll-snap-type: x proximity;
+  }
+
+  .mode-button {
+    flex: 0 0 auto;
+    min-width: 112px;
+    min-height: 42px;
+    padding: 0 12px;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .form-grid {
+    gap: 10px;
+  }
+
   .form-actions {
     grid-template-columns: 1fr;
+    margin-top: 12px;
+  }
+
+  .output-panel {
+    min-height: 460px;
   }
 
   .output-head {
     display: grid;
+    gap: 10px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+  }
+
+  .source-chip {
+    justify-self: start;
   }
 
   .chart-actions,
@@ -3135,11 +3230,13 @@ body.is-loading .source-chip::after {
   }
 
   .tool-dock {
-    grid-template-columns: 1fr;
+    display: flex;
+    grid-template-columns: none;
     gap: 8px;
   }
 
   .tool-link {
+    flex-basis: 108px;
     min-height: 50px;
   }
 
