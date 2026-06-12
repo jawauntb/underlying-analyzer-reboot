@@ -52,8 +52,17 @@ from app.charts import (
     render_volatility_chart,
 )
 from app.cockpit import build_cockpit_row
+from app.exa import ExaClient
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.sec import SecClient, SecDataError
+from app.torque import compute_torque_score, render_torque_chart
+from app.vision_v2 import (
+    build_vision_v2_data,
+    build_vision_v2_memo,
+    parse_memo_sections,
+    stream_vision_v2_text,
+)
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
@@ -96,6 +105,8 @@ def create_app() -> Flask:
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
     app.config["SEC_CLIENT"] = SecClient(user_agent=os.getenv("SEC_USER_AGENT"))
+    app.config["EXA_API_KEY"] = os.getenv("EXA_API_KEY")
+    app.config["EXA_CLIENT"] = ExaClient(api_key=app.config["EXA_API_KEY"])
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
     app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
     app.config["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
@@ -362,6 +373,162 @@ def create_app() -> Flask:
             mimetype="application/x-ndjson",
         )
 
+    @app.post("/api/tools/vision/v2")
+    def vision_v2_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            return jsonify(
+                build_vision_v2_memo(
+                    get_market_client(),
+                    str(payload.get("ticker") or ""),
+                    sec_client=get_sec_client(),
+                    exa_client=get_exa_client(),
+                    **text_generation_options(),
+                )
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            app.logger.exception("Unexpected Vision v2 error")
+            return jsonify({"error": f"Unexpected Vision v2 error: {exc}"}), 500
+
+    @app.post("/api/tools/vision/v2/stream")
+    def vision_v2_tool_stream() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            ticker = str(payload.get("ticker") or "")
+            report = build_vision_v2_data(
+                get_market_client(),
+                ticker,
+                sec_client=get_sec_client(),
+                exa_client=get_exa_client(),
+            )
+            charts, chart_errors = build_market_memo_charts(get_market_client(), ticker)
+            options = text_generation_options()
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        return Response(
+            stream_with_context(
+                vision_v2_stream_events(report, options, charts, chart_errors)
+            ),
+            mimetype="application/x-ndjson",
+        )
+
+    @app.post("/api/tools/vision/v2/pdf")
+    def vision_v2_pdf_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            ticker = str(payload.get("ticker") or "")
+            if not ticker.strip():
+                return jsonify({"error": "ticker is required"}), 400
+            client = get_market_client()
+            memo_text = str(payload.get("memo_text") or "").strip()
+            report_payload = payload.get("report")
+
+            if memo_text and isinstance(report_payload, dict):
+                report = report_payload
+            else:
+                memo = build_vision_v2_memo(
+                    client,
+                    ticker,
+                    sec_client=get_sec_client(),
+                    exa_client=get_exa_client(),
+                    **text_generation_options(),
+                )
+                memo_text = str(memo.get("Memo Text") or "")
+                report = memo
+
+            charts_input = payload.get("charts")
+            if not isinstance(charts_input, list):
+                try:
+                    rendered_charts, _ = build_market_memo_charts(client, ticker)
+                    charts_input = [
+                        {
+                            "title": c.get("meta", {}).get("title") or "Chart",
+                            "data": c.get("image", {}).get("data"),
+                            "mime": c.get("image", {}).get("mime", "image/png"),
+                            "caption": c.get("meta", {}).get("caption"),
+                        }
+                        for c in rendered_charts
+                        if isinstance(c, dict)
+                    ]
+                except Exception:
+                    charts_input = []
+
+            pdf_bytes = render_memo_pdf(
+                build_memo_pdf_payload(ticker, memo_text, report, charts_input)
+            )
+            filename = f"{ticker.upper()}-vision-memo.pdf"
+            return Response(
+                pdf_bytes,
+                mimetype="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Length": str(len(pdf_bytes)),
+                    "Cache-Control": "no-store",
+                },
+            )
+        except (ValueError, AnthropicError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            app.logger.exception("Unexpected Vision v2 PDF error")
+            return jsonify({"error": f"Unexpected Vision v2 PDF error: {exc}"}), 500
+
+    @app.post("/api/tools/torque")
+    def torque_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            ticker = clean_ticker(str(payload.get("ticker") or ""))
+            client = get_market_client()
+            history = client.get_history(ticker, period="2y", interval="1d")
+            try:
+                profile = client.get_profile(ticker)
+            except Exception:
+                profile = {}
+            sec_trend_pack: dict[str, Any] | None = None
+            try:
+                from app.sec_trend import build_sec_trend_pack
+
+                sec_trend_pack = build_sec_trend_pack(get_sec_client(), ticker, quarters=8)
+            except Exception:
+                sec_trend_pack = None
+            torque_result = compute_torque_score(
+                history=history,
+                sec_trend=sec_trend_pack,
+                profile=profile,
+                market_cap=profile.get("marketCap") if isinstance(profile, dict) else None,
+            )
+            image, meta = render_torque_chart(
+                history=history,
+                sec_trend=sec_trend_pack,
+                profile=profile,
+                torque=torque_result,
+            )
+            from dataclasses import asdict as _asdict
+
+            export = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "mode": "torque",
+                "ticker": ticker,
+                "torque": _asdict(torque_result),
+                "meta": meta,
+                "image_files": [{"filename": image.filename, "mime": image.mime}],
+            }
+            return jsonify(
+                {
+                    "image": image.__dict__,
+                    "meta": meta,
+                    "torque": _asdict(torque_result),
+                    "export": export,
+                }
+            )
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            app.logger.exception("Unexpected torque error")
+            return jsonify({"error": f"Unexpected torque error: {exc}"}), 500
+
     @app.post("/api/tools/moneyline")
     def moneyline_tool() -> Any:
         try:
@@ -408,6 +575,10 @@ def get_watchlist_client() -> TradingViewWatchlistClient:
 
 def get_sec_client() -> SecClient:
     return current_app.config["SEC_CLIENT"]
+
+
+def get_exa_client() -> ExaClient:
+    return current_app.config["EXA_CLIENT"]
 
 
 def get_alert_store() -> SupabaseAlertStore:
@@ -546,6 +717,171 @@ def vision_stream_events(
             "Chart Errors": memo_chart_errors,
             **meta,
         }
+    )
+
+
+def vision_v2_stream_events(
+    report: dict[str, Any],
+    options: dict[str, Any],
+    charts: list[dict[str, Any]] | None = None,
+    chart_errors: list[dict[str, str]] | None = None,
+) -> Iterator[str]:
+    memo_charts = charts or []
+    memo_chart_errors = chart_errors or []
+    text_provider, text_model = text_generation_identity(options)
+    meta = vision_stream_meta(report, text_provider, text_model)
+    meta["mode"] = "vision-v2"
+    yield ndjson({"type": "meta", **meta})
+
+    chunks: list[str] = []
+    try:
+        for chunk in stream_vision_v2_text(report, **options):
+            chunks.append(chunk)
+            yield ndjson({"type": "token", "text": chunk})
+    except (AnthropicError, ValueError, MarketDataError) as exc:
+        yield ndjson({"type": "error", "error": str(exc)})
+        return
+    except Exception as exc:
+        current_app.logger.exception("Unexpected Vision v2 stream error")
+        yield ndjson({"type": "error", "error": f"Unexpected Vision v2 stream error: {exc}"})
+        return
+
+    memo_text = "".join(chunks)
+    sections = parse_memo_sections(memo_text)
+    export = export_payload(
+        mode="vision-v2",
+        provider=str(report.get("Provider") or "market data"),
+        provider_note=str(report.get("Provider Note") or "Vision v2 reclassification memo"),
+        tickers=[str(report.get("Ticker") or "")],
+        meta=meta,
+        watchlist=None,
+        image_files=memo_chart_files(memo_charts),
+    )
+    export["market_memo"] = memo_text
+    export["memo_sections"] = sections
+    export["report"] = report
+    export["memo_charts"] = memo_charts
+    export["chart_errors"] = memo_chart_errors
+    export["text_provider"] = text_provider
+    export["text_model"] = text_model
+    export["torque"] = report.get("Torque")
+    export["reclassification"] = report.get("Reclassification")
+    yield ndjson(
+        {
+            "type": "done",
+            "text": memo_text,
+            "export": export,
+            "Memo Charts": memo_charts,
+            "Chart Errors": memo_chart_errors,
+            "Memo Sections": sections,
+            **meta,
+        }
+    )
+
+
+def build_memo_pdf_payload(
+    ticker: str,
+    memo_text: str,
+    report: dict[str, Any],
+    charts_input: list[dict[str, Any]] | None,
+) -> MemoPdfPayload:
+    snapshot = report.get("Snapshot") if isinstance(report.get("Snapshot"), dict) else {}
+    torque = report.get("Torque") if isinstance(report.get("Torque"), dict) else None
+    reclass = (
+        report.get("Reclassification")
+        if isinstance(report.get("Reclassification"), dict)
+        else None
+    )
+    sections = report.get("Memo Sections")
+    if not isinstance(sections, dict):
+        sections = parse_memo_sections(memo_text or "")
+
+    recommendation = "Hold"
+    if reclass:
+        rec = reclass.get("recommendation") or reclass.get("Recommendation")
+        if rec:
+            recommendation = str(rec)
+    if torque:
+        torque_rec = torque.get("recommendation") or torque.get("Recommendation")
+        if torque_rec and recommendation == "Hold":
+            recommendation = str(torque_rec)
+    final_rating_section = sections.get("Final Rating + Target Price Band") if isinstance(sections, dict) else None
+    if isinstance(final_rating_section, str) and "Rating:" in final_rating_section:
+        try:
+            recommendation = final_rating_section.split("Rating:", 1)[1].split(".")[0].strip()
+        except Exception:
+            pass
+
+    scenarios = None
+    if reclass:
+        targets = {
+            "low": reclass.get("target_low"),
+            "mid": reclass.get("target_mid"),
+            "high": reclass.get("target_high"),
+        }
+        if any(v is not None for v in targets.values()):
+            scenarios = [
+                {"name": "Bear", "price": targets["low"], "notes": "Conservative scenario"},
+                {"name": "Base", "price": targets["mid"], "notes": "Base case"},
+                {"name": "Bull", "price": targets["high"], "notes": "Reclassification thesis plays out"},
+            ]
+
+    citations: list[dict[str, Any]] = []
+    sec_pack = report.get("SEC Source Pack")
+    if isinstance(sec_pack, dict):
+        for c in (sec_pack.get("Citations") or [])[:25]:
+            if isinstance(c, dict):
+                citations.append(
+                    {
+                        "label": c.get("Label") or c.get("label") or "SEC citation",
+                        "source": c.get("Source") or "SEC EDGAR",
+                        "url": c.get("URL") or c.get("url"),
+                        "filed_date": c.get("Filed") or c.get("Filed Date") or c.get("filed_date"),
+                    }
+                )
+    exa_pack = report.get("Exa Research Pack")
+    if isinstance(exa_pack, dict):
+        for c in (exa_pack.get("Citations") or [])[:25]:
+            if isinstance(c, dict):
+                citations.append(
+                    {
+                        "label": c.get("title") or c.get("Title") or "Web citation",
+                        "source": c.get("query_bucket") or "Exa",
+                        "url": c.get("url") or c.get("URL"),
+                        "filed_date": c.get("published_date") or c.get("Published"),
+                    }
+                )
+
+    return MemoPdfPayload(
+        ticker=str(ticker or report.get("Ticker") or "").upper(),
+        company_name=str(report.get("Name") or ""),
+        sector=report.get("Sector"),
+        industry=report.get("Industry"),
+        generated_at=datetime.now(UTC).isoformat(),
+        recommendation=recommendation,
+        target_low=(reclass or {}).get("target_low"),
+        target_mid=(reclass or {}).get("target_mid"),
+        target_high=(reclass or {}).get("target_high"),
+        current_price=snapshot.get("Price") if isinstance(snapshot, dict) else None,
+        market_cap=snapshot.get("Market Cap") if isinstance(snapshot, dict) else None,
+        old_noun=(reclass or {}).get("old_noun"),
+        new_verb=(reclass or {}).get("primary_new_verb"),
+        hidden_bom_role=(reclass or {}).get("hidden_bom_role"),
+        functional_layer=(reclass or {}).get("functional_layer"),
+        proof_stage=(reclass or {}).get("proof_stage"),
+        proof_stage_label=(reclass or {}).get("proof_stage_label"),
+        reclassification_gap=(reclass or {}).get("reclassification_gap"),
+        torque_score=(torque or {}).get("total_score"),
+        torque_stage=(torque or {}).get("stage_label"),
+        torque_components=(torque or {}).get("components"),
+        memo_text=memo_text or "",
+        memo_sections=sections if isinstance(sections, dict) else None,
+        charts=charts_input if isinstance(charts_input, list) else None,
+        scenarios=scenarios,
+        citations=citations or None,
+        catalysts=(reclass or {}).get("catalysts"),
+        kill_criteria=(reclass or {}).get("kill_criteria"),
+        diligence_gaps=(reclass or {}).get("diligence_gaps"),
     )
 
 
@@ -815,6 +1151,57 @@ def build_chart_response(
             watchlist=selection.watchlist,
         )
 
+    if chart_key == "torque":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        period = str(payload.get("period") or "2y")
+        sec_client = current_app.config.get("SEC_CLIENT")
+        images = []
+        histories = []
+        results = []
+        errors = []
+        for ticker in selection.tickers:
+            try:
+                history = client.get_history(ticker, period=period, interval="1d")
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            try:
+                profile = client.get_profile(history.ticker)
+            except Exception:
+                profile = {}
+            sec_trend_pack: dict[str, Any] | None = None
+            try:
+                from app.sec_trend import build_sec_trend_pack
+
+                sec_trend_pack = build_sec_trend_pack(sec_client, history.ticker, quarters=8)
+            except Exception:
+                sec_trend_pack = None
+            try:
+                image, meta = render_torque_chart(
+                    history=history,
+                    sec_trend=sec_trend_pack,
+                    profile=profile,
+                )
+            except Exception as exc:
+                errors.append({"ticker": ticker, "error": f"torque render failed: {exc}"})
+                continue
+            histories.append(history)
+            images.append(image)
+            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return response_payload(
+            images,
+            mixed_provider(histories),
+            "Torque inflection indicator render",
+            meta,
+            mode=chart_key,
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
         history_options = {
@@ -954,7 +1341,17 @@ def build_cockpit_response(
 ) -> dict[str, Any]:
     selection = resolve_ticker_selection(payload, watchlist_client)
     period = str(payload.get("period") or "1y")
-    rows, errors = collect_cockpit_rows(client, selection.tickers, period=period)
+    include_torque = bool(payload.get("include_torque"))
+    sec_client = current_app.config.get("SEC_CLIENT") if include_torque else None
+    exa_client = current_app.config.get("EXA_CLIENT") if include_torque else None
+    rows, errors = collect_cockpit_rows(
+        client,
+        selection.tickers,
+        period=period,
+        include_torque=include_torque,
+        sec_client=sec_client,
+        exa_client=exa_client,
+    )
     require_results(rows, errors)
     rows.sort(key=lambda row: float(row["score"]), reverse=True)
     for index, row in enumerate(rows, start=1):
@@ -1416,13 +1813,27 @@ def collect_summaries(
 
 
 def collect_cockpit_rows(
-    client: MarketDataClient, tickers: list[str], *, period: str
+    client: MarketDataClient,
+    tickers: list[str],
+    *,
+    period: str,
+    include_torque: bool = False,
+    sec_client: SecClient | None = None,
+    exa_client: ExaClient | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     row_slots: list[dict[str, Any] | None] = [None] * len(tickers)
     errors: list[dict[str, str]] = []
     with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
         futures = {
-            executor.submit(build_cockpit_row, client, ticker, period=period): (index, ticker)
+            executor.submit(
+                build_cockpit_row,
+                client,
+                ticker,
+                period=period,
+                sec_client=sec_client,
+                exa_client=exa_client,
+                include_torque=include_torque,
+            ): (index, ticker)
             for index, ticker in enumerate(tickers)
         }
         for future in as_completed(futures):

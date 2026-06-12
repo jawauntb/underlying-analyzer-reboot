@@ -2367,6 +2367,31 @@ body.is-loading .source-chip::after {
   font-weight: 900;
 }
 
+.memo-pdf-button {
+  border-color: rgba(87, 217, 255, 0.55);
+  color: var(--cyan, #57d9ff);
+}
+
+.memo-pdf-button:hover:not([disabled]) {
+  background: rgba(87, 217, 255, 0.16);
+}
+
+.classic-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted, #5a6470);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+
+.classic-toggle input {
+  accent-color: var(--cyan, #57d9ff);
+}
+
 .memo-status {
   border-color: rgba(87, 217, 255, 0.42);
   color: var(--cyan);

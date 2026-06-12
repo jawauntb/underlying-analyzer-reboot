@@ -17,6 +17,7 @@ const modeTitles = {
   regression: "Regression + EMAs",
   "ridge-growth": "Ridge Growth",
   "flow-compass": "Flow Compass",
+  torque: "Torque Inflection",
   cockpit: "Watchlist Cockpit",
   alerts: "Alert Digest",
   portfolio: "Portfolio",
@@ -35,6 +36,8 @@ const modeContracts = {
     "Runs the Ridge daily trend strategy over 6M, 1Y, and 2Y windows with Flow Compass and auction-market context.",
   "flow-compass":
     "Scores main bias from signed volume, trend, momentum, value location, and relative volatility direction.",
+  torque:
+    "Misclassified-revenue-torque composite: revenue inflection, margin torque, stale valuation, operating leverage, and technical discipline. Surfaces old-noun names with new-verb financial bend.",
   cockpit:
     "Ranks a watchlist by scanner strength, Ridge state, Flow Compass, auction location, and risk so the first names to inspect are obvious.",
   alerts:
@@ -55,6 +58,7 @@ const fieldRules = {
   regression: [...sharedFields, "start-date", "end-date", "period"],
   "ridge-growth": [...sharedFields],
   "flow-compass": [...sharedFields, "period"],
+  torque: [...sharedFields, "period"],
   cockpit: [...sharedFields, "period"],
   alerts: [...sharedFields, "period", "max-alerts", "vol-threshold"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
@@ -273,7 +277,7 @@ function syncCommandFields() {
   document.querySelectorAll("[data-command-field]").forEach((field) => {
     const name = field.dataset.commandField;
     field.hidden =
-      (name === "period" && !["auction", "regression", "flow-compass", "cockpit", "alerts"].includes(state.mode)) ||
+      (name === "period" && !["auction", "regression", "flow-compass", "torque", "cockpit", "alerts"].includes(state.mode)) ||
       (name === "month" && state.mode !== "performance");
   });
 }
@@ -288,7 +292,7 @@ function updateCommandPreview() {
   const parts = [ticker || "TICKER", commandLabel(state.mode)];
   if (state.mode === "performance") {
     parts.push(monthLabel(commandMonthSelect.value));
-  } else if (["auction", "regression", "flow-compass", "cockpit", "alerts"].includes(state.mode)) {
+  } else if (["auction", "regression", "flow-compass", "torque", "cockpit", "alerts"].includes(state.mode)) {
     parts.push(commandPeriodSelect.value.toUpperCase());
   }
   commandPreview.textContent = parts.join(" ");
@@ -302,6 +306,7 @@ function commandLabel(mode) {
       regression: "regression",
       "ridge-growth": "ridge",
       "flow-compass": "compass",
+      torque: "torque",
       cockpit: "cockpit",
       alerts: "alerts",
       portfolio: "portfolio",
