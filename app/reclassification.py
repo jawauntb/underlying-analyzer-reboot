@@ -891,6 +891,67 @@ def _company_facts_signals(
     return out
 
 
+def _profile_signals(profile: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Final fallback: synthesize the scenario engine's inputs straight from
+    the yfinance profile dict. This is the most reliable path on production
+    because the SEC EDGAR XBRL endpoint is frequently UA-blocked / rate-
+    limited there, while yfinance.Ticker.info almost always returns
+    `totalRevenue`, `operatingMargins`, `grossMargins`, `sharesOutstanding`,
+    and `revenueGrowth`. All values treated as TTM annual, normalized to
+    quarterly run-rate for downstream ×4 consistency.
+    """
+
+    out: dict[str, Any] = {
+        "status": "profile",
+        "revenue_yoy": None,
+        "accelerating": False,
+        "latest_revenue": None,
+        "gross_margin": None,
+        "opex_run_rate": None,
+        "shares_diluted": None,
+        "op_leverage": None,
+        "segments": None,
+    }
+
+    p = _as_mapping(profile)
+    if not p:
+        return out
+
+    total_revenue = _as_float(p.get("totalRevenue"))
+    gross_margins = _as_float(p.get("grossMargins"))
+    operating_margins = _as_float(p.get("operatingMargins"))
+    shares_outstanding = _as_float(p.get("sharesOutstanding"))
+    revenue_growth = _as_float(p.get("revenueGrowth"))
+
+    if total_revenue is None or total_revenue <= 0:
+        return out
+
+    out["latest_revenue"] = total_revenue / 4.0
+
+    # Prefer explicit gross margin; fall back to a conservative surrogate
+    # built from operating margin plus a 30pp opex cushion (mirrors the
+    # Company Facts fallback heuristic).
+    if gross_margins is not None and 0 < gross_margins <= 1:
+        out["gross_margin"] = gross_margins
+    elif operating_margins is not None and -1 <= operating_margins <= 1:
+        out["gross_margin"] = max(0.0, min(1.0, operating_margins + 0.30))
+
+    if shares_outstanding and shares_outstanding > 0:
+        out["shares_diluted"] = shares_outstanding
+
+    # Operating expenses ≈ revenue - operating income; opex_run_rate is
+    # the per-quarter version.
+    if operating_margins is not None and -1 <= operating_margins <= 1:
+        annual_op_inc = total_revenue * operating_margins
+        annual_total_cost = total_revenue - annual_op_inc
+        out["opex_run_rate"] = annual_total_cost / 4.0
+
+    if revenue_growth is not None:
+        out["revenue_yoy"] = revenue_growth
+
+    return out
+
+
 def _merge_signals(primary: Mapping[str, Any], fallback: Mapping[str, Any]) -> dict[str, Any]:
     """Take any keys missing/None in primary from fallback."""
 
@@ -1109,11 +1170,15 @@ def score_reclassification(
     hidden_bom_role = _hidden_bom_role(corpus, top_theme, functional_layer)
 
     sec_signals = _sec_trend_signals(sec_trend_m)
-    # Fallback to single-snapshot XBRL Company Facts so target bands still
-    # land for tickers whose multi-quarter SEC trend pack is partial / errored.
+    # Fallback 1: single-snapshot XBRL Company Facts (SEC source pack).
     if sec_signals.get("status") not in ("available",) or sec_signals.get("latest_revenue") in (None, 0):
-        cf_signals = _company_facts_signals(sec_pack_m, profile_m)
-        sec_signals = _merge_signals(sec_signals, cf_signals)
+        sec_signals = _merge_signals(sec_signals, _company_facts_signals(sec_pack_m, profile_m))
+    # Fallback 2: yfinance profile (totalRevenue + margins + sharesOutstanding).
+    # SEC EDGAR is frequently rate-limited or UA-blocked in production, so the
+    # profile path is the one that actually surfaces target bands for most
+    # tickers. Only merge in fields the upstream layers didn't already provide.
+    if sec_signals.get("latest_revenue") in (None, 0) or sec_signals.get("shares_diluted") in (None, 0):
+        sec_signals = _merge_signals(sec_signals, _profile_signals(profile_m))
 
     gap = _reclassification_gap(
         old_noun=old_noun,

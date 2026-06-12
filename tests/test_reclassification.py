@@ -308,6 +308,44 @@ def test_targets_fallback_from_company_facts_when_sec_trend_partial() -> None:
     assert result.target_basis != "insufficient data to derive scenarios"
 
 
+def test_targets_fallback_from_yfinance_profile_when_sec_and_company_facts_both_empty() -> None:
+    """Production safety net: SEC EDGAR is often UA-blocked, so even Company
+    Facts comes back with `val: None`. Profile fallback (totalRevenue,
+    grossMargins, operatingMargins, sharesOutstanding, revenueGrowth) should
+    still produce target bands."""
+
+    profile = {
+        "industry": "Semiconductors",
+        "longBusinessSummary": "AI accelerator company; ships GPUs into data centers.",
+        "totalRevenue": 253_491_003_392,
+        "grossMargins": 0.74,
+        "operatingMargins": 0.65,
+        "sharesOutstanding": 24_221_000_000,
+        "revenueGrowth": 0.85,
+        "marketCap": 4_900_000_000_000,
+    }
+    # Both SEC trend and Company Facts useless (matches the production
+    # behavior we observed)
+    sec_source_pack = {
+        "Company Facts": {
+            "Revenue": {"val": None, "fp": None},
+            "Operating Income": {"val": None, "fp": None},
+        }
+    }
+    result = score_reclassification(
+        ticker="NVDA",
+        profile=profile,
+        history=_make_history([200.0] * 30),
+        sec_trend={"Status": "error", "Errors": ["partial"]},
+        sec_source_pack=sec_source_pack,
+        exa_research=None,
+    )
+    assert result.target_low is not None
+    assert result.target_mid is not None
+    assert result.target_high is not None
+    assert result.target_low < result.target_mid <= result.target_high
+
+
 def test_targets_clean_up_when_data_partial() -> None:
     # Missing shares → should not be able to compute targets
     sec_trend = {
