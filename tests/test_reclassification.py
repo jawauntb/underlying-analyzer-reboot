@@ -346,6 +346,39 @@ def test_targets_fallback_from_yfinance_profile_when_sec_and_company_facts_both_
     assert result.target_low < result.target_mid <= result.target_high
 
 
+def test_profile_fallback_produces_positive_target_bands_for_aapl_shape() -> None:
+    """Regression: a previous version computed opex = revenue - op_income
+    (total cost), which made `_compute_targets` return NEGATIVE prices for
+    profitable mega-caps like AAPL. The fallbacks must use opex BELOW the
+    gross profit line so the scenario engine produces positive bands."""
+
+    aapl = {
+        "industry": "Consumer Electronics",
+        "longBusinessSummary": "Designs and sells phones and computers.",
+        "totalRevenue": 400_000_000_000,
+        "grossMargins": 0.46,
+        "operatingMargins": 0.31,
+        "sharesOutstanding": 15_000_000_000,
+        "revenueGrowth": 0.08,
+        "marketCap": 4_300_000_000_000,
+    }
+    result = score_reclassification(
+        ticker="AAPL",
+        profile=aapl,
+        history=_make_history([180.0] * 30),
+        sec_trend=None,
+        sec_source_pack=None,
+        exa_research=None,
+    )
+    assert result.target_low is not None
+    assert result.target_mid is not None
+    assert result.target_high is not None
+    assert result.target_low > 0
+    assert result.target_mid > 0
+    assert result.target_high > 0
+    assert result.target_low < result.target_mid <= result.target_high
+
+
 def test_targets_clean_up_when_data_partial() -> None:
     # Missing shares → should not be able to compute targets
     sec_trend = {
