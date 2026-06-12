@@ -317,6 +317,25 @@
         </section>
       </section>
     </main>
+    <div id="mobile-run-bar" class="mobile-run-bar is-active" aria-label="Quick run">
+      <input
+        id="mobile-run-ticker"
+        class="mobile-run-ticker"
+        value="AAPL"
+        autocomplete="off"
+        aria-label="Ticker"
+      />
+      <select id="mobile-run-mode" class="mobile-run-mode" aria-label="Mode">
+        <option value="auction">Auction</option>
+        <option value="regression">Regression</option>
+        <option value="ridge-growth">Ridge</option>
+        <option value="flow-compass">Compass</option>
+        <option value="torque">Torque</option>
+        <option value="volatility">Volatility</option>
+        <option value="cockpit">Cockpit</option>
+      </select>
+      <button id="mobile-run-go" class="mobile-run-go" type="button">Run</button>
+    </div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="/static/app.js" type="module"></script>
   </body>

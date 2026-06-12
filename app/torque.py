@@ -995,14 +995,31 @@ def render_torque_chart(
     else:
         rev_ax.text(
             0.5,
+            0.55,
+            "Fundamental data unavailable",
+            transform=rev_ax.transAxes,
+            ha="center",
+            va="center",
+            color=AMBER,
+            fontsize=11,
+            fontweight="bold",
+        )
+        rev_ax.text(
             0.5,
-            "NO REVENUE DATA",
+            0.4,
+            "SEC trend pack returned no quarterly\n"
+            "revenue series for this issuer.\n"
+            "Torque uses technical signals only.",
             transform=rev_ax.transAxes,
             ha="center",
             va="center",
             color=MUTED,
-            fontsize=11,
+            fontsize=9,
         )
+        rev_ax.set_xticks([])
+        rev_ax.set_yticks([])
+        for spine in rev_ax.spines.values():
+            spine.set_alpha(0.2)
 
     # ---------------- Panel 3: Operating margin -----
     style_axis(om_ax, title="Operating Margin + Op-Leverage", grid_axis="y")
@@ -1056,14 +1073,30 @@ def render_torque_chart(
     else:
         om_ax.text(
             0.5,
+            0.55,
+            "Operating margin unavailable",
+            transform=om_ax.transAxes,
+            ha="center",
+            va="center",
+            color=AMBER,
+            fontsize=11,
+            fontweight="bold",
+        )
+        om_ax.text(
             0.5,
-            "NO OP. MARGIN DATA",
+            0.4,
+            "No quarterly operating-income series\n"
+            "in this issuer's SEC trend pack.",
             transform=om_ax.transAxes,
             ha="center",
             va="center",
             color=MUTED,
-            fontsize=11,
+            fontsize=9,
         )
+        om_ax.set_xticks([])
+        om_ax.set_yticks([])
+        for spine in om_ax.spines.values():
+            spine.set_alpha(0.2)
 
     # ---------------- Panel 4: Score gauge + components --
     style_axis(score_ax, title="Composite Torque Score", grid_axis="x")
