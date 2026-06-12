@@ -1145,7 +1145,11 @@ def test_vision_stream_tool_returns_ndjson_events() -> None:
 
     response = client.post("/api/tools/vision/stream", json={"ticker": "AAPL"})
 
-    events = [json.loads(line) for line in response.data.decode("utf-8").splitlines()]
+    events = [
+        json.loads(line)
+        for line in response.data.decode("utf-8").splitlines()
+        if line.strip()
+    ]
     assert response.status_code == 200
     assert [event["type"] for event in events] == ["meta", "token", "token", "done"]
     assert events[0]["Ticker"] == "AAPL"
