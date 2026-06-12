@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -57,6 +58,10 @@ from app.market_data import HistoryResult, MarketDataClient, MarketDataError, cl
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.sec import SecClient, SecDataError
 from app.torque import compute_torque_score, render_torque_chart
+from app.torque_scan import (
+    build_torque_scan_response,
+    stream_torque_scan_rows,
+)
 from app.vision_v2 import (
     build_vision_v2_data,
     build_vision_v2_memo,
@@ -400,21 +405,20 @@ def create_app() -> Flask:
     def vision_v2_tool_stream() -> Any:
         try:
             payload = request.get_json(silent=True) or {}
-            ticker = str(payload.get("ticker") or "")
-            report = build_vision_v2_data(
-                get_market_client(),
-                ticker,
-                sec_client=get_sec_client(),
-                exa_client=get_exa_client(),
-            )
-            charts, chart_errors = build_market_memo_charts(get_market_client(), ticker)
+            ticker = clean_ticker(str(payload.get("ticker") or ""))
             options = text_generation_options()
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
         return Response(
             stream_with_context(
-                vision_v2_stream_events(report, options, charts, chart_errors)
+                vision_v2_phased_stream(
+                    ticker=ticker,
+                    market_client=get_market_client(),
+                    sec_client=get_sec_client(),
+                    exa_client=get_exa_client(),
+                    options=options,
+                )
             ),
             mimetype="application/x-ndjson",
         )
@@ -532,6 +536,44 @@ def create_app() -> Flask:
         except Exception as exc:
             app.logger.exception("Unexpected torque error")
             return jsonify({"error": f"Unexpected torque error: {exc}"}), 500
+
+    @app.post("/api/tools/torque/scan")
+    def torque_scan_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            response = build_torque_scan_response(
+                get_market_client(),
+                get_watchlist_client(),
+                payload,
+                sec_client=current_app.config.get("SEC_CLIENT"),
+                exa_client=current_app.config.get("EXA_CLIENT"),
+            )
+            return jsonify(response)
+        except (ValueError, WatchlistError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:  # pragma: no cover - defensive request boundary
+            app.logger.exception("Unexpected torque scan error")
+            return jsonify({"error": f"Unexpected torque scan error: {exc}"}), 500
+
+    @app.post("/api/tools/torque/scan/stream")
+    def torque_scan_tool_stream() -> Any:
+        payload = request.get_json(silent=True) or {}
+        market_client = get_market_client()
+        watchlist_client = get_watchlist_client()
+        sec_client = current_app.config.get("SEC_CLIENT")
+        exa_client = current_app.config.get("EXA_CLIENT")
+        return Response(
+            stream_with_context(
+                stream_torque_scan_rows(
+                    market_client,
+                    watchlist_client,
+                    payload,
+                    sec_client=sec_client,
+                    exa_client=exa_client,
+                )
+            ),
+            mimetype="application/x-ndjson",
+        )
 
     @app.post("/api/tools/moneyline")
     def moneyline_tool() -> Any:
@@ -724,23 +766,132 @@ def vision_stream_events(
     )
 
 
-def vision_v2_stream_events(
-    report: dict[str, Any],
+def vision_v2_phased_stream(
+    *,
+    ticker: str,
+    market_client: MarketDataClient,
+    sec_client: SecClient,
+    exa_client: ExaClient,
     options: dict[str, Any],
-    charts: list[dict[str, Any]] | None = None,
-    chart_errors: list[dict[str, str]] | None = None,
 ) -> Iterator[str]:
-    memo_charts = charts or []
-    memo_chart_errors = chart_errors or []
+    """Streaming Vision v2 generator that emits phase progress events as it
+    walks the pipeline, then streams Claude tokens, then verifies citations.
+    """
+    started_at = time.monotonic()
     text_provider, text_model = text_generation_identity(options)
-    meta = vision_stream_meta(report, text_provider, text_model)
-    meta["mode"] = "vision-v2"
-    yield ndjson({"type": "meta", **meta})
+
+    def elapsed_ms() -> int:
+        return int((time.monotonic() - started_at) * 1000)
+
+    def phase(phase_id: str, label: str, progress: float) -> str:
+        return ndjson(
+            {
+                "type": "phase",
+                "phase_id": phase_id,
+                "label": label,
+                "progress": progress,
+                "elapsed_ms": elapsed_ms(),
+            }
+        )
+
+    # Initial meta with ticker + provider identity. Report not yet built.
+    yield ndjson(
+        {
+            "type": "meta",
+            "mode": "vision-v2",
+            "ticker": ticker,
+            "text_provider": text_provider,
+            "text_model": text_model,
+        }
+    )
+
+    try:
+        yield phase("profile", "Fetching ticker profile", 0.05)
+        # build_vision_v2_data internally pulls profile, SEC source pack, SEC trend,
+        # Exa research, torque, and reclassification. We emit a phase event before
+        # each major chunk by calling smaller pieces directly when possible.
+        from app.tools import build_sec_source_pack, build_stock_fax_data
+
+        yield phase("sec", "Pulling SEC filings", 0.18)
+        report = build_stock_fax_data(market_client, ticker, sec_client=sec_client)
+
+        yield phase("trend", "Mining 8 quarters of XBRL", 0.32)
+        try:
+            from app.sec_trend import build_sec_trend_pack
+
+            sec_trend = build_sec_trend_pack(sec_client, ticker, quarters=8)
+        except Exception as exc:
+            sec_trend = {"Status": "error", "Errors": [str(exc)]}
+        report["SEC Trend Pack"] = sec_trend
+
+        yield phase("exa", "Searching Exa for language mutation", 0.48)
+        try:
+            from app.exa import build_research_pack
+
+            profile = market_client.get_profile(ticker)
+            exa_research = build_research_pack(
+                exa_client,
+                ticker,
+                str(profile.get("longName") or profile.get("shortName") or ticker),
+                industry=profile.get("industry"),
+                sector=profile.get("sector"),
+            )
+        except Exception as exc:
+            exa_research = {"Status": "error", "Errors": [str(exc)]}
+        report["Exa Research Pack"] = exa_research
+
+        yield phase("torque", "Computing Torque score", 0.62)
+        try:
+            from dataclasses import asdict as _asdict
+
+            from app.torque import compute_torque_score
+
+            torque_result = compute_torque_score(
+                history=market_client.get_history(ticker, period="2y", interval="1d"),
+                sec_trend=sec_trend,
+                profile=market_client.get_profile(ticker),
+            )
+            report["Torque"] = _asdict(torque_result)
+        except Exception as exc:
+            report["Torque"] = {"Status": "error", "Errors": [str(exc)]}
+
+        yield phase("reclass", "Scoring reclassification", 0.70)
+        try:
+            from dataclasses import asdict as _asdict
+
+            from app.reclassification import score_reclassification
+
+            reclass_result = score_reclassification(
+                ticker=ticker,
+                profile=market_client.get_profile(ticker),
+                history=market_client.get_history(ticker, period="2y", interval="1d"),
+                sec_trend=sec_trend,
+                sec_source_pack=report.get("SEC Source Pack"),
+                exa_research=exa_research,
+                torque_result=report.get("Torque"),
+            )
+            report["Reclassification"] = _asdict(reclass_result)
+        except Exception as exc:
+            report["Reclassification"] = {"Status": "error", "Errors": [str(exc)]}
+
+        # Charts
+        charts, chart_errors = build_market_memo_charts(market_client, ticker)
+
+        yield phase("memo", "Drafting analyst memo", 0.80)
+    except (ValueError, MarketDataError, SecDataError) as exc:
+        yield ndjson({"type": "error", "error": str(exc)})
+        return
+    except Exception as exc:
+        current_app.logger.exception("Unexpected Vision v2 data error")
+        yield ndjson({"type": "error", "error": f"Unexpected Vision v2 data error: {exc}"})
+        return
 
     chunks: list[str] = []
+    token_count = 0
     try:
         for chunk in stream_vision_v2_text(report, **options):
             chunks.append(chunk)
+            token_count += 1
             yield ndjson({"type": "token", "text": chunk})
     except (AnthropicError, ValueError, MarketDataError) as exc:
         yield ndjson({"type": "error", "error": str(exc)})
@@ -752,33 +903,61 @@ def vision_v2_stream_events(
 
     memo_text = "".join(chunks)
     sections = parse_memo_sections(memo_text)
+
+    # Citation verification
+    yield phase("verify", "Verifying citations", 0.95)
+    citations_payload: dict[str, Any] = {"status": "skipped"}
+    try:
+        from dataclasses import asdict as _asdict
+
+        from app.citation_verify import verify_citations
+
+        citation_result = verify_citations(memo_text, report=report)
+        citations_payload = _asdict(citation_result)
+    except Exception as exc:
+        current_app.logger.exception("Citation verification failed")
+        citations_payload = {"status": "error", "error": str(exc)}
+
+    meta_payload = {
+        "mode": "vision-v2",
+        "ticker": str(report.get("Ticker") or ticker),
+        "text_provider": text_provider,
+        "text_model": text_model,
+    }
     export = export_payload(
         mode="vision-v2",
         provider=str(report.get("Provider") or "market data"),
         provider_note=str(report.get("Provider Note") or "Vision v2 reclassification memo"),
-        tickers=[str(report.get("Ticker") or "")],
-        meta=meta,
+        tickers=[str(report.get("Ticker") or ticker)],
+        meta=meta_payload,
         watchlist=None,
-        image_files=memo_chart_files(memo_charts),
+        image_files=memo_chart_files(charts),
     )
     export["market_memo"] = memo_text
     export["memo_sections"] = sections
     export["report"] = report
-    export["memo_charts"] = memo_charts
-    export["chart_errors"] = memo_chart_errors
+    export["memo_charts"] = charts
+    export["chart_errors"] = chart_errors
     export["text_provider"] = text_provider
     export["text_model"] = text_model
     export["torque"] = report.get("Torque")
     export["reclassification"] = report.get("Reclassification")
+    export["citations"] = citations_payload
+    export["elapsed_ms"] = elapsed_ms()
+    export["token_count"] = token_count
+
     yield ndjson(
         {
             "type": "done",
             "text": memo_text,
             "export": export,
-            "Memo Charts": memo_charts,
-            "Chart Errors": memo_chart_errors,
+            "Memo Charts": charts,
+            "Chart Errors": chart_errors,
             "Memo Sections": sections,
-            **meta,
+            "citations": citations_payload,
+            "elapsed_ms": elapsed_ms(),
+            "token_count": token_count,
+            **meta_payload,
         }
     )
 

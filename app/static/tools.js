@@ -49,6 +49,17 @@ const toolConfig = {
 
 const pathKey = location.pathname.replace("/", "") || "vision";
 const activeTool = toolConfig[pathKey] || toolConfig.vision;
+
+const PHASE_DEFINITIONS = [
+  { id: "profile", label: "Profile" },
+  { id: "sec", label: "SEC filings" },
+  { id: "trend", label: "XBRL trend" },
+  { id: "exa", label: "Exa research" },
+  { id: "torque", label: "Torque" },
+  { id: "reclass", label: "Reclassification" },
+  { id: "memo", label: "Memo drafting" },
+  { id: "verify", label: "Citations" },
+];
 const form = document.querySelector("#tool-form");
 const submitButton = document.querySelector("#tool-submit");
 const exportButton = document.querySelector("#tool-export");
@@ -283,18 +294,33 @@ async function streamVisionTool() {
     data: null,
     frame: null,
     memo: "",
+    progress: null,
+    citations: null,
+    elapsedMs: 0,
+    tokenCount: 0,
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      state.buffer += decoder.decode(value, { stream: true });
+      processVisionStreamLines(state, false);
     }
-    state.buffer += decoder.decode(value, { stream: true });
-    processVisionStreamLines(state, false);
+    state.buffer += decoder.decode();
+    processVisionStreamLines(state, true);
+  } catch (error) {
+    if (state.progress) {
+      state.progress.setError(error?.message || "Stream interrupted");
+    }
+    throw error;
+  } finally {
+    if (state.progress && !state.progress.isComplete()) {
+      state.progress.stopTicker();
+    }
   }
-  state.buffer += decoder.decode();
-  processVisionStreamLines(state, true);
 }
 
 function processVisionStreamLines(state, flush) {
@@ -313,14 +339,28 @@ function handleVisionStreamEvent(state, event) {
     state.data = event;
     outputTitle.textContent = activeTool.title;
     sourceEl.textContent = "streaming";
+    state.progress = mountVisionProgress({
+      ticker: event.ticker || toolPayload().ticker || "",
+    });
     state.frame = renderVisionFrame(event, { streaming: true });
     updateMemoBody(state.frame.body, "", true);
     emptyEl.hidden = true;
     return;
   }
 
+  if (event.type === "phase") {
+    if (state.progress) {
+      state.progress.applyPhase(event);
+    }
+    return;
+  }
+
   if (event.type === "token") {
     state.memo += event.text || "";
+    state.tokenCount += 1;
+    if (state.progress) {
+      state.progress.onToken(state.tokenCount);
+    }
     if (state.frame) {
       updateMemoBody(state.frame.body, state.memo, true);
       state.frame.status.textContent = "Streaming";
@@ -335,10 +375,27 @@ function handleVisionStreamEvent(state, event) {
       ...event,
       "Market Memo": state.memo,
     };
+    state.citations = event.citations || null;
+    state.elapsedMs = Number.isFinite(event.elapsed_ms) ? event.elapsed_ms : state.elapsedMs;
+    state.tokenCount = Number.isFinite(event.token_count) ? event.token_count : state.tokenCount;
     if (state.frame) {
       updateMemoBody(state.frame.body, state.memo, false, memoCharts(data));
       state.frame.status.textContent = "Complete";
       state.frame.status.classList.add("complete");
+    }
+    if (state.progress) {
+      state.progress.finalize({
+        elapsedMs: state.elapsedMs,
+        tokenCount: state.tokenCount,
+        citations: state.citations,
+        sourcesCount: sourceCitationCount(
+          visionReport(data)["SEC Source Pack"] || {},
+          visionReport(data)["Earnings Source Pack"] || {},
+        ),
+      });
+    }
+    if (state.citations && state.frame) {
+      mountCitationGauge(state.frame.article, state.citations);
     }
     lastExport = event.export || data;
     lastMemoText = state.memo || "";
@@ -355,6 +412,9 @@ function handleVisionStreamEvent(state, event) {
   }
 
   if (event.type === "error") {
+    if (state.progress) {
+      state.progress.setError(event.error || "Vision stream failed");
+    }
     throw new Error(event.error || "Vision stream failed");
   }
 }
@@ -1588,6 +1648,10 @@ function clearOutput() {
   errorEl.textContent = "";
   sourceEl.textContent = "idle";
   emptyEl.hidden = false;
+  const progressSlot = document.querySelector("#vision-progress-slot");
+  if (progressSlot) {
+    progressSlot.innerHTML = "";
+  }
   lastExport = null;
   exportButton.disabled = true;
   pdfButton.disabled = true;
@@ -1660,4 +1724,467 @@ function toolResearchTicker(payload) {
 
 function firstString(...values) {
   return values.find((value) => typeof value === "string" && value.trim()) || "";
+}
+
+/* ============================================================
+ * Vision progress card
+ * ============================================================ */
+
+function mountVisionProgress({ ticker }) {
+  const slot = document.querySelector("#vision-progress-slot");
+  if (!slot) {
+    return null;
+  }
+  slot.innerHTML = "";
+
+  const phases = PHASE_DEFINITIONS.map((p) => ({
+    ...p,
+    status: "pending",
+    elapsedMs: null,
+  }));
+
+  const root = document.createElement("section");
+  root.className = "vision-progress";
+  root.dataset.state = "running";
+
+  const head = document.createElement("div");
+  head.className = "vision-progress-head";
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "vision-progress-title";
+  const eyebrow = document.createElement("span");
+  eyebrow.textContent = "Market Memo";
+  const tickerEl = document.createElement("strong");
+  tickerEl.textContent = ticker ? `· ${String(ticker).toUpperCase()}` : "";
+  titleWrap.append(eyebrow, tickerEl);
+
+  const stats = document.createElement("div");
+  stats.className = "vision-progress-stats";
+  const elapsedEl = document.createElement("span");
+  elapsedEl.className = "elapsed";
+  elapsedEl.textContent = "0s";
+  const tokensEl = document.createElement("span");
+  tokensEl.className = "tokens";
+  tokensEl.hidden = true;
+  stats.append(elapsedEl, tokensEl);
+  head.append(titleWrap, stats);
+
+  const rail = document.createElement("div");
+  rail.className = "vision-progress-rail";
+  const railFill = document.createElement("div");
+  railFill.className = "vision-progress-rail-fill";
+  rail.append(railFill);
+
+  const chips = document.createElement("div");
+  chips.className = "vision-progress-chips";
+  const chipMap = new Map();
+  phases.forEach((phase) => {
+    const chip = document.createElement("span");
+    chip.className = "vision-progress-chip";
+    chip.dataset.status = "pending";
+    chip.dataset.phase = phase.id;
+    const icon = document.createElement("span");
+    icon.className = "vision-progress-chip-icon";
+    const label = document.createElement("span");
+    label.textContent = phase.label;
+    chip.append(icon, label);
+    chips.append(chip);
+    chipMap.set(phase.id, chip);
+  });
+
+  const callout = document.createElement("div");
+  callout.className = "vision-progress-callout";
+  const calloutLabel = document.createElement("span");
+  calloutLabel.className = "vision-progress-callout-label";
+  calloutLabel.textContent = "Booting Vision pipeline...";
+  const calloutMeta = document.createElement("span");
+  calloutMeta.className = "vision-progress-callout-meta";
+  callout.append(calloutLabel, calloutMeta);
+
+  // Collapsed summary bar (hidden until finalize).
+  const summaryBar = document.createElement("button");
+  summaryBar.type = "button";
+  summaryBar.className = "vision-progress-summary-bar";
+  const summaryStatus = document.createElement("span");
+  summaryStatus.className = "vision-progress-summary-status";
+  summaryStatus.textContent = "✓ Complete";
+  const summaryText = document.createElement("span");
+  summaryText.className = "vision-progress-summary-text";
+  const summaryChevron = document.createElement("span");
+  summaryChevron.className = "vision-progress-summary-chevron";
+  summaryChevron.textContent = "▾";
+  summaryBar.append(summaryStatus, summaryText, summaryChevron);
+  summaryBar.addEventListener("click", () => {
+    const expanded = root.dataset.expanded === "true";
+    root.dataset.expanded = expanded ? "false" : "true";
+  });
+
+  root.append(summaryBar, head, rail, chips, callout);
+  slot.append(root);
+
+  const startedAt = Date.now();
+  let currentPhaseId = null;
+  let phaseStartedAt = startedAt;
+  let targetProgress = 0;
+  let displayedProgress = 0;
+  let railRafId = null;
+  let tokensSeen = 0;
+  let complete = false;
+  let errored = false;
+
+  const tickerInterval = window.setInterval(() => {
+    if (complete || errored) {
+      return;
+    }
+    const seconds = Math.floor((Date.now() - startedAt) / 1000);
+    elapsedEl.textContent = `${seconds}s`;
+    updateCalloutMeta();
+  }, 1000);
+
+  function stopTicker() {
+    window.clearInterval(tickerInterval);
+  }
+
+  function updateCalloutMeta() {
+    if (!currentPhaseId || complete) {
+      calloutMeta.textContent = "";
+      return;
+    }
+    const inStage = ((Date.now() - phaseStartedAt) / 1000).toFixed(1);
+    const tokenSuffix =
+      currentPhaseId === "memo" && tokensSeen > 0
+        ? `${tokensSeen.toLocaleString()} tokens · `
+        : "";
+    calloutMeta.textContent = `${tokenSuffix}${inStage}s in this stage`;
+  }
+
+  function scheduleRailUpdate() {
+    if (railRafId !== null) {
+      return;
+    }
+    railRafId = window.requestAnimationFrame(() => {
+      railRafId = null;
+      displayedProgress = targetProgress;
+      railFill.style.width = `${Math.max(0, Math.min(100, displayedProgress * 100))}%`;
+    });
+  }
+
+  function setActivePhase(phaseId, label) {
+    const idx = phases.findIndex((p) => p.id === phaseId);
+    if (idx === -1) {
+      return;
+    }
+    phases.forEach((phase, i) => {
+      if (i < idx) {
+        phase.status = "done";
+      } else if (i === idx) {
+        phase.status = "active";
+      } else {
+        phase.status = "pending";
+      }
+      const chip = chipMap.get(phase.id);
+      if (chip) {
+        chip.dataset.status = phase.status;
+      }
+    });
+    currentPhaseId = phaseId;
+    phaseStartedAt = Date.now();
+    calloutLabel.textContent = label || phases[idx].label || "Working...";
+    updateCalloutMeta();
+  }
+
+  function applyPhase(event) {
+    if (!event || !event.phase_id) {
+      return;
+    }
+    setActivePhase(event.phase_id, event.label);
+    if (Number.isFinite(event.progress)) {
+      targetProgress = Math.max(targetProgress, Number(event.progress));
+      scheduleRailUpdate();
+    }
+  }
+
+  function onToken(count) {
+    tokensSeen = count;
+    tokensEl.hidden = false;
+    tokensEl.textContent = `${count.toLocaleString()} tk`;
+    // If the backend never emitted a `memo` phase before tokens arrived,
+    // promote the memo phase ourselves so the chip lights up.
+    if (currentPhaseId !== "memo" && currentPhaseId !== "verify") {
+      setActivePhase("memo", "Drafting analyst memo...");
+      targetProgress = Math.max(targetProgress, 0.8);
+      scheduleRailUpdate();
+    } else {
+      updateCalloutMeta();
+    }
+  }
+
+  function finalize({ elapsedMs, tokenCount, citations, sourcesCount }) {
+    complete = true;
+    stopTicker();
+    phases.forEach((phase) => {
+      phase.status = "done";
+      const chip = chipMap.get(phase.id);
+      if (chip) {
+        chip.dataset.status = "done";
+      }
+    });
+    targetProgress = 1;
+    scheduleRailUpdate();
+    root.dataset.state = "done";
+    const seconds = Math.max(1, Math.round((elapsedMs || Date.now() - startedAt) / 1000));
+    elapsedEl.textContent = `${seconds}s`;
+    if (Number.isFinite(tokenCount) && tokenCount > 0) {
+      tokensEl.hidden = false;
+      tokensEl.textContent = `${tokenCount.toLocaleString()} tk`;
+    }
+    calloutLabel.textContent = "Complete";
+    calloutMeta.textContent = "";
+
+    const parts = [`${seconds}s`];
+    if (Number.isFinite(tokenCount) && tokenCount > 0) {
+      parts.push(`${tokenCount.toLocaleString()} tokens`);
+    }
+    if (Number.isFinite(sourcesCount) && sourcesCount > 0) {
+      parts.push(`${sourcesCount} sources`);
+    }
+    if (citations && Number.isFinite(citations.total) && Number.isFinite(citations.verified)) {
+      const checkable = Number.isFinite(citations.checkable) ? citations.checkable : citations.total;
+      parts.push(`${citations.verified}/${checkable} citations verified`);
+    }
+    summaryText.textContent = parts.join(" · ");
+    root.dataset.collapsed = "true";
+    root.dataset.expanded = "false";
+  }
+
+  function setError(message) {
+    errored = true;
+    stopTicker();
+    root.dataset.state = "error";
+    calloutLabel.textContent = message || "Vision stream failed";
+    calloutMeta.textContent = "";
+  }
+
+  return {
+    root,
+    applyPhase,
+    onToken,
+    finalize,
+    setError,
+    stopTicker,
+    isComplete: () => complete,
+  };
+}
+
+/* ============================================================
+ * Citation verification gauge
+ * ============================================================ */
+
+function mountCitationGauge(memoArticle, citations) {
+  if (!memoArticle || !citations) {
+    return null;
+  }
+  // Remove any previous gauge before mounting (e.g. if user clicks Generate twice).
+  memoArticle.querySelector(".citation-gauge")?.remove();
+
+  const total = Number.isFinite(citations.total) ? citations.total : 0;
+  const checkable = Number.isFinite(citations.checkable) ? citations.checkable : total;
+  const verified = Number.isFinite(citations.verified) ? citations.verified : 0;
+  const percent =
+    Number.isFinite(citations.percent_verified)
+      ? citations.percent_verified
+      : checkable > 0
+        ? verified / checkable
+        : 0;
+  const checks = Array.isArray(citations.checks) ? citations.checks : [];
+
+  const counts = checks.reduce(
+    (acc, check) => {
+      const status = String(check?.status || "uncheckable");
+      if (status === "verified") acc.verified += 1;
+      else if (status === "value_mismatch") acc.mismatch += 1;
+      else if (status === "concept_missing" || status === "missing") acc.missing += 1;
+      else acc.uncheckable += 1;
+      return acc;
+    },
+    { verified: 0, mismatch: 0, missing: 0, uncheckable: 0 },
+  );
+  // If counts derived from checks are zero but totals were given, fall back.
+  if (!checks.length && verified) {
+    counts.verified = verified;
+  }
+
+  const gauge = document.createElement("section");
+  gauge.className = "citation-gauge";
+  gauge.dataset.expanded = "false";
+  gauge.dataset.quality = percent >= 0.85 ? "good" : percent >= 0.6 ? "warn" : "poor";
+
+  const head = document.createElement("div");
+  head.className = "citation-gauge-head";
+  const label = document.createElement("span");
+  label.className = "citation-gauge-label";
+  label.textContent = "Citations";
+  const countsEl = document.createElement("span");
+  countsEl.className = "citation-gauge-counts";
+  countsEl.textContent = `${verified} / ${checkable}`;
+  const percentEl = document.createElement("span");
+  percentEl.className = "percent";
+  percentEl.textContent = `${Math.round(percent * 100)}%`;
+  countsEl.append(percentEl);
+  head.append(label, countsEl);
+
+  const bar = document.createElement("div");
+  bar.className = "citation-gauge-bar";
+  const barFill = document.createElement("div");
+  barFill.className = "citation-gauge-bar-fill";
+  barFill.style.width = `${Math.max(0, Math.min(100, percent * 100))}%`;
+  bar.append(barFill);
+
+  const legend = document.createElement("div");
+  legend.className = "citation-gauge-legend";
+  legend.append(
+    legendEntry("verified", `✓ ${counts.verified} verified`),
+    legendEntry("mismatch", `⚠ ${counts.mismatch} value mismatch`),
+    legendEntry("missing", `✕ ${counts.missing} missing`),
+    legendEntry("uncheckable", `◌ ${counts.uncheckable} uncheckable`),
+  );
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "citation-gauge-toggle";
+  toggle.textContent = "View per-citation detail ▾";
+
+  const detail = document.createElement("div");
+  detail.className = "citation-gauge-detail";
+  detail.append(citationGaugeTable(checks, memoArticle));
+
+  toggle.addEventListener("click", () => {
+    const expanded = gauge.dataset.expanded === "true";
+    gauge.dataset.expanded = expanded ? "false" : "true";
+    toggle.textContent = expanded ? "View per-citation detail ▾" : "Hide per-citation detail ▴";
+  });
+
+  gauge.append(head, bar, legend, toggle, detail);
+
+  // Mount just above the memo body so it lives inside the memo card header area.
+  const body = memoArticle.querySelector(".memo-body");
+  if (body) {
+    memoArticle.insertBefore(gauge, body);
+  } else {
+    memoArticle.append(gauge);
+  }
+  return gauge;
+}
+
+function legendEntry(cls, text) {
+  const el = document.createElement("span");
+  el.className = cls;
+  el.textContent = text;
+  return el;
+}
+
+function citationGaugeTable(checks, memoArticle) {
+  const wrap = document.createElement("div");
+  if (!checks.length) {
+    const empty = document.createElement("p");
+    empty.style.color = "var(--muted)";
+    empty.style.fontSize = "0.8rem";
+    empty.style.margin = "0.3rem 0 0";
+    empty.textContent = "No per-citation detail available.";
+    wrap.append(empty);
+    return wrap;
+  }
+
+  const table = document.createElement("table");
+  table.className = "citation-gauge-table";
+  const thead = document.createElement("thead");
+  thead.innerHTML =
+    "<tr><th></th><th>Kind</th><th>Citation</th><th>Matched</th><th>Note</th></tr>";
+  const tbody = document.createElement("tbody");
+
+  checks.forEach((check) => {
+    const status = String(check?.status || "uncheckable");
+    const row = document.createElement("tr");
+    row.className = "citation-gauge-row";
+    row.dataset.status = status;
+
+    const statusCell = document.createElement("td");
+    statusCell.className = "status-cell";
+    statusCell.textContent = statusGlyph(status);
+    statusCell.dataset.label = "Status";
+
+    const kindCell = document.createElement("td");
+    kindCell.className = "kind-cell";
+    kindCell.textContent = String(check?.kind || "—");
+    kindCell.dataset.label = "Kind";
+
+    const rawCell = document.createElement("td");
+    rawCell.className = "raw-cell";
+    rawCell.textContent = String(check?.raw || check?.target || "—");
+    rawCell.dataset.label = "Citation";
+
+    const matchedCell = document.createElement("td");
+    matchedCell.className = "matched-cell";
+    matchedCell.textContent = String(check?.matched_value || check?.cited_value || "—");
+    matchedCell.dataset.label = "Matched";
+
+    const noteCell = document.createElement("td");
+    noteCell.className = "note-cell";
+    noteCell.textContent = String(check?.note || "");
+    noteCell.dataset.label = "Note";
+
+    row.append(statusCell, kindCell, rawCell, matchedCell, noteCell);
+    row.addEventListener("click", () => jumpToCitation(memoArticle, check));
+    tbody.append(row);
+  });
+
+  table.append(thead, tbody);
+  wrap.append(table);
+  return wrap;
+}
+
+function statusGlyph(status) {
+  if (status === "verified") return "✓";
+  if (status === "value_mismatch") return "⚠";
+  if (status === "concept_missing" || status === "missing") return "✕";
+  return "◌";
+}
+
+function jumpToCitation(memoArticle, check) {
+  const body = memoArticle?.querySelector(".memo-body");
+  if (!body || !check) {
+    return;
+  }
+  const needle = String(check.raw || check.target || "").trim();
+  if (!needle) {
+    return;
+  }
+  const target = findTextNodeContaining(body, needle);
+  if (!target) {
+    return;
+  }
+  const element = target.parentElement || body;
+  element.scrollIntoView({ behavior: "smooth", block: "center" });
+  element.classList.remove("citation-target-flash");
+  // Force reflow so the animation restarts on repeated clicks.
+  void element.offsetWidth;
+  element.classList.add("citation-target-flash");
+}
+
+function findTextNodeContaining(root, needle) {
+  // Search by progressively shorter prefixes so the raw citation string still
+  // matches even if the rendered memo wrapped it in inline formatting.
+  const candidates = [needle, needle.slice(0, 60), needle.slice(0, 40), needle.slice(0, 24)]
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 8);
+  for (const candidate of candidates) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeValue && node.nodeValue.includes(candidate)) {
+        return node;
+      }
+      node = walker.nextNode();
+    }
+  }
+  return null;
 }
