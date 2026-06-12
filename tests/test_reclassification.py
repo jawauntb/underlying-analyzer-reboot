@@ -379,6 +379,38 @@ def test_profile_fallback_produces_positive_target_bands_for_aapl_shape() -> Non
     assert result.target_low < result.target_mid <= result.target_high
 
 
+def test_targets_clamp_negative_to_none() -> None:
+    """Tight-margin micro-caps can mathematically produce negative bear-case
+    EPS that times a multiple yields a negative price. The UI should never
+    display a negative target — clamp to None so it renders as '—'."""
+
+    # Thin-margin name where bear (rev flat, GM -3pp) wipes operating income
+    micro = {
+        "industry": "Semiconductors",
+        "longBusinessSummary": "optical transceiver dsp pam4",
+        "totalRevenue": 400_000_000,
+        "grossMargins": 0.40,
+        "operatingMargins": 0.02,  # razor-thin op margin
+        "sharesOutstanding": 80_000_000,
+        "revenueGrowth": 0.18,
+        "marketCap": 1_200_000_000,
+    }
+    result = score_reclassification(
+        ticker="MICRO",
+        profile=micro,
+        history=_make_history([15.0] * 30),
+        sec_trend=None,
+        sec_source_pack=None,
+        exa_research=None,
+    )
+    # Some band may legitimately compute to a negative price. We don't
+    # check WHICH bands are None — only that no positive band is displayed
+    # alongside a negative one, and that any surviving bands are > 0.
+    for band in (result.target_low, result.target_mid, result.target_high):
+        if band is not None:
+            assert band > 0
+
+
 def test_targets_clean_up_when_data_partial() -> None:
     # Missing shares → should not be able to compute targets
     sec_trend = {

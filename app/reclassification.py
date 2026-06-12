@@ -1029,6 +1029,11 @@ def _compute_targets(
     def _clean(value: float | None) -> float | None:
         if value is None:
             return None
+        # Anything <= 0 is a going-concern / wipeout scenario, not a target
+        # price worth displaying. Surface None so the UI shows "—" instead
+        # of a negative dollar figure.
+        if value <= 0:
+            return None
         return round(value, 2)
 
     return _clean(bear), _clean(base), _clean(bull), basis
