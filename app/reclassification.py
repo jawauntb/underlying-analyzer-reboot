@@ -861,26 +861,21 @@ def _company_facts_signals(
     # Quarterly run-rate equivalents so the rest of the pipeline can ×4.
     out["latest_revenue"] = annual_revenue / 4.0
 
-    if annual_op_inc is not None:
-        # Approximate opex run-rate from operating-income identity:
-        #   OpInc = Revenue - COGS - OpEx ≈ Revenue - OpEx (for non-margin frames)
-        # We use Revenue - OpInc as a coarse total cost proxy. That conflates
-        # COGS and opex but is OK for a scenario-grade target.
-        annual_total_cost = annual_revenue - annual_op_inc
-        out["opex_run_rate"] = annual_total_cost / 4.0
-
     if diluted_shares and diluted_shares > 0:
         out["shares_diluted"] = diluted_shares
 
+    # Build gross margin and opex BELOW the gross profit line so that
+    # `_compute_targets` (which does `gross_profit - opex`) produces the
+    # right operating-income identity.
     if annual_op_inc is not None:
-        # Implied "gross margin" surrogate for the scenario engine — use
-        # operating-margin where gross margin isn't directly available. This
-        # makes targets conservative (treats whole cost stack as variable).
-        try:
-            implied_margin = max(0.0, min(1.0, float(annual_op_inc) / float(annual_revenue) + 0.30))
-            out["gross_margin"] = implied_margin
-        except (TypeError, ValueError, ZeroDivisionError):
-            pass
+        op_margin = float(annual_op_inc) / float(annual_revenue)
+        # Implied gross margin: assume opex (SG&A + R&D + everything below
+        # the gross profit line) is ~20% of revenue when we lack a direct
+        # gross-margin reading. That gives gross_margin = op_margin + 0.20.
+        gross_margin = max(0.0, min(1.0, op_margin + 0.20))
+        out["gross_margin"] = gross_margin
+        annual_opex_below_gross = (gross_margin - op_margin) * annual_revenue
+        out["opex_run_rate"] = max(0.0, annual_opex_below_gross / 4.0)
 
     # Try a YoY hint from profile.revenueGrowth (yfinance) if available
     if profile:
@@ -928,23 +923,35 @@ def _profile_signals(profile: Mapping[str, Any] | None) -> dict[str, Any]:
 
     out["latest_revenue"] = total_revenue / 4.0
 
-    # Prefer explicit gross margin; fall back to a conservative surrogate
-    # built from operating margin plus a 30pp opex cushion (mirrors the
-    # Company Facts fallback heuristic).
+    # Resolve effective gross margin (preferred) and operating margin so we
+    # can derive opex (below the gross-profit line) explicitly. The scenario
+    # engine in `_compute_targets` computes:
+    #     gross_profit  = revenue * gross_margin
+    #     op_income     = gross_profit - opex
+    # so opex must be the cost block BELOW gross profit (SG&A + R&D + ...),
+    # NOT total cost. Use the gross_margin and operating_margin identity:
+    #     opex = (gross_margin - operating_margin) * revenue.
+    gm: float | None = None
     if gross_margins is not None and 0 < gross_margins <= 1:
-        out["gross_margin"] = gross_margins
+        gm = float(gross_margins)
     elif operating_margins is not None and -1 <= operating_margins <= 1:
-        out["gross_margin"] = max(0.0, min(1.0, operating_margins + 0.30))
+        # No direct gross margin — assume opex/revenue ≈ 20%, so
+        # gross_margin ≈ op_margin + 0.20.
+        gm = max(0.0, min(1.0, float(operating_margins) + 0.20))
+    if gm is not None:
+        out["gross_margin"] = gm
 
     if shares_outstanding and shares_outstanding > 0:
         out["shares_diluted"] = shares_outstanding
 
-    # Operating expenses ≈ revenue - operating income; opex_run_rate is
-    # the per-quarter version.
-    if operating_margins is not None and -1 <= operating_margins <= 1:
-        annual_op_inc = total_revenue * operating_margins
-        annual_total_cost = total_revenue - annual_op_inc
-        out["opex_run_rate"] = annual_total_cost / 4.0
+    if (
+        gm is not None
+        and operating_margins is not None
+        and -1 <= operating_margins <= 1
+    ):
+        opex_share = max(0.0, gm - float(operating_margins))
+        annual_opex_below_gross = opex_share * total_revenue
+        out["opex_run_rate"] = annual_opex_below_gross / 4.0
 
     if revenue_growth is not None:
         out["revenue_yoy"] = revenue_growth
