@@ -377,9 +377,8 @@ def create_app() -> Flask:
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
-        return Response(
-            stream_with_context(vision_stream_events(report, options, charts, chart_errors)),
-            mimetype="application/x-ndjson",
+        return _ndjson_streaming_response(
+            vision_stream_events(report, options, charts, chart_errors)
         )
 
     @app.post("/api/tools/vision/v2")
@@ -410,17 +409,14 @@ def create_app() -> Flask:
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
-        return Response(
-            stream_with_context(
-                vision_v2_phased_stream(
-                    ticker=ticker,
-                    market_client=get_market_client(),
-                    sec_client=get_sec_client(),
-                    exa_client=get_exa_client(),
-                    options=options,
-                )
-            ),
-            mimetype="application/x-ndjson",
+        return _ndjson_streaming_response(
+            vision_v2_phased_stream(
+                ticker=ticker,
+                market_client=get_market_client(),
+                sec_client=get_sec_client(),
+                exa_client=get_exa_client(),
+                options=options,
+            )
         )
 
     @app.post("/api/tools/vision/v2/pdf")
@@ -562,17 +558,14 @@ def create_app() -> Flask:
         watchlist_client = get_watchlist_client()
         sec_client = current_app.config.get("SEC_CLIENT")
         exa_client = current_app.config.get("EXA_CLIENT")
-        return Response(
-            stream_with_context(
-                stream_torque_scan_rows(
-                    market_client,
-                    watchlist_client,
-                    payload,
-                    sec_client=sec_client,
-                    exa_client=exa_client,
-                )
-            ),
-            mimetype="application/x-ndjson",
+        return _ndjson_streaming_response(
+            stream_torque_scan_rows(
+                market_client,
+                watchlist_client,
+                payload,
+                sec_client=sec_client,
+                exa_client=exa_client,
+            )
         )
 
     @app.post("/api/tools/moneyline")
@@ -693,6 +686,27 @@ def supabase_user_id_from_bearer(header_value: str | None) -> str:
     if not user_id:
         raise SupabaseAuthError("Supabase authorization is invalid")
     return user_id
+
+
+def _ndjson_streaming_response(generator: Iterator[str]) -> Response:
+    """Wrap an NDJSON generator with anti-buffering headers so Railway / nginx /
+    intermediate proxies don't hold rows until the connection closes."""
+
+    def _prelude_then(gen: Iterator[str]) -> Iterator[str]:
+        # ~4KB of leading newlines forces nginx/Railway proxy buffers past
+        # their initial threshold so the first real event flushes promptly.
+        # Newlines are skippable by every line-based NDJSON consumer.
+        yield "\n" * 4096
+        yield from gen
+
+    response = Response(
+        stream_with_context(_prelude_then(generator)),
+        mimetype="application/x-ndjson",
+    )
+    response.headers["Cache-Control"] = "no-cache, no-transform"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 def public_env(*names: str) -> str | None:
