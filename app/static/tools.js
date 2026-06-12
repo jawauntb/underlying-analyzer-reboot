@@ -1174,8 +1174,11 @@ function renderPixel(data) {
 
 function renderSummary(items) {
   summaryEl.innerHTML = "";
-  items.forEach(([label, value]) => summaryEl.append(summaryItem(label, formatValue(value))));
-  summaryEl.hidden = false;
+  const visible = items
+    .map(([label, value]) => [label, formatValue(value)])
+    .filter(([_label, formatted]) => formatted !== "N/A" && formatted !== "" && formatted !== "None");
+  visible.forEach(([label, formatted]) => summaryEl.append(summaryItem(label, formatted)));
+  summaryEl.hidden = visible.length === 0;
 }
 
 function summaryItem(label, value) {
@@ -1413,8 +1416,22 @@ function markdownBlock(block) {
   if (lines.length >= 2 && isMarkdownTable(lines)) {
     return [markdownTable(lines)];
   }
-  if (lines.every((line) => /^[-*]\s+/.test(line))) {
-    return [markdownList(lines)];
+  if (lines.length && lines.every((line) => /^[-*]\s+/.test(line))) {
+    return [markdownList(lines, "ul")];
+  }
+  if (lines.length && lines.every((line) => /^\d+\.\s+/.test(line))) {
+    return [markdownList(lines, "ol")];
+  }
+  if (lines.length && lines.every((line) => /^>\s?/.test(line))) {
+    const quote = document.createElement("blockquote");
+    quote.className = "memo-blockquote";
+    lines.forEach((line, index) => {
+      if (index > 0) {
+        quote.append(document.createElement("br"));
+      }
+      appendInlineMarkdown(quote, line.replace(/^>\s?/, ""));
+    });
+    return [quote];
   }
   if (block.startsWith("### ")) {
     const heading = document.createElement("h3");
@@ -1422,9 +1439,17 @@ function markdownBlock(block) {
     return [heading];
   }
   if (block.startsWith("## ")) {
-    const heading = document.createElement("h3");
+    const heading = document.createElement("h2");
     heading.textContent = block.replace(/^##\s+/, "");
     return [heading];
+  }
+  if (block.startsWith("# ")) {
+    const heading = document.createElement("h1");
+    heading.textContent = block.replace(/^#\s+/, "");
+    return [heading];
+  }
+  if (/^\s*---+\s*$/.test(block)) {
+    return [document.createElement("hr")];
   }
 
   const paragraph = document.createElement("p");
@@ -1482,27 +1507,44 @@ function parseTableRow(line) {
     .map((cell) => cell.trim());
 }
 
-function markdownList(lines) {
-  const list = document.createElement("ul");
+function markdownList(lines, kind = "ul") {
+  const list = document.createElement(kind);
+  list.className = kind === "ol" ? "memo-ol" : "memo-ul";
   lines.forEach((line) => {
     const item = document.createElement("li");
-    appendInlineMarkdown(item, line.replace(/^[-*]\s+/, ""));
+    const stripped = kind === "ol" ? line.replace(/^\d+\.\s+/, "") : line.replace(/^[-*]\s+/, "");
+    appendInlineMarkdown(item, stripped);
     list.append(item);
   });
   return list;
 }
 
 function appendInlineMarkdown(parent, text) {
-  const pattern = /\*\*(.+?)\*\*/g;
+  const pattern = /(\*\*([^*]+?)\*\*)|(`([^`]+?)`)|(\*([^*]+?)\*)|(_([^_]+?)_)/g;
   let cursor = 0;
   let match = pattern.exec(text);
   while (match) {
     if (match.index > cursor) {
       parent.append(document.createTextNode(text.slice(cursor, match.index)));
     }
-    const strong = document.createElement("strong");
-    strong.textContent = match[1];
-    parent.append(strong);
+    if (match[2] !== undefined) {
+      const strong = document.createElement("strong");
+      strong.textContent = match[2];
+      parent.append(strong);
+    } else if (match[4] !== undefined) {
+      const code = document.createElement("code");
+      code.className = "memo-inline-code";
+      code.textContent = match[4];
+      parent.append(code);
+    } else if (match[6] !== undefined) {
+      const em = document.createElement("em");
+      em.textContent = match[6];
+      parent.append(em);
+    } else if (match[8] !== undefined) {
+      const em = document.createElement("em");
+      em.textContent = match[8];
+      parent.append(em);
+    }
     cursor = match.index + match[0].length;
     match = pattern.exec(text);
   }

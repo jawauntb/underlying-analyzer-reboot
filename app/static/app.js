@@ -150,6 +150,37 @@ commandRunButton.addEventListener("click", () => {
   form.requestSubmit(generateButton);
 });
 
+const mobileRunTicker = document.querySelector("#mobile-run-ticker");
+const mobileRunMode = document.querySelector("#mobile-run-mode");
+const mobileRunGo = document.querySelector("#mobile-run-go");
+
+if (mobileRunGo && mobileRunTicker && mobileRunMode) {
+  // Initial sync from main state
+  mobileRunTicker.value = commandTickersInput.value || formTickersInput.value || "AAPL";
+  mobileRunMode.value = state.mode;
+
+  mobileRunGo.addEventListener("click", () => {
+    formTickersInput.value = mobileRunTicker.value;
+    commandTickersInput.value = mobileRunTicker.value;
+    if (mobileRunMode.value !== state.mode) {
+      setMode(mobileRunMode.value, { clear: false });
+    }
+    form.requestSubmit(generateButton);
+  });
+
+  mobileRunMode.addEventListener("change", (event) => {
+    setMode(event.target.value, { clear: false });
+  });
+
+  // Reflect main-form changes into the mobile bar so it stays in sync
+  commandModeSelect.addEventListener("change", () => {
+    mobileRunMode.value = commandModeSelect.value;
+  });
+  formTickersInput.addEventListener("change", () => {
+    mobileRunTicker.value = formTickersInput.value;
+  });
+}
+
 exportButton.addEventListener("click", () => {
   if (!state.lastExport) {
     return;
@@ -679,9 +710,12 @@ function renderSummary(meta) {
     }
   });
   summaryEl.innerHTML = "";
-  summaryEl.hidden = entries.length === 0;
-  entries.slice(0, 8).forEach(([key, value]) => {
-    summaryEl.append(summaryItem(labelize(key), formatMetaValue(key, value)));
+  const renderable = entries
+    .map(([key, value]) => [key, value, formatMetaValue(key, value)])
+    .filter(([_key, _raw, formatted]) => formatted !== "N/A" && formatted !== "" && formatted !== "null" && formatted !== "undefined");
+  summaryEl.hidden = renderable.length === 0;
+  renderable.slice(0, 8).forEach(([key, _raw, formatted]) => {
+    summaryEl.append(summaryItem(labelize(key), formatted));
   });
 }
 
@@ -1020,8 +1054,23 @@ function flattenMeta(meta) {
   const flat = {};
   Object.entries(meta).forEach(([key, value]) => {
     if (value && typeof value === "object" && !Array.isArray(value)) {
+      // Special case: scored components like torque {detail, score, weight}
+      if (Number.isFinite(value.score) && Number.isFinite(value.weight)) {
+        flat[key] = formatScoredComponent(value);
+        return;
+      }
       Object.entries(value).forEach(([childKey, childValue]) => {
-        flat[`${key}_${childKey}`] = childValue;
+        if (childValue && typeof childValue === "object" && !Array.isArray(childValue)) {
+          if (Number.isFinite(childValue.score) && Number.isFinite(childValue.weight)) {
+            flat[`${key}_${childKey}`] = formatScoredComponent(childValue);
+          } else if (Number.isFinite(childValue.score)) {
+            flat[`${key}_${childKey}`] = formatValue(childValue.score);
+          } else {
+            flat[`${key}_${childKey}`] = compactObject(childValue);
+          }
+        } else {
+          flat[`${key}_${childKey}`] = childValue;
+        }
       });
     } else if (Array.isArray(value)) {
       flat[key] = `${value.length} items`;
@@ -1030,6 +1079,28 @@ function flattenMeta(meta) {
     }
   });
   return flat;
+}
+
+function formatScoredComponent(value) {
+  const score = formatValue(value.score);
+  const weight = `${Math.round(value.weight * 100)}%`;
+  return `${score} · ${weight}`;
+}
+
+function compactObject(obj) {
+  const parts = Object.entries(obj)
+    .filter(([_key, v]) => v !== null && v !== undefined && v !== "")
+    .slice(0, 3)
+    .map(([_key, v]) => {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        return Number.isInteger(v) ? String(v) : v.toFixed(2);
+      }
+      if (typeof v === "object") {
+        return "...";
+      }
+      return String(v);
+    });
+  return parts.join(" · ");
 }
 
 function labelize(key) {
@@ -1237,6 +1308,15 @@ function setLoading(isLoading) {
   generateButton.disabled = isLoading;
   exportButton.disabled = isLoading || !state.lastExport;
   generateButton.textContent = isLoading ? "Generating..." : "Generate";
+  if (isLoading) {
+    generateButton.setAttribute("data-loading", "");
+    commandRunButton?.setAttribute("data-loading", "");
+    mobileRunGo?.setAttribute("data-loading", "");
+  } else {
+    generateButton.removeAttribute("data-loading");
+    commandRunButton?.removeAttribute("data-loading");
+    mobileRunGo?.removeAttribute("data-loading");
+  }
 }
 
 function downloadJson(payload, filename) {

@@ -133,6 +133,10 @@ def create_app() -> Flask:
     def legacy_tool() -> Response:
         return send_from_directory(STATIC_DIR, "legacy-tool.html")
 
+    @app.get("/design")
+    def design_sandbox() -> Response:
+        return send_from_directory(STATIC_DIR, "design.html")
+
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True, "service": "underlying-analyzer-reboot"})
