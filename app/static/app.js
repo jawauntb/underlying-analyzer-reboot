@@ -18,6 +18,7 @@ const modeTitles = {
   "ridge-growth": "Ridge Growth",
   "flow-compass": "Flow Compass",
   torque: "Torque Inflection",
+  "torque-scan": "Torque Scan",
   cockpit: "Watchlist Cockpit",
   alerts: "Alert Digest",
   portfolio: "Portfolio",
@@ -38,6 +39,8 @@ const modeContracts = {
     "Scores main bias from signed volume, trend, momentum, value location, and relative volatility direction.",
   torque:
     "Misclassified-revenue-torque composite: revenue inflection, margin torque, stale valuation, operating leverage, and technical discipline. Surfaces old-noun names with new-verb financial bend.",
+  "torque-scan":
+    "Scan a watchlist for Coiled Spring / Inflecting / Proof Phase setups. Rows stream in as each ticker completes. Filter by stage, sort by score, click a ticker to open its Vision memo.",
   cockpit:
     "Ranks a watchlist by scanner strength, Ridge state, Flow Compass, auction location, and risk so the first names to inspect are obvious.",
   alerts:
@@ -59,6 +62,7 @@ const fieldRules = {
   "ridge-growth": [...sharedFields],
   "flow-compass": [...sharedFields, "period"],
   torque: [...sharedFields, "period"],
+  "torque-scan": [...sharedFields, "period"],
   cockpit: [...sharedFields, "period"],
   alerts: [...sharedFields, "period", "max-alerts", "vol-threshold"],
   portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
@@ -205,6 +209,8 @@ form.addEventListener("submit", async (event) => {
       await fetchAnalysis(payload);
     } else if (state.mode === "cockpit") {
       await fetchCockpit(payload);
+    } else if (state.mode === "torque-scan") {
+      await fetchTorqueScan(payload);
     } else if (state.mode === "alerts") {
       await fetchAlerts(payload);
     } else {
@@ -308,7 +314,7 @@ function syncCommandFields() {
   document.querySelectorAll("[data-command-field]").forEach((field) => {
     const name = field.dataset.commandField;
     field.hidden =
-      (name === "period" && !["auction", "regression", "flow-compass", "torque", "cockpit", "alerts"].includes(state.mode)) ||
+      (name === "period" && !["auction", "regression", "flow-compass", "torque", "torque-scan", "cockpit", "alerts"].includes(state.mode)) ||
       (name === "month" && state.mode !== "performance");
   });
 }
@@ -323,7 +329,7 @@ function updateCommandPreview() {
   const parts = [ticker || "TICKER", commandLabel(state.mode)];
   if (state.mode === "performance") {
     parts.push(monthLabel(commandMonthSelect.value));
-  } else if (["auction", "regression", "flow-compass", "torque", "cockpit", "alerts"].includes(state.mode)) {
+  } else if (["auction", "regression", "flow-compass", "torque", "torque-scan", "cockpit", "alerts"].includes(state.mode)) {
     parts.push(commandPeriodSelect.value.toUpperCase());
   }
   commandPreview.textContent = parts.join(" ");
@@ -338,6 +344,7 @@ function commandLabel(mode) {
       "ridge-growth": "ridge",
       "flow-compass": "compass",
       torque: "torque",
+      "torque-scan": "scan",
       cockpit: "cockpit",
       alerts: "alerts",
       portfolio: "portfolio",
@@ -451,6 +458,262 @@ async function fetchCockpit(payload) {
   researchLibrary.setCanSave(true);
   renderCockpit(data);
   renderWarnings(data.meta?.errors || []);
+}
+
+const TORQUE_STAGES = [
+  { id: "Coiled Spring", tone: "success" },
+  { id: "Inflecting", tone: "success" },
+  { id: "Proof Phase", tone: "info" },
+  { id: "Renaming Phase", tone: "warn" },
+  { id: "Extended", tone: "danger" },
+  { id: "No Setup", tone: "muted" },
+];
+
+const torqueScanState = {
+  rows: [],
+  filter: new Set(),
+  total: null,
+  errors: [],
+};
+
+async function fetchTorqueScan(payload) {
+  torqueScanState.rows = [];
+  torqueScanState.filter = new Set();
+  torqueScanState.total = null;
+  torqueScanState.errors = [];
+
+  const container = ensureTorqueScanContainer();
+  renderTorqueScan();
+
+  const response = await fetch("/api/tools/torque/scan/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "Could not run torque scan");
+  }
+  if (!response.body) {
+    throw new Error("Streaming not supported");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n");
+    buffer = parts.pop();
+    parts.forEach((line) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        handleTorqueScanEvent(event);
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) {
+    try {
+      handleTorqueScanEvent(JSON.parse(buffer));
+    } catch { /* ignore */ }
+  }
+
+  sourceChip.textContent = `${torqueScanState.rows.length} rows`;
+  researchLibrary.setCanSave(true);
+  exportButton.disabled = !state.lastExport;
+}
+
+function handleTorqueScanEvent(event) {
+  if (event.type === "meta") {
+    torqueScanState.total = event.total ?? (event.tickers?.length || null);
+    renderTorqueScan();
+    return;
+  }
+  if (event.type === "row") {
+    torqueScanState.rows.push(event.row);
+    renderTorqueScan();
+    return;
+  }
+  if (event.type === "error") {
+    torqueScanState.errors.push({ ticker: event.ticker, error: event.error });
+    renderTorqueScan();
+    renderWarnings(torqueScanState.errors);
+    return;
+  }
+  if (event.type === "done") {
+    if (Array.isArray(event.rows_sorted) && event.rows_sorted.length) {
+      torqueScanState.rows = event.rows_sorted;
+    }
+    state.lastExport = event.export || { rows: torqueScanState.rows };
+    renderTorqueScan(true);
+    renderWarnings(event.meta?.errors || torqueScanState.errors || []);
+  }
+}
+
+function ensureTorqueScanContainer() {
+  imagesEl.innerHTML = "";
+  emptyState.hidden = true;
+  let scan = document.querySelector("#torque-scan-root");
+  if (!scan) {
+    scan = document.createElement("section");
+    scan.id = "torque-scan-root";
+    scan.className = "torque-scan";
+    imagesEl.append(scan);
+  }
+  return scan;
+}
+
+function renderTorqueScan(done = false) {
+  const root = ensureTorqueScanContainer();
+  const stageCounts = computeStageCounts(torqueScanState.rows);
+  const filterSet = torqueScanState.filter;
+  const filtered = torqueScanState.rows.filter((row) => {
+    if (filterSet.size === 0) return true;
+    return filterSet.has(row.torque?.stage_label || "No Setup");
+  });
+
+  root.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "torque-scan-head";
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "panel-label";
+  eyebrow.textContent = "Torque Scan";
+  const title = document.createElement("h3");
+  title.textContent = done
+    ? `${torqueScanState.rows.length} tickers · ${filtered.length} shown`
+    : `Scanning… ${torqueScanState.rows.length}${torqueScanState.total ? `/${torqueScanState.total}` : ""}`;
+  header.append(eyebrow, title);
+  root.append(header);
+
+  const filterBar = document.createElement("div");
+  filterBar.className = "torque-scan-filter";
+  const allChip = makeStageChip("All", stageCounts.__total || torqueScanState.rows.length, "muted", filterSet.size === 0, () => {
+    filterSet.clear();
+    renderTorqueScan(done);
+  });
+  filterBar.append(allChip);
+  TORQUE_STAGES.forEach((stage) => {
+    const count = stageCounts[stage.id] || 0;
+    const active = filterSet.has(stage.id);
+    const chip = makeStageChip(stage.id, count, stage.tone, active, () => {
+      if (filterSet.has(stage.id)) {
+        filterSet.delete(stage.id);
+      } else {
+        filterSet.add(stage.id);
+      }
+      renderTorqueScan(done);
+    });
+    filterBar.append(chip);
+  });
+  root.append(filterBar);
+
+  if (filtered.length === 0 && torqueScanState.rows.length > 0) {
+    const empty = document.createElement("div");
+    empty.className = "torque-scan-empty";
+    empty.textContent = "No rows match the current stage filter.";
+    root.append(empty);
+    return;
+  }
+
+  const table = document.createElement("div");
+  table.className = "torque-scan-table";
+
+  const headRow = document.createElement("div");
+  headRow.className = "torque-scan-row torque-scan-head-row";
+  ["#", "Ticker", "Stage", "Score", "Rec.", "Old → New", "Targets", "Price", "3M"].forEach((label) => {
+    const cell = document.createElement("div");
+    cell.className = "torque-scan-cell";
+    cell.textContent = label;
+    headRow.append(cell);
+  });
+  table.append(headRow);
+
+  const sorted = filtered.slice().sort((a, b) => {
+    const sa = a.torque?.total_score ?? -1000;
+    const sb = b.torque?.total_score ?? -1000;
+    return sb - sa;
+  });
+
+  sorted.forEach((row, idx) => table.append(renderTorqueScanRow(row, idx + 1)));
+  root.append(table);
+}
+
+function computeStageCounts(rows) {
+  const counts = { __total: rows.length };
+  rows.forEach((row) => {
+    const stage = row.torque?.stage_label || "No Setup";
+    counts[stage] = (counts[stage] || 0) + 1;
+  });
+  return counts;
+}
+
+function makeStageChip(label, count, tone, active, onClick) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = `stage-chip stage-${tone}${active ? " is-active" : ""}`;
+  chip.textContent = `${label} · ${count}`;
+  chip.addEventListener("click", onClick);
+  return chip;
+}
+
+function renderTorqueScanRow(row, rank) {
+  const ticker = row.ticker || "—";
+  const stage = row.torque?.stage_label || "No Setup";
+  const tone = TORQUE_STAGES.find((s) => s.id === stage)?.tone || "muted";
+  const score = row.torque?.total_score;
+  const rec = row.torque?.recommendation || "—";
+  const oldNoun = row.reclassification?.old_noun || row.industry || "—";
+  const newVerb = row.reclassification?.primary_new_verb || "—";
+  const targets = row.reclassification;
+  const targetText = targets && (targets.target_low ?? targets.target_mid ?? targets.target_high)
+    ? `${formatTarget(targets.target_low)} · ${formatTarget(targets.target_mid)} · ${formatTarget(targets.target_high)}`
+    : "—";
+  const price = row.price;
+  const perf3m = row.change_percent;
+
+  const el = document.createElement("a");
+  el.className = "torque-scan-row torque-scan-data-row";
+  el.href = `/vision?ticker=${encodeURIComponent(ticker)}`;
+  el.target = "_blank";
+  el.rel = "noopener";
+
+  [
+    String(rank),
+    ticker,
+    `<span class="stage-pill stage-${tone}">${stage}</span>`,
+    Number.isFinite(score) ? score.toFixed(0) : "—",
+    rec,
+    `<span class="reclass-trio"><span class="old">${escapeHtml(oldNoun)}</span><span class="arrow">→</span><span class="new">${escapeHtml(newVerb)}</span></span>`,
+    targetText,
+    Number.isFinite(price) ? `$${price.toFixed(2)}` : "—",
+    Number.isFinite(perf3m) ? `${perf3m > 0 ? "+" : ""}${perf3m.toFixed(1)}%` : "—",
+  ].forEach((content) => {
+    const cell = document.createElement("div");
+    cell.className = "torque-scan-cell";
+    cell.innerHTML = content;
+    el.append(cell);
+  });
+
+  return el;
+}
+
+function formatTarget(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `$${value.toFixed(0)}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }
 
 async function fetchAlerts(payload) {

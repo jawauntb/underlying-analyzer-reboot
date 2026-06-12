@@ -1,0 +1,581 @@
+/* Vision progress card + citation verification gauge.
+ * Uses tokens from styles.css (--amber, --cyan, --green, --muted, --text-strong,
+ * --panel, --cyan-line, --ink-2, etc.). Self-contained: no other CSS depends on
+ * the classes here, and the existing memo card layout is untouched.
+ */
+
+/* ============================================================
+ * Progress card
+ * ============================================================ */
+
+.vision-progress {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem 1rem;
+  background: linear-gradient(180deg, rgba(15, 22, 29, 0.92), rgba(10, 18, 23, 0.92));
+  border: 1px solid var(--cyan-line);
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(87, 217, 255, 0.06) inset, 0 8px 20px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  font-family: var(--body-font);
+  font-size: 0.86rem;
+  position: relative;
+}
+
+.vision-progress[hidden] {
+  display: none !important;
+}
+
+.vision-progress[data-state="done"] {
+  border-color: var(--green-soft);
+}
+
+.vision-progress[data-state="error"] {
+  border-color: var(--red);
+}
+
+.vision-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.vision-progress-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-family: var(--pixel-font);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.vision-progress-title strong {
+  font-family: var(--body-font);
+  font-size: 0.9rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-strong);
+  font-weight: 800;
+}
+
+.vision-progress-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+}
+
+.vision-progress-stats span + span::before {
+  content: "·";
+  margin-right: 0.4rem;
+  color: var(--cyan-line-strong);
+}
+
+.vision-progress-stats .tokens {
+  color: var(--amber);
+}
+
+.vision-progress-rail {
+  position: relative;
+  height: 6px;
+  background: rgba(87, 217, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.vision-progress-rail-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  border-radius: 3px;
+  box-shadow: 0 0 10px rgba(87, 217, 255, 0.35);
+  transition: width 280ms cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.vision-progress[data-state="done"] .vision-progress-rail-fill {
+  background: linear-gradient(90deg, var(--green), var(--green));
+}
+
+.vision-progress-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.5rem;
+  margin-bottom: 0.7rem;
+}
+
+.vision-progress-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.55rem 0.25rem 0.5rem;
+  background: rgba(10, 18, 23, 0.85);
+  border: 1px solid rgba(185, 201, 193, 0.18);
+  border-radius: 999px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.vision-progress-chip[data-status="done"] {
+  color: var(--green);
+  border-color: var(--green-soft);
+  background: rgba(121, 255, 156, 0.06);
+}
+
+.vision-progress-chip[data-status="active"] {
+  color: var(--amber);
+  border-color: rgba(255, 201, 74, 0.4);
+  background: var(--amber-soft);
+}
+
+.vision-progress-chip-icon {
+  display: inline-flex;
+  width: 0.9rem;
+  height: 0.9rem;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.vision-progress-chip[data-status="pending"] .vision-progress-chip-icon::before {
+  content: "·";
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.vision-progress-chip[data-status="done"] .vision-progress-chip-icon::before {
+  content: "✓";
+  color: var(--green);
+}
+
+.vision-progress-chip[data-status="active"] .vision-progress-chip-icon {
+  position: relative;
+}
+
+.vision-progress-chip[data-status="active"] .vision-progress-chip-icon::before {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  border-top-color: transparent;
+  animation: vision-progress-spin 0.9s linear infinite;
+  display: block;
+}
+
+@keyframes vision-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vision-progress-callout {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(87, 217, 255, 0.06);
+  border-left: 2px solid var(--cyan);
+  border-radius: 4px;
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  min-height: 1.6rem;
+}
+
+.vision-progress-callout::before {
+  content: "▌";
+  color: var(--amber);
+  font-weight: 700;
+  animation: vision-progress-blink 1s steps(2, jump-none) infinite;
+}
+
+@keyframes vision-progress-blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.vision-progress[data-state="done"] .vision-progress-callout::before {
+  content: "✓";
+  color: var(--green);
+  animation: none;
+}
+
+.vision-progress-callout-label {
+  flex: 1 1 auto;
+}
+
+.vision-progress-callout-meta {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Collapsed "run summary" state ---------- */
+
+.vision-progress[data-collapsed="true"] {
+  padding: 0.55rem 0.75rem;
+}
+
+.vision-progress[data-collapsed="true"] .vision-progress-rail,
+.vision-progress[data-collapsed="true"] .vision-progress-chips,
+.vision-progress[data-collapsed="true"] .vision-progress-callout {
+  display: none;
+}
+
+.vision-progress[data-collapsed="true"][data-expanded="true"] .vision-progress-rail,
+.vision-progress[data-collapsed="true"][data-expanded="true"] .vision-progress-chips,
+.vision-progress[data-collapsed="true"][data-expanded="true"] .vision-progress-callout {
+  display: flex;
+}
+
+.vision-progress[data-collapsed="true"][data-expanded="true"] {
+  padding: 0.9rem 1rem 1rem;
+}
+
+.vision-progress-summary-bar {
+  display: none;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.vision-progress[data-collapsed="true"] .vision-progress-summary-bar {
+  display: flex;
+}
+
+.vision-progress[data-collapsed="true"] .vision-progress-head {
+  display: none;
+}
+
+.vision-progress-summary-status {
+  color: var(--green);
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.vision-progress-summary-text {
+  color: var(--muted);
+  font-size: 0.82rem;
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.vision-progress-summary-chevron {
+  color: var(--cyan);
+  font-size: 0.7rem;
+  transition: transform 160ms ease;
+}
+
+.vision-progress[data-expanded="true"] .vision-progress-summary-chevron {
+  transform: rotate(180deg);
+}
+
+/* ============================================================
+ * Citation verification gauge
+ * ============================================================ */
+
+.citation-gauge {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem 0.95rem;
+  background: rgba(15, 22, 29, 0.92);
+  border: 1px solid var(--cyan-line);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: var(--body-font);
+}
+
+.citation-gauge-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.citation-gauge-label {
+  font-family: var(--pixel-font);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.citation-gauge-counts {
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.citation-gauge-counts .percent {
+  color: var(--amber);
+  margin-left: 0.4rem;
+}
+
+.citation-gauge-bar {
+  position: relative;
+  height: 10px;
+  background: rgba(185, 201, 193, 0.12);
+  border-radius: 5px;
+  overflow: hidden;
+  margin-bottom: 0.7rem;
+}
+
+.citation-gauge-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  border-radius: 5px;
+  transition: width 480ms ease;
+}
+
+.citation-gauge[data-quality="warn"] .citation-gauge-bar-fill {
+  background: linear-gradient(90deg, var(--amber), var(--green));
+}
+
+.citation-gauge[data-quality="poor"] .citation-gauge-bar-fill {
+  background: linear-gradient(90deg, var(--red), var(--amber));
+}
+
+.citation-gauge-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.citation-gauge-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.citation-gauge-legend .verified { color: var(--green); }
+.citation-gauge-legend .mismatch { color: var(--amber); }
+.citation-gauge-legend .missing { color: var(--red); }
+.citation-gauge-legend .uncheckable { color: var(--muted); }
+
+.citation-gauge-toggle {
+  background: none;
+  border: 1px solid var(--cyan-line);
+  color: var(--cyan);
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--body-font);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.citation-gauge-toggle:hover,
+.citation-gauge-toggle:focus-visible {
+  background: var(--cyan-soft);
+  color: var(--text-strong);
+  outline: none;
+}
+
+.citation-gauge-detail {
+  margin-top: 0.7rem;
+  border-top: 1px solid var(--cyan-line);
+  padding-top: 0.6rem;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.citation-gauge[data-expanded="false"] .citation-gauge-detail {
+  display: none;
+}
+
+.citation-gauge-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.citation-gauge-table th,
+.citation-gauge-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(185, 201, 193, 0.1);
+}
+
+.citation-gauge-table th {
+  font-family: var(--pixel-font);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.citation-gauge-table tr {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.citation-gauge-table tr:hover {
+  background: rgba(87, 217, 255, 0.05);
+}
+
+.citation-gauge-table .status-cell {
+  width: 1.4rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.citation-gauge-row[data-status="verified"] .status-cell { color: var(--green); }
+.citation-gauge-row[data-status="value_mismatch"] .status-cell { color: var(--amber); }
+.citation-gauge-row[data-status="concept_missing"] .status-cell,
+.citation-gauge-row[data-status="missing"] .status-cell { color: var(--red); }
+.citation-gauge-row[data-status="uncheckable"] .status-cell { color: var(--muted); }
+
+.citation-gauge-row .kind-cell {
+  color: var(--muted);
+  font-family: var(--pixel-font);
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.citation-gauge-row .raw-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-strong);
+  word-break: break-word;
+}
+
+.citation-gauge-row .matched-cell {
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+}
+
+.citation-gauge-row .note-cell {
+  color: var(--muted);
+}
+
+.citation-target-flash {
+  animation: citation-target-flash-anim 1.6s ease-out;
+}
+
+@keyframes citation-target-flash-anim {
+  0% {
+    background: rgba(87, 217, 255, 0.35);
+    outline: 2px solid var(--cyan);
+  }
+  100% {
+    background: transparent;
+    outline: 2px solid transparent;
+  }
+}
+
+/* ============================================================
+ * Mobile
+ * ============================================================ */
+
+@media (max-width: 600px) {
+  .vision-progress {
+    padding: 0.7rem 0.75rem 0.8rem;
+  }
+
+  .vision-progress-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+
+  .vision-progress-stats {
+    font-size: 0.72rem;
+  }
+
+  .vision-progress-chips {
+    gap: 0.3rem 0.35rem;
+  }
+
+  .vision-progress-chip {
+    font-size: 0.68rem;
+    padding: 0.2rem 0.45rem;
+  }
+
+  .citation-gauge-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .citation-gauge-legend {
+    gap: 0.3rem 0.7rem;
+    font-size: 0.74rem;
+  }
+
+  .citation-gauge-table thead {
+    display: none;
+  }
+
+  .citation-gauge-table,
+  .citation-gauge-table tbody,
+  .citation-gauge-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .citation-gauge-table tr {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(185, 201, 193, 0.1);
+  }
+
+  .citation-gauge-table td {
+    display: block;
+    border: 0;
+    padding: 0.15rem 0;
+  }
+
+  .citation-gauge-table td.status-cell {
+    display: inline-block;
+    width: auto;
+    margin-right: 0.4rem;
+  }
+
+  .citation-gauge-table td.kind-cell {
+    display: inline-block;
+    width: auto;
+  }
+
+  .citation-gauge-table td::before {
+    content: attr(data-label) " ";
+    color: var(--muted);
+    font-family: var(--pixel-font);
+    font-size: 0.5rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    display: inline-block;
+    margin-right: 0.35rem;
+  }
+
+  .citation-gauge-table td.status-cell::before,
+  .citation-gauge-table td.kind-cell::before {
+    content: "";
+  }
+}
