@@ -4511,6 +4511,152 @@ textarea:focus {
   text-transform: uppercase;
 }
 
+/* ---------- Torque Scan — progressive screening table ---------- */
+.torque-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 244, 194, 0.14);
+  border-radius: 6px;
+  background: #0a1117;
+}
+
+.torque-scan-head { display: flex; flex-direction: column; gap: 4px; }
+
+.torque-scan-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-strong);
+}
+
+.torque-scan-filter { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 244, 194, 0.14);
+  border-radius: 999px;
+  background: #10171f;
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+
+.stage-chip:hover { border-color: rgba(255, 201, 74, 0.42); }
+.stage-chip.is-active { background: rgba(255, 201, 74, 0.16); border-color: var(--amber); color: var(--amber); }
+.stage-chip.stage-success.is-active { background: rgba(121, 255, 156, 0.18); border-color: var(--green); color: var(--green); }
+.stage-chip.stage-info.is-active { background: rgba(87, 217, 255, 0.16); border-color: var(--cyan); color: var(--cyan); }
+.stage-chip.stage-warn.is-active { background: rgba(178, 140, 255, 0.16); border-color: var(--violet); color: var(--violet); }
+.stage-chip.stage-danger.is-active { background: rgba(255, 105, 93, 0.16); border-color: var(--red); color: var(--red); }
+
+.torque-scan-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.torque-scan-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 244, 194, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.torque-scan-row {
+  display: grid;
+  grid-template-columns: 36px 72px 130px 56px 92px minmax(180px, 1.4fr) minmax(140px, 1fr) 80px 64px;
+  gap: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 244, 194, 0.08);
+  font-size: 0.82rem;
+  align-items: center;
+  text-decoration: none;
+  color: var(--text);
+  transition: background 120ms;
+}
+
+.torque-scan-row:last-child { border-bottom: 0; }
+
+.torque-scan-head-row {
+  background: rgba(87, 217, 255, 0.07);
+  color: var(--cyan);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.torque-scan-data-row { display: grid; }
+.torque-scan-data-row:hover { background: rgba(255, 201, 74, 0.05); }
+
+.torque-scan-cell {
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  border: 1px solid currentColor;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.stage-pill.stage-success { color: var(--green); }
+.stage-pill.stage-info { color: var(--cyan); }
+.stage-pill.stage-warn { color: var(--violet); }
+.stage-pill.stage-danger { color: var(--red); }
+.stage-pill.stage-muted { color: var(--muted); }
+
+.reclass-trio {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.reclass-trio .old {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 105, 93, 0.42);
+}
+
+.reclass-trio .arrow { color: var(--cyan); }
+.reclass-trio .new { color: var(--green); font-weight: 700; }
+
+@media (max-width: 900px) {
+  .torque-scan-row {
+    grid-template-columns: 32px 60px 96px 50px 76px minmax(140px, 1.2fr) minmax(120px, 1fr) 72px 56px;
+    font-size: 0.78rem;
+  }
+}
+
+@media (max-width: 680px) {
+  .torque-scan-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 12px;
+  }
+  .torque-scan-head-row { display: none; }
+  .torque-scan-data-row .torque-scan-cell { white-space: normal; }
+}
+
 /* ---------- Misc utilities ---------- */
 .u-hidden { display: none !important; }
 .u-stack-sm { display: grid; gap: var(--space-2); }
