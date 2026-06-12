@@ -242,6 +242,72 @@ def test_old_noun_falls_back_to_industry_then_sector() -> None:
     assert result_sector_only.old_noun == "Industrials"
 
 
+def test_ai_compute_theme_matches_nvidia_shaped_input() -> None:
+    """NVDA-shaped: profile mentions AI / data center / GPU / training. Should
+    no longer fall back to the bland 'modernize infrastructure' default."""
+
+    profile = {
+        "industry": "Semiconductors",
+        "sector": "Technology",
+        "longBusinessSummary": (
+            "NVIDIA Corporation provides AI accelerators, GPUs, and full data "
+            "center AI compute platforms. The company supplies training and "
+            "inference accelerators (Hopper, Blackwell) to hyperscaler "
+            "customers, alongside CUDA software and AI factory reference "
+            "designs."
+        ),
+        "marketCap": 4_900_000_000_000,
+    }
+    result = score_reclassification(
+        ticker="NVDA",
+        profile=profile,
+        history=_make_history([100.0, 110.0, 121.0]),
+        sec_trend=None,
+        sec_source_pack=None,
+        exa_research=None,
+    )
+    assert result.primary_new_verb != "modernize infrastructure"
+    assert result.functional_layer != "Unclassified"
+    # Verb should mention AI / compute / training / accelerator
+    verb_l = result.primary_new_verb.lower()
+    assert any(token in verb_l for token in ("ai", "compute", "train", "acceler"))
+
+
+def test_targets_fallback_from_company_facts_when_sec_trend_partial() -> None:
+    """When sec_trend has no quarterly data, _compute_targets should fall back
+    to SEC Source Pack > Company Facts and still produce non-None target
+    bands."""
+
+    sec_source_pack = {
+        "Company Facts": {
+            "Revenue": {"val": 130_000_000_000, "fp": "FY", "fy": 2026, "form": "10-K"},
+            "Operating Income": {"val": 80_000_000_000, "fp": "FY", "fy": 2026, "form": "10-K"},
+            "Net Income": {"val": 60_000_000_000, "fp": "FY", "fy": 2026, "form": "10-K"},
+            "Shares Outstanding": {"val": 24_500_000_000, "fp": "FY", "fy": 2026, "form": "10-K"},
+            "Diluted EPS": {"val": 2.45, "fp": "FY", "fy": 2026, "form": "10-K"},
+        }
+    }
+    profile = {
+        "industry": "Semiconductors",
+        "longBusinessSummary": "AI accelerator company; ships GPUs into data centers.",
+        "revenueGrowth": 0.55,
+        "marketCap": 4_900_000_000_000,
+    }
+    result = score_reclassification(
+        ticker="NVDA",
+        profile=profile,
+        history=_make_history([200.0] * 30),
+        sec_trend={"Status": "error", "Errors": ["partial"]},
+        sec_source_pack=sec_source_pack,
+        exa_research=None,
+    )
+    assert result.target_low is not None
+    assert result.target_mid is not None
+    assert result.target_high is not None
+    assert result.target_low < result.target_mid <= result.target_high
+    assert result.target_basis != "insufficient data to derive scenarios"
+
+
 def test_targets_clean_up_when_data_partial() -> None:
     # Missing shares → should not be able to compute targets
     sec_trend = {

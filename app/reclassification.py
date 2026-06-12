@@ -27,10 +27,86 @@ from app.market_data import HistoryResult
 # ---------------------------------------------------------------------------
 
 THEME_KEYWORDS: dict[str, dict[str, Any]] = {
+    "AI_COMPUTE": {
+        "verb": "supply the silicon and platforms that train and run AI",
+        "layer": "Brain",
+        "keywords": [
+            "gpu",
+            "accelerator",
+            "ai accelerator",
+            "training",
+            "inference",
+            "data center",
+            "data-center",
+            "ai data center",
+            "ai factory",
+            "ai factories",
+            "foundation model",
+            "large language model",
+            "llm",
+            "cuda",
+            "hopper",
+            "blackwell",
+            "tensor",
+            "ai server",
+            "ai platform",
+            "ai infrastructure",
+            "ai compute",
+            "ai workloads",
+            "ai workload",
+            "hyperscaler",
+            "hyperscale",
+            "scale-up",
+            "scale-out",
+            "supercomputer",
+            "deep learning",
+            "machine learning",
+            "neural network",
+            "model training",
+        ],
+        "hidden_bom_roles": [
+            "AI training GPU / accelerator",
+            "AI inference accelerator",
+            "AI server platform",
+            "data-center compute reference design",
+            "AI software / runtime",
+        ],
+    },
+    "AI_NETWORKING": {
+        "verb": "switch AI traffic between accelerators",
+        "layer": "Nerves",
+        "keywords": [
+            "ai network",
+            "ai networking",
+            "ethernet",
+            "infiniband",
+            "switching",
+            "switch fabric",
+            "tomahawk",
+            "spectrum-x",
+            "spectrum x",
+            "nvlink",
+            "smartnic",
+            "dpu",
+            "interconnect",
+            "ai cluster",
+            "back-end network",
+            "scale-out fabric",
+            "data center switch",
+            "data-center switch",
+        ],
+        "hidden_bom_roles": [
+            "AI cluster switch ASIC",
+            "scale-up interconnect (NVLink-class)",
+            "scale-out fabric switch",
+            "SmartNIC / DPU",
+        ],
+    },
     "AI_OPTICS": {
         "verb": "move AI traffic optically",
         "layer": "Nerves",
         "keywords": [
+            "400g",
             "800g",
             "1.6t",
             "3.2t",
@@ -38,13 +114,23 @@ THEME_KEYWORDS: dict[str, dict[str, Any]] = {
             "dsp",
             "tia",
             "optical",
+            "optics",
+            "optical module",
             "transceiver",
+            "transceivers",
             "coherent",
             "silicon photonics",
+            "co-packaged optics",
+            "linear pluggable optics",
+            "lpo",
             "data-center interconnect",
+            "data center interconnect",
+            "metro optical",
             "scale-up",
             "scale-out",
             "hyperscale",
+            "active optical cable",
+            "aec",
         ],
         "hidden_bom_roles": [
             "PAM4 DSP",
@@ -60,15 +146,25 @@ THEME_KEYWORDS: dict[str, dict[str, Any]] = {
         "layer": "Blood",
         "keywords": [
             "data center power",
+            "data-center power",
             "switchgear",
             "transformer",
             "ups",
             "busbar",
             "power module",
+            "power conversion",
+            "ai data center",
             "data-center capex",
+            "data center capex",
             "large load",
+            "gigawatt",
             "interconnection",
+            "behind-the-meter",
+            "powered land",
+            "powered shell",
+            "campus",
             "grid",
+            "load growth",
         ],
         "hidden_bom_roles": [
             "medium-voltage switchgear",
@@ -104,12 +200,20 @@ THEME_KEYWORDS: dict[str, dict[str, Any]] = {
         "keywords": [
             "cxl",
             "hbm",
+            "high-bandwidth memory",
+            "high bandwidth memory",
+            "hbm3",
+            "hbm3e",
+            "hbm4",
             "kv cache",
             "memory pooling",
             "nvme",
             "storage accelerator",
             "ssd controller",
             "qlc",
+            "ddr5",
+            "graphics memory",
+            "memory bandwidth",
         ],
         "hidden_bom_roles": [
             "CXL controller",
@@ -699,6 +803,104 @@ def _proof_stage(
 # ---------------------------------------------------------------------------
 
 
+def _company_facts_signals(
+    sec_source_pack: Mapping[str, Any] | None,
+    profile: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Pull a coarse single-snapshot version of the same shape that
+    `_sec_trend_signals` returns, derived from `SEC Source Pack > Company Facts`
+    (XBRL latest-value-by-concept). Used as a fallback when the multi-quarter
+    SEC Trend Pack is unavailable so we can still produce target bands.
+
+    All values are treated as ANNUAL totals (which is what most companies
+    file in their latest 10-K, and what the FACT_SPECS picker tends to
+    return). We normalize that to quarterly run-rate so `_compute_targets`
+    can use the same annualization (×4) convention.
+    """
+
+    out: dict[str, Any] = {
+        "status": "company_facts",
+        "revenue_yoy": None,
+        "accelerating": False,
+        "latest_revenue": None,
+        "gross_margin": None,
+        "opex_run_rate": None,
+        "shares_diluted": None,
+        "op_leverage": None,
+        "segments": None,
+    }
+
+    pack = _as_mapping(sec_source_pack)
+    facts_raw = pack.get("Company Facts") if pack else None
+    facts = _as_mapping(facts_raw)
+    if not facts:
+        return out
+
+    def _fact_val(name: str) -> float | None:
+        node = _as_mapping(facts.get(name))
+        if not node:
+            return None
+        return _as_float(node.get("val"))
+
+    annual_revenue = _fact_val("Revenue")
+    annual_op_inc = _fact_val("Operating Income")
+    annual_net_inc = _fact_val("Net Income")
+    diluted_shares = _fact_val("Shares Outstanding")
+    diluted_eps = _fact_val("Diluted EPS")
+
+    # Net Income / Diluted EPS gives implied diluted shares as a fallback.
+    if diluted_shares is None and diluted_eps not in (None, 0) and annual_net_inc is not None:
+        try:
+            diluted_shares = float(annual_net_inc) / float(diluted_eps)
+        except (TypeError, ValueError, ZeroDivisionError):
+            diluted_shares = None
+
+    if annual_revenue is None or annual_revenue <= 0:
+        return out
+
+    # Quarterly run-rate equivalents so the rest of the pipeline can ×4.
+    out["latest_revenue"] = annual_revenue / 4.0
+
+    if annual_op_inc is not None:
+        # Approximate opex run-rate from operating-income identity:
+        #   OpInc = Revenue - COGS - OpEx ≈ Revenue - OpEx (for non-margin frames)
+        # We use Revenue - OpInc as a coarse total cost proxy. That conflates
+        # COGS and opex but is OK for a scenario-grade target.
+        annual_total_cost = annual_revenue - annual_op_inc
+        out["opex_run_rate"] = annual_total_cost / 4.0
+
+    if diluted_shares and diluted_shares > 0:
+        out["shares_diluted"] = diluted_shares
+
+    if annual_op_inc is not None:
+        # Implied "gross margin" surrogate for the scenario engine — use
+        # operating-margin where gross margin isn't directly available. This
+        # makes targets conservative (treats whole cost stack as variable).
+        try:
+            implied_margin = max(0.0, min(1.0, float(annual_op_inc) / float(annual_revenue) + 0.30))
+            out["gross_margin"] = implied_margin
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+
+    # Try a YoY hint from profile.revenueGrowth (yfinance) if available
+    if profile:
+        yoy_hint = _as_float(_as_mapping(profile).get("revenueGrowth"))
+        if yoy_hint is not None:
+            out["revenue_yoy"] = yoy_hint
+
+    return out
+
+
+def _merge_signals(primary: Mapping[str, Any], fallback: Mapping[str, Any]) -> dict[str, Any]:
+    """Take any keys missing/None in primary from fallback."""
+
+    out: dict[str, Any] = dict(primary)
+    for key, fallback_value in fallback.items():
+        if out.get(key) in (None, "", "insufficient"):
+            out[key] = fallback_value
+    return out
+
+
 def _compute_targets(
     *,
     sec_signals: Mapping[str, Any],
@@ -892,17 +1094,26 @@ def score_reclassification(
 
     new_verb_candidates = _public_candidates(ranked)
 
-    if top_theme is not None and top_count > 1:
+    # Accept a single strong hit as enough to pick the primary verb, but
+    # require >= 2 hits to call it confidently "the" thesis. Below threshold
+    # we still record the top candidate so the memo / UI can show it as
+    # provisional rather than dropping to the bland default.
+    if top_theme is not None and top_count >= 1:
         primary_new_verb = str(top_theme["verb"])
         functional_layer = str(top_theme["layer"])
     else:
         primary_new_verb = DEFAULT_VERB
         functional_layer = DEFAULT_LAYER
-        top_theme = top_theme if top_count > 0 else None
+        top_theme = None
 
     hidden_bom_role = _hidden_bom_role(corpus, top_theme, functional_layer)
 
     sec_signals = _sec_trend_signals(sec_trend_m)
+    # Fallback to single-snapshot XBRL Company Facts so target bands still
+    # land for tickers whose multi-quarter SEC trend pack is partial / errored.
+    if sec_signals.get("status") not in ("available",) or sec_signals.get("latest_revenue") in (None, 0):
+        cf_signals = _company_facts_signals(sec_pack_m, profile_m)
+        sec_signals = _merge_signals(sec_signals, cf_signals)
 
     gap = _reclassification_gap(
         old_noun=old_noun,
