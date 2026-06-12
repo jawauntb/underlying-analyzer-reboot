@@ -3,13 +3,17 @@ import { mountAccountControls, mountResearchLibrary } from "./research.js";
 const toolConfig = {
   vision: {
     title: "Vision",
-    label: "Market Memo",
+    label: "Reclassification Memo",
     icon: "/static/assets/vision.png",
     action: "See The Vision",
-    endpoint: "/api/tools/vision",
+    endpoint: "/api/tools/vision/v2",
+    streamEndpoint: "/api/tools/vision/v2/stream",
+    classicEndpoint: "/api/tools/vision",
+    classicStreamEndpoint: "/api/tools/vision/stream",
+    pdfEndpoint: "/api/tools/vision/v2/pdf",
     fields: ["ticker"],
     copy:
-      "Builds an analyst memo from fundamentals, price structure, and chart context; treat missing fields as diligence gaps.",
+      "Old-noun / new-verb reclassification memo: multi-quarter XBRL trend, Exa web research, torque math, scenario targets, kill criteria, proof-ladder stage. Toggle Classic to use the v1 brief.",
   },
   pixel: {
     title: "Pixel",
@@ -55,7 +59,12 @@ const errorEl = document.querySelector("#tool-error");
 const emptyEl = document.querySelector("#tool-empty");
 const sourceEl = document.querySelector("#tool-source");
 const pdfButton = createPdfButton();
+const memoPdfButton = createMemoPdfButton();
+const classicToggle = createClassicToggle();
 const memoChartViewer = createMemoChartViewer();
+let useClassicVision = false;
+let lastMemoText = "";
+let lastMemoReport = null;
 mountAccountControls({ root: document.querySelector("#account-control") });
 const researchLibrary = mountResearchLibrary({
   insertAfter: document.querySelector("#tool-form .form-actions"),
@@ -102,6 +111,50 @@ pdfButton.addEventListener("click", () => {
   }
 });
 
+memoPdfButton?.addEventListener("click", async () => {
+  if (!lastMemoText && !lastMemoReport) {
+    return;
+  }
+  memoPdfButton.disabled = true;
+  const originalLabel = memoPdfButton.textContent;
+  memoPdfButton.textContent = "Rendering...";
+  try {
+    const ticker = String(toolPayload().ticker || "").toUpperCase();
+    const body = JSON.stringify({
+      ticker,
+      memo_text: lastMemoText,
+      report: lastMemoReport,
+    });
+    const response = await fetch("/api/tools/vision/v2/pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Memo PDF failed");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${ticker || "vision"}-vision-memo.pdf`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showError(error.message || "Memo PDF failed");
+  } finally {
+    memoPdfButton.textContent = originalLabel;
+    memoPdfButton.disabled = !lastMemoText && !lastMemoReport;
+  }
+});
+
+classicToggle?.addEventListener("change", (event) => {
+  useClassicVision = Boolean(event.target.checked);
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !memoChartViewer.root.hidden) {
     closeMemoChartViewer();
@@ -140,6 +193,41 @@ function createPdfButton() {
   return button;
 }
 
+function createMemoPdfButton() {
+  if (pathKey !== "vision") {
+    return null;
+  }
+  const button = document.createElement("button");
+  button.className = "export-button pdf-button memo-pdf-button";
+  button.id = "tool-export-memo-pdf";
+  button.type = "button";
+  button.textContent = "Memo PDF";
+  button.title = "Download a styled analyst-memo PDF rendered server-side";
+  button.disabled = true;
+  pdfButton.after(button);
+  return button;
+}
+
+function createClassicToggle() {
+  if (pathKey !== "vision") {
+    return null;
+  }
+  const label = document.createElement("label");
+  label.className = "classic-toggle";
+  label.title = "Use the legacy 10-section Vision memo instead of the v2 reclassification memo";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.id = "vision-classic-toggle";
+  const text = document.createElement("span");
+  text.textContent = "Classic";
+  label.append(input, text);
+  const formActions = document.querySelector("#tool-form .form-actions");
+  if (formActions) {
+    formActions.append(label);
+  }
+  return input;
+}
+
 function setDefaultExpiry() {
   const input = document.querySelector("#tool-expiry");
   const date = new Date();
@@ -171,7 +259,10 @@ function toolPayload() {
 }
 
 async function streamVisionTool() {
-  const response = await fetch("/api/tools/vision/stream", {
+  const endpoint = useClassicVision
+    ? activeTool.classicStreamEndpoint || "/api/tools/vision/stream"
+    : activeTool.streamEndpoint || "/api/tools/vision/v2/stream";
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(toolPayload()),
@@ -250,8 +341,13 @@ function handleVisionStreamEvent(state, event) {
       state.frame.status.classList.add("complete");
     }
     lastExport = event.export || data;
+    lastMemoText = state.memo || "";
+    lastMemoReport = event.export?.report || data.Report || data.report || null;
     exportButton.disabled = false;
     pdfButton.disabled = false;
+    if (memoPdfButton) {
+      memoPdfButton.disabled = !lastMemoText && !lastMemoReport;
+    }
     researchLibrary.setCanSave(true);
     sourceEl.textContent = data["Text Model"] || data["Text Provider"] || activeTool.label;
     renderSummary(visionSummaryItems(data));
