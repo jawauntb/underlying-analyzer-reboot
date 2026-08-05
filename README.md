@@ -35,6 +35,12 @@ watchlist and repeated Vision runs do not refetch the same filing payloads.
 If SEC blocks the runtime, the app falls back to Yahoo-hosted SEC filing copies for 10-K/10-Q/8-K
 sections; XBRL company facts are only available from the direct SEC API path.
 
+## API Docs
+
+HTTP API reference (endpoints, curl examples, auth): [docs/api.md](docs/api.md).
+
+There is no in-app `/docs` page; this markdown file is the source of truth.
+
 ## Local Setup
 
 ```bash
