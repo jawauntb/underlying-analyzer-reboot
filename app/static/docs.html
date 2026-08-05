@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Docs - Terminal by The Underlying</title>
+    <meta name="theme-color" content="#07111f" />
+    <meta property="og:image" content="/static/assets/bullish.png" />
+    <link rel="icon" href="/static/assets/Terminal.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800;900&family=Press+Start+2P&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css?v=docs-1" />
+    <style>
+      .docs-layout {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 32px;
+        margin-top: 24px;
+        align-items: flex-start;
+      }
+
+      .docs-nav {
+        position: sticky;
+        top: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 16px;
+        background: var(--panel);
+        border: 1px solid var(--line-soft);
+        border-radius: 12px;
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+      }
+
+      .docs-nav .panel-label {
+        margin-bottom: 8px;
+      }
+
+      .docs-nav a {
+        display: block;
+        padding: 8px 10px;
+        color: var(--text);
+        font-size: 0.85rem;
+        font-weight: 700;
+        text-decoration: none;
+        border-radius: 6px;
+        transition:
+          background 120ms ease,
+          color 120ms ease;
+      }
+
+      .docs-nav a:hover {
+        background: rgba(121, 255, 156, 0.08);
+        color: var(--green);
+      }
+
+      .docs-nav a.active {
+        background: rgba(121, 255, 156, 0.14);
+        color: var(--green);
+      }
+
+      .docs-main {
+        display: flex;
+        flex-direction: column;
+        gap: 40px;
+        min-width: 0;
+      }
+
+      .docs-hero {
+        padding: 36px 32px;
+        border-radius: 16px;
+        background:
+          radial-gradient(circle at 18% 0%, rgba(121, 255, 156, 0.16), transparent 55%),
+          radial-gradient(circle at 92% 88%, rgba(87, 217, 255, 0.12), transparent 58%),
+          var(--panel-strong);
+        border: 1px solid var(--line-soft);
+      }
+
+      .docs-hero h1 {
+        margin: 8px 0 12px;
+        font-family: var(--pixel-font);
+        font-size: 1.35rem;
+        line-height: 1.45;
+        color: var(--text-strong);
+        text-shadow: 2px 2px 0 var(--text-shadow-back);
+      }
+
+      .docs-hero p {
+        max-width: 62ch;
+        margin: 0 0 18px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .docs-hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .docs-hero-actions a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 14px;
+        border: 1px solid var(--line-soft);
+        background: rgba(7, 13, 17, 0.92);
+        color: var(--text);
+        font-weight: 900;
+        text-decoration: none;
+      }
+
+      .docs-hero-actions a.primary {
+        border-color: var(--green);
+        color: var(--green);
+        background: rgba(121, 255, 156, 0.08);
+      }
+
+      .docs-hero-actions a:hover {
+        transform: translateY(-1px);
+        border-color: var(--green);
+        color: var(--green);
+      }
+
+      .docs-section {
+        padding: 28px 26px;
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .docs-section h2 {
+        margin: 6px 0 10px;
+        color: var(--text-strong);
+        font-size: 1.35rem;
+      }
+
+      .docs-section h3 {
+        margin: 22px 0 8px;
+        color: var(--amber);
+        font-size: 1rem;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-weight: 600;
+      }
+
+      .docs-section > p,
+      .docs-section li {
+        color: var(--muted);
+        font-weight: 600;
+        line-height: 1.55;
+      }
+
+      .docs-section > p {
+        margin: 0 0 12px;
+        max-width: 70ch;
+      }
+
+      .docs-section ul {
+        margin: 0 0 12px;
+        padding-left: 1.2rem;
+      }
+
+      .docs-table-wrap {
+        overflow-x: auto;
+        margin: 12px 0 16px;
+      }
+
+      .docs-section table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+
+      .docs-section th,
+      .docs-section td {
+        padding: 10px 12px;
+        border: 1px solid var(--line-soft);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .docs-section th {
+        background: rgba(0, 0, 0, 0.28);
+        color: var(--text-strong);
+        font-weight: 900;
+      }
+
+      .docs-section td {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .docs-section code {
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 0.86em;
+        color: var(--green);
+      }
+
+      .docs-section pre {
+        margin: 10px 0 16px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        background: #05070a;
+        color: #d7ffe4;
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+      }
+
+      .docs-endpoint-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .docs-endpoint-grid a {
+        display: block;
+        padding: 12px 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        background: rgba(7, 13, 17, 0.75);
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 800;
+      }
+
+      .docs-endpoint-grid a:hover {
+        border-color: var(--green);
+        color: var(--green);
+      }
+
+      .docs-endpoint-grid span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      @media (max-width: 900px) {
+        .docs-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .docs-nav {
+          position: static;
+          max-height: none;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .docs-nav .panel-label {
+          grid-column: 1 / -1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell legacy-shell">
+      <header class="masthead">
+        <a class="icon-link" href="/" aria-label="Terminal home">
+          <img src="/static/assets/Terminal.png" alt="" />
+        </a>
+        <div class="brand">
+          <h1>Docs</h1>
+          <a href="https://theunderlying.substack.com/">by The Underlying</a>
+        </div>
+        <nav class="tool-dock legacy-dock" aria-label="The Underlying tools">
+          <a class="tool-link" href="/" aria-label="Terminal">
+            <img src="/static/assets/Terminal.png" alt="" />
+            <span>Terminal</span>
+          </a>
+          <a class="tool-link" href="/vision" aria-label="Vision">
+            <img src="/static/assets/vision.png" alt="" />
+            <span>Vision</span>
+          </a>
+          <a class="tool-link" href="/pixel" aria-label="Pixel">
+            <img src="/static/assets/toro.png" alt="" />
+            <span>Pixel</span>
+          </a>
+          <a class="tool-link" href="/fax" aria-label="Stock Fax">
+            <img src="/static/assets/fax.png" alt="" />
+            <span>Stock Fax</span>
+          </a>
+          <a class="tool-link" href="/moneyline" aria-label="Moneyline">
+            <img src="/static/assets/moneyline.png" alt="" />
+            <span>Moneyline</span>
+          </a>
+          <a class="tool-link active" href="/docs" aria-label="Docs">
+            <span class="tool-link-mark" aria-hidden="true">{ }</span>
+            <span>Docs</span>
+          </a>
+        </nav>
+      </header>
+
+      <div class="docs-layout">
+        <aside class="docs-nav" aria-label="Docs sections">
+          <div class="panel-label">Sections</div>
+          <a href="#overview">Overview</a>
+          <a href="#tools">Tools</a>
+          <a href="#terminal">Terminal</a>
+          <a href="#api">API</a>
+          <a href="#api-charts">Charts API</a>
+          <a href="#api-tools">Tools API</a>
+          <a href="#api-auth">Auth</a>
+          <a href="#source">Source</a>
+        </aside>
+
+        <div class="docs-main">
+          <section id="overview" class="docs-hero docs-section">
+            <div class="panel-label">Documentation</div>
+            <h1>Terminal docs</h1>
+            <p>
+              How to use the research terminal and call the HTTP API. Chart packs, watchlist
+              runs, Vision memos, alerts, and curl examples live here.
+            </p>
+            <div class="docs-hero-actions" aria-label="Docs shortcuts">
+              <a class="primary" href="#api">Open API reference</a>
+              <a href="/docs/api.md">Raw API markdown</a>
+              <a href="/">Back to Terminal</a>
+            </div>
+          </section>
+
+          <section id="tools" class="docs-section">
+            <div class="panel-label">Product</div>
+            <h2>Tools</h2>
+            <p>Each tool has its own route and shares the same account / library shell.</p>
+            <div class="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tool</th>
+                    <th>Route</th>
+                    <th>What it does</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Terminal</td>
+                    <td><code>/</code></td>
+                    <td>Chart modes, cockpit, briefs, alerts, exports</td>
+                  </tr>
+                  <tr>
+                    <td>Vision</td>
+                    <td><code>/vision</code></td>
+                    <td>Market memo with SEC citations and charts</td>
+                  </tr>
+                  <tr>
+                    <td>Pixel</td>
+                    <td><code>/pixel</code></td>
+                    <td>Prompt → image generation</td>
+                  </tr>
+                  <tr>
+                    <td>Stock Fax</td>
+                    <td><code>/fax</code></td>
+                    <td>Structured ticker fax / narrative pack</td>
+                  </tr>
+                  <tr>
+                    <td>Moneyline</td>
+                    <td><code>/moneyline</code></td>
+                    <td>Options moneyline / moneywall chart</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="terminal" class="docs-section">
+            <div class="panel-label">Product</div>
+            <h2>Terminal workflow</h2>
+            <ul>
+              <li>Enter one ticker, a comma list, or a public TradingView watchlist URL.</li>
+              <li>Pick a mode (Auction, Ridge, Compass, Cockpit, Brief, Alerts, …) and run.</li>
+              <li>Export JSON from the result panel, or sign in to save research to the Library.</li>
+              <li>Alert Monitor can save daily rules and test webhook delivery when Supabase is configured.</li>
+            </ul>
+          </section>
+
+          <section id="api" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>API reference</h2>
+            <p>
+              Base URL is this host. Local default:
+              <code>http://127.0.0.1:5050</code>. JSON bodies use
+              <code>Content-Type: application/json</code>. Errors look like
+              <code>{ "error": "…" }</code>.
+            </p>
+            <p>
+              Full markdown copy:
+              <a href="/docs/api.md"><code>/docs/api.md</code></a>
+              · GitHub source:
+              <a
+                href="https://github.com/jawauntb/underlying-analyzer-reboot/blob/main/docs/api.md"
+                >docs/api.md</a
+              >
+            </p>
+
+            <h3>Ticker selection</h3>
+            <p>
+              Charts, analysis, cockpit, alerts, and torque scan accept one of
+              <code>ticker</code>, <code>tickers</code>, or <code>watchlist_url</code>.
+              Optional <code>max_results</code> defaults to <code>10</code> (cap <code>50</code>).
+            </p>
+
+            <div class="docs-endpoint-grid" aria-label="API groups">
+              <a href="#api-health">Health &amp; config <span>GET /api/health, /api/config</span></a>
+              <a href="#api-charts">Charts <span>POST /api/charts/&lt;type&gt;</span></a>
+              <a href="#api-analysis">Analysis <span>GET/POST /api/analysis</span></a>
+              <a href="#api-watchlists">Watchlists <span>resolve, cockpit, alerts</span></a>
+              <a href="#api-alerts">Scheduler <span>Bearer ALERT_SCHEDULER_TOKEN</span></a>
+              <a href="#api-tools">Tools <span>fax, vision, torque, pixel…</span></a>
+            </div>
+          </section>
+
+          <section id="api-health" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Health &amp; config</h2>
+
+            <h3>GET /api/health</h3>
+            <pre>curl -s http://127.0.0.1:5050/api/health</pre>
+            <pre>{ "ok": true, "service": "underlying-analyzer-reboot" }</pre>
+
+            <h3>GET /api/config</h3>
+            <p>Public Supabase client values only. Never returns service-role secrets.</p>
+            <pre>curl -s http://127.0.0.1:5050/api/config</pre>
+
+            <h3>GET /api/providers</h3>
+            <pre>curl -s http://127.0.0.1:5050/api/providers</pre>
+          </section>
+
+          <section id="api-charts" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Charts</h2>
+            <p><code>POST /api/charts/&lt;chart_type&gt;</code></p>
+            <div class="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Purpose</th>
+                    <th>Extra fields</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>auction</code></td>
+                    <td>Auction levels</td>
+                    <td><code>period</code> (default <code>1y</code>)</td>
+                  </tr>
+                  <tr>
+                    <td><code>performance</code></td>
+                    <td>Monthly seasonality</td>
+                    <td><code>month</code> (1–12)</td>
+                  </tr>
+                  <tr>
+                    <td><code>regression</code></td>
+                    <td>Regression channel</td>
+                    <td><code>period</code>, <code>start_date</code>, <code>end_date</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>ridge-growth</code></td>
+                    <td>Ridge strategy pack</td>
+                    <td>ticker / watchlist</td>
+                  </tr>
+                  <tr>
+                    <td><code>flow-compass</code></td>
+                    <td>Flow indicator</td>
+                    <td><code>period</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>torque</code></td>
+                    <td>Torque chart</td>
+                    <td><code>period</code> (default <code>2y</code>)</td>
+                  </tr>
+                  <tr>
+                    <td><code>portfolio</code></td>
+                    <td>Multi-ticker portfolio</td>
+                    <td><code>investment_per_stock</code>, dates</td>
+                  </tr>
+                  <tr>
+                    <td><code>volatility</code></td>
+                    <td>Vol compare</td>
+                    <td>ticker / watchlist</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/charts/auction \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL","period":"1y"}'</pre>
+          </section>
+
+          <section id="api-analysis" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Analysis</h2>
+            <h3>GET /api/analysis/&lt;ticker&gt;</h3>
+            <pre>curl -s http://127.0.0.1:5050/api/analysis/AAPL</pre>
+            <h3>POST /api/analysis</h3>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/analysis \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":["AAPL","MSFT"],"max_results":10}'</pre>
+            <p>Requires <code>ANTHROPIC_API_KEY</code> for generated brief text.</p>
+          </section>
+
+          <section id="api-watchlists" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Watchlists</h2>
+            <h3>POST /api/watchlists/resolve</h3>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/watchlists/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"watchlist_url":"https://www.tradingview.com/watchlists/334089913/","max_results":10}'</pre>
+            <h3>POST /api/watchlists/cockpit</h3>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/watchlists/cockpit \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":["AAPL","MSFT"],"max_results":10}'</pre>
+            <h3>POST /api/watchlists/alerts</h3>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/watchlists/alerts \
+  -H 'Content-Type: application/json' \
+  -d '{"tickers":["AAPL","MSFT"],"max_alerts":5}'</pre>
+          </section>
+
+          <section id="api-alerts" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Alerts scheduler</h2>
+            <h3>GET /api/alerts/scheduler/status</h3>
+            <pre>curl -s http://127.0.0.1:5050/api/alerts/scheduler/status</pre>
+            <h3>POST /api/alerts/scheduled/run</h3>
+            <p>Requires <code>Authorization: Bearer &lt;ALERT_SCHEDULER_TOKEN&gt;</code>.</p>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/alerts/scheduled/run \
+  -H "Authorization: Bearer $ALERT_SCHEDULER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{}'</pre>
+            <h3>POST /api/alerts/webhook/test</h3>
+            <p>Requires a Supabase user access token and <code>rule_id</code>.</p>
+          </section>
+
+          <section id="api-tools" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Tools API</h2>
+            <div class="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>Path</th>
+                    <th>Body</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/fax</code></td>
+                    <td><code>ticker</code></td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/vision</code></td>
+                    <td><code>ticker</code></td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/vision/stream</code></td>
+                    <td>NDJSON stream</td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/vision/v2</code></td>
+                    <td><code>ticker</code></td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/vision/v2/stream</code></td>
+                    <td>NDJSON stream</td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/vision/v2/pdf</code></td>
+                    <td><code>ticker</code> (+ optional memo/charts)</td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/torque</code></td>
+                    <td><code>ticker</code></td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/torque/scan</code></td>
+                    <td>tickers / watchlist</td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/moneyline</code></td>
+                    <td><code>ticker</code>, optional <code>expiry</code></td>
+                  </tr>
+                  <tr>
+                    <td>POST</td>
+                    <td><code>/api/tools/pixel</code></td>
+                    <td><code>prompt</code></td>
+                  </tr>
+                  <tr>
+                    <td>GET</td>
+                    <td><code>/api/sec/&lt;ticker&gt;</code></td>
+                    <td>—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <pre>curl -s -X POST http://127.0.0.1:5050/api/tools/vision/v2 \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL"}'</pre>
+          </section>
+
+          <section id="api-auth" class="docs-section">
+            <div class="panel-label">HTTP API</div>
+            <h2>Auth</h2>
+            <div class="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Endpoint</th>
+                    <th>Auth</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Most <code>/api/*</code></td>
+                    <td>None (server-side market/LLM keys)</td>
+                  </tr>
+                  <tr>
+                    <td><code>/api/alerts/scheduled/run</code></td>
+                    <td><code>Bearer ALERT_SCHEDULER_TOKEN</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>/api/alerts/webhook/test</code></td>
+                    <td>Supabase user access token</td>
+                  </tr>
+                  <tr>
+                    <td>Browser Library / saved rules</td>
+                    <td>Supabase anon key via <code>/api/config</code> + client auth</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="source" class="docs-section">
+            <div class="panel-label">Source</div>
+            <h2>Where docs live</h2>
+            <ul>
+              <li>On site: <a href="/docs"><code>/docs</code></a></li>
+              <li>API section: <a href="/docs#api"><code>/docs#api</code></a></li>
+              <li>Raw markdown: <a href="/docs/api.md"><code>/docs/api.md</code></a></li>
+              <li>
+                Repo:
+                <a href="https://github.com/jawauntb/underlying-analyzer-reboot/blob/main/docs/api.md"
+                  >GitHub docs/api.md</a
+                >
+              </li>
+              <li>Design system sandbox: <a href="/design"><code>/design</code></a></li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </main>
+    <script>
+      (function () {
+        var links = Array.prototype.slice.call(document.querySelectorAll(".docs-nav a"));
+        if (!links.length || !("IntersectionObserver" in window)) return;
+        var map = {};
+        links.forEach(function (link) {
+          var id = (link.getAttribute("href") || "").replace("#", "");
+          var section = document.getElementById(id);
+          if (section) map[id] = link;
+        });
+        var observer = new IntersectionObserver(
+          function (entries) {
+            entries.forEach(function (entry) {
+              if (!entry.isIntersecting) return;
+              links.forEach(function (l) {
+                l.classList.toggle("active", l === map[entry.target.id]);
+              });
+            });
+          },
+          { rootMargin: "-20% 0px -55% 0px", threshold: 0.01 }
+        );
+        Object.keys(map).forEach(function (id) {
+          observer.observe(document.getElementById(id));
+        });
+      })();
+    </script>
+  </body>
+</html>

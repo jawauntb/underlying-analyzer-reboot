@@ -86,7 +86,9 @@ from app.watchlists import (
     watchlist_payload,
 )
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).parent / "static"
+DOCS_DIR = ROOT_DIR / "docs"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
 RIDGE_GROWTH_PERIODS = ("6mo", "1y", "2y")
@@ -141,6 +143,14 @@ def create_app() -> Flask:
     @app.get("/design")
     def design_sandbox() -> Response:
         return send_from_directory(STATIC_DIR, "design.html")
+
+    @app.get("/docs")
+    def docs_page() -> Response:
+        return send_from_directory(STATIC_DIR, "docs.html")
+
+    @app.get("/docs/api.md")
+    def docs_api_markdown() -> Response:
+        return send_from_directory(DOCS_DIR, "api.md", mimetype="text/markdown")
 
     @app.get("/api/health")
     def health() -> Any:

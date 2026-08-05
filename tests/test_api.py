@@ -420,14 +420,31 @@ def test_index_includes_underlying_tool_dock() -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline"):
+    for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline", b"/docs"):
         assert route in response.data
+    assert b"/docs#api" in response.data
     for mode in (
         b'data-mode="ridge-growth"',
         b'data-mode="flow-compass"',
         b'data-mode="alerts"',
     ):
         assert mode in response.data
+
+
+def test_docs_page_and_api_markdown() -> None:
+    app = create_app()
+    client = app.test_client()
+
+    page = client.get("/docs")
+    assert page.status_code == 200
+    assert b"API reference" in page.data
+    assert b"/docs/api.md" in page.data
+    assert b'href="#api"' in page.data or b'href="/docs#api"' in page.data
+
+    markdown = client.get("/docs/api.md")
+    assert markdown.status_code == 200
+    assert b"# API Reference" in markdown.data
+    assert b"/api/health" in markdown.data
 
 
 def test_legacy_tool_routes_render_status_page() -> None:
@@ -439,6 +456,7 @@ def test_legacy_tool_routes_render_status_page() -> None:
 
         assert response.status_code == 200
         assert b"/static/tools.js" in response.data
+        assert b"/docs" in response.data
 
 
 def test_chart_endpoint_returns_image_payload() -> None:

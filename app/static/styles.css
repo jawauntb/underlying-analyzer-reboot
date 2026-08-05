@@ -414,7 +414,7 @@ textarea:focus-visible {
   z-index: 1;
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
   gap: 10px;
   padding-top: 14px;
 }
@@ -474,6 +474,23 @@ textarea:focus-visible {
   object-fit: contain;
   image-rendering: pixelated;
   filter: drop-shadow(0 0 8px rgba(255, 201, 74, 0.26));
+}
+
+.tool-link-mark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(121, 255, 156, 0.35);
+  background: rgba(121, 255, 156, 0.08);
+  color: var(--green);
+  font-family: var(--pixel-font);
+  font-size: 0.55rem;
+  line-height: 1;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
 }
 
 .tool-link span {
@@ -3285,9 +3302,14 @@ body.is-loading .source-chip::after {
     scroll-snap-align: start;
   }
 
-  .tool-link img {
+  .tool-link img,
+  .tool-link-mark {
     width: 28px;
     height: 28px;
+  }
+
+  .tool-link-mark {
+    font-size: 0.48rem;
   }
 
   .tool-link span {
