@@ -1,6 +1,10 @@
 # API Reference
 
-Base URL (local): `http://127.0.0.1:5050`
+Base URL (local): `http://127.0.0.1:5050`  
+Production: `https://underlying-terminal-production.up.railway.app`
+
+Public access: research and tool endpoints require **no API key**. CORS is open.  
+Machine-readable catalog: `GET /api/docs` · Site docs: `/docs` · MCP: [mcp.md](mcp.md)
 
 All JSON request bodies use `Content-Type: application/json`. Errors return:
 
@@ -22,6 +26,14 @@ Ticker selection (charts, analysis, cockpit, alerts, torque scan) accepts one of
 ---
 
 ## Health & config
+
+### `GET /api/docs`
+
+Public catalog of site tools and HTTP endpoints.
+
+```bash
+curl -s http://127.0.0.1:5050/api/docs
+```
 
 ### `GET /api/health`
 

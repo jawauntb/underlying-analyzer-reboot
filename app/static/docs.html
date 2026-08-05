@@ -326,6 +326,7 @@
             </p>
             <div class="docs-hero-actions" aria-label="Docs shortcuts">
               <a class="primary" href="#api">Open API reference</a>
+              <a href="/api/docs">API catalog JSON</a>
               <a href="/docs/api.md">Raw API markdown</a>
               <a href="/">Back to Terminal</a>
             </div>
@@ -396,13 +397,18 @@
               <code>{ "error": "…" }</code>.
             </p>
             <p>
-              Full markdown copy:
+              Public catalog JSON:
+              <a href="/api/docs"><code>/api/docs</code></a>
+              · Markdown:
               <a href="/docs/api.md"><code>/docs/api.md</code></a>
-              · GitHub source:
-              <a
-                href="https://github.com/jawauntb/underlying-analyzer-reboot/blob/main/docs/api.md"
-                >docs/api.md</a
+              · MCP setup:
+              <a href="https://github.com/jawauntb/underlying-analyzer-reboot/blob/main/docs/mcp.md"
+                >docs/mcp.md</a
               >
+            </p>
+            <p>
+              All research/tool endpoints are publicly callable without an API key. Scheduler and
+              webhook-test routes only need a bearer token when those features are configured.
             </p>
 
             <h3>Ticker selection</h3>
@@ -659,6 +665,7 @@
             <ul>
               <li>On site: <a href="/docs"><code>/docs</code></a></li>
               <li>API section: <a href="/docs#api"><code>/docs#api</code></a></li>
+              <li>Catalog JSON: <a href="/api/docs"><code>/api/docs</code></a></li>
               <li>Raw markdown: <a href="/docs/api.md"><code>/docs/api.md</code></a></li>
               <li>
                 Repo:

@@ -23,6 +23,7 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app.api_catalog import build_api_docs_payload
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -155,6 +156,11 @@ def create_app() -> Flask:
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True, "service": "underlying-analyzer-reboot"})
+
+    @app.get("/api/docs")
+    def api_docs_catalog() -> Any:
+        base_url = request.url_root.rstrip("/") if request.url_root else None
+        return jsonify(build_api_docs_payload(base_url=base_url))
 
     @app.get("/api/config")
     def public_config() -> Any:

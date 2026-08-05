@@ -439,12 +439,31 @@ def test_docs_page_and_api_markdown() -> None:
     assert page.status_code == 200
     assert b"API reference" in page.data
     assert b"/docs/api.md" in page.data
+    assert b"/api/docs" in page.data
     assert b'href="#api"' in page.data or b'href="/docs#api"' in page.data
 
     markdown = client.get("/docs/api.md")
     assert markdown.status_code == 200
     assert b"# API Reference" in markdown.data
     assert b"/api/health" in markdown.data
+
+
+def test_api_docs_catalog_is_public() -> None:
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/api/docs")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["public"] is True
+    assert payload["docs"]["html"] == "/docs"
+    assert payload["docs"]["catalog"] == "/api/docs"
+    paths = {item["path"] for item in payload["endpoints"]}
+    assert "/api/tools/vision/v2" in paths
+    assert "/api/charts/{chart_type}" in paths
+    assert any(tool["id"] == "docs" for tool in payload["site_tools"])
 
 
 def test_legacy_tool_routes_render_status_page() -> None:

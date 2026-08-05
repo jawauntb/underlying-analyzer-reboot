@@ -39,7 +39,11 @@ sections; XBRL company facts are only available from the direct SEC API path.
 
 On-site docs: `/docs` (API section at `/docs#api`).
 
+Machine-readable catalog: `GET /api/docs` (lists every public endpoint + site tool).
+
 Raw markdown API reference: `/docs/api.md` and [docs/api.md](docs/api.md).
+
+MCP server (stdio, no API key): [docs/mcp.md](docs/mcp.md). Default target is the Railway production URL.
 
 ## Local Setup
 

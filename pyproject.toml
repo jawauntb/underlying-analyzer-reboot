@@ -9,6 +9,7 @@ dependencies = [
   "flask-cors>=5.0,<6",
   "gunicorn>=22.0,<24",
   "matplotlib>=3.9,<4",
+  "mcp>=1.27,<2",
   "numpy>=2.0,<3",
   "pandas>=2.2,<3",
   "reportlab>=4.2,<5",
@@ -27,9 +28,15 @@ dev = [
 deploy = [
   "modal>=1.4,<2",
 ]
+mcp = [
+  "mcp>=1.27,<2",
+]
+
+[project.scripts]
+underlying-mcp = "mcp_server.server:main"
 
 [tool.setuptools]
-packages = ["app"]
+packages = ["app", "mcp_server"]
 
 [tool.ruff]
 line-length = 100
