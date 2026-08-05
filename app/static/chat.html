@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Research Agent | The Underlying</title>
+    <meta
+      name="description"
+      content="Chat with the research agent across every Underlying Analyzer tool: charts, briefs, filings, news, and saveable research articles."
+    />
+    <meta name="theme-color" content="#05070a" />
+    <meta property="og:image" content="/static/assets/bullish.png" />
+    <link rel="icon" href="/static/assets/Terminal.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800;900&family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css?v=chat-1" />
+    <link rel="stylesheet" href="/static/chat.css?v=chat-1" />
+  </head>
+  <body class="chat-body">
+    <div class="chat-app" id="chat-app">
+      <div class="chat-scrim" id="chat-scrim" hidden></div>
+
+      <aside class="chat-sidebar" id="chat-sidebar" aria-label="Conversations and saved briefs">
+        <div class="chat-sidebar-head">
+          <a class="chat-brand" href="/">
+            <img src="/static/assets/Terminal.png" alt="" />
+            <span>
+              <strong>Research Agent</strong>
+              <small>The Underlying</small>
+            </span>
+          </a>
+          <button
+            class="chat-icon-button chat-sidebar-close"
+            id="sidebar-close"
+            type="button"
+            aria-label="Close menu"
+          >
+            &#215;
+          </button>
+        </div>
+
+        <button class="chat-new" id="new-chat" type="button">
+          <span aria-hidden="true">+</span> New chat
+        </button>
+
+        <div class="chat-tabs" role="tablist" aria-label="Sidebar sections">
+          <button class="chat-tab is-active" id="tab-chats" role="tab" type="button" aria-selected="true">
+            Chats
+          </button>
+          <button class="chat-tab" id="tab-briefs" role="tab" type="button" aria-selected="false">
+            Briefs
+          </button>
+        </div>
+
+        <label class="chat-search">
+          <span class="sr-only">Search</span>
+          <input id="sidebar-search" type="search" placeholder="Search" autocomplete="off" />
+        </label>
+
+        <div class="chat-list" id="chat-list" role="tabpanel" aria-labelledby="tab-chats"></div>
+        <div class="chat-list" id="brief-list" role="tabpanel" aria-labelledby="tab-briefs" hidden></div>
+
+        <div class="chat-sidebar-foot">
+          <div id="account-control" class="account-control"></div>
+          <div class="chat-storage-note" id="storage-note">Saving locally on this device</div>
+          <nav class="chat-sidebar-links" aria-label="Other tools">
+            <a href="/">Terminal</a>
+            <a href="/vision">Vision</a>
+            <a href="/docs">Docs</a>
+          </nav>
+        </div>
+      </aside>
+
+      <main class="chat-main">
+        <header class="chat-topbar">
+          <button
+            class="chat-icon-button chat-menu"
+            id="sidebar-open"
+            type="button"
+            aria-label="Open menu"
+            aria-controls="chat-sidebar"
+          >
+            <span aria-hidden="true">&#9776;</span>
+          </button>
+          <div class="chat-topbar-title">
+            <h1 id="chat-title">New chat</h1>
+            <p id="chat-subtitle">Ask about a ticker, a watchlist, or a thesis</p>
+          </div>
+          <button class="chat-tools-button" id="tools-button" type="button" aria-expanded="false">
+            <span class="dot" id="agent-dot"></span>
+            <span id="tools-count">tools</span>
+          </button>
+        </header>
+
+        <div class="chat-tools-panel" id="tools-panel" hidden>
+          <p class="chat-tools-intro">
+            The agent routes across every terminal capability. Everything here is also available
+            over MCP at <code>/api/mcp</code> and as plain HTTP.
+          </p>
+          <div class="chat-tools-grid" id="tools-grid"></div>
+        </div>
+
+        <div class="chat-thread" id="chat-thread" aria-live="polite">
+          <section class="chat-welcome" id="chat-welcome">
+            <div class="chat-welcome-mark" aria-hidden="true">
+              <img src="/static/assets/toro.png" alt="" />
+            </div>
+            <h2>What should we look at?</h2>
+            <p>
+              I can pull charts, rank a watchlist, read filings, search news, and write a saveable
+              research brief with recommendations.
+            </p>
+            <div class="chat-suggestions" id="chat-suggestions"></div>
+          </section>
+        </div>
+
+        <form class="chat-composer" id="chat-composer">
+          <div class="chat-composer-inner">
+            <textarea
+              id="chat-input"
+              rows="1"
+              placeholder="Ask about a ticker, paste a watchlist link, or request a brief"
+              autocomplete="off"
+              enterkeyhint="send"
+            ></textarea>
+            <button class="chat-send" id="chat-send" type="submit" aria-label="Send">
+              <span aria-hidden="true">&#8593;</span>
+            </button>
+            <button class="chat-stop" id="chat-stop" type="button" hidden aria-label="Stop">
+              <span aria-hidden="true">&#9632;</span>
+            </button>
+          </div>
+          <p class="chat-disclaimer">
+            Research tooling over live market data, SEC filings, and news. Not investment advice.
+          </p>
+        </form>
+      </main>
+    </div>
+
+    <div class="chat-viewer" id="chat-viewer" hidden>
+      <button class="chat-viewer-close" id="viewer-close" type="button" aria-label="Close">
+        &#215;
+      </button>
+      <div class="chat-viewer-body" id="viewer-body"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="/static/chat.js?v=chat-1" type="module"></script>
+  </body>
+</html>

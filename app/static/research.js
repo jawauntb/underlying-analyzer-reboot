@@ -1717,7 +1717,7 @@ function closeAccountPanel(account) {
   account.toggle.setAttribute("aria-expanded", "false");
 }
 
-function subscribeAuth(listener) {
+export function subscribeAuth(listener) {
   authListeners.add(listener);
   listener(authState);
   return () => authListeners.delete(listener);
@@ -1727,7 +1727,7 @@ function notifyAuth() {
   authListeners.forEach((listener) => listener(authState));
 }
 
-async function initAuth() {
+export async function initAuth() {
   if (!authPromise) {
     authPromise = setupAuth();
   }

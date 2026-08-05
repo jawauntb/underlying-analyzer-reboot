@@ -296,6 +296,10 @@
             <img src="/static/assets/moneyline.png" alt="" />
             <span>Moneyline</span>
           </a>
+          <a class="tool-link" href="/chat" aria-label="Research Agent">
+            <span class="tool-link-mark" aria-hidden="true">&#9679;</span>
+            <span>Agent</span>
+          </a>
           <a class="tool-link active" href="/docs" aria-label="Docs">
             <span class="tool-link-mark" aria-hidden="true">{ }</span>
             <span>Docs</span>
@@ -309,6 +313,8 @@
           <a href="#overview">Overview</a>
           <a href="#tools">Tools</a>
           <a href="#terminal">Terminal</a>
+          <a href="#agent">Agent</a>
+          <a href="#mcp">MCP</a>
           <a href="#api">API</a>
           <a href="#api-charts">Charts API</a>
           <a href="#api-tools">Tools API</a>
@@ -326,6 +332,8 @@
             </p>
             <div class="docs-hero-actions" aria-label="Docs shortcuts">
               <a class="primary" href="#api">Open API reference</a>
+              <a href="/chat">Open the agent</a>
+              <a href="/api/openapi">OpenAPI JSON</a>
               <a href="/api/docs">API catalog JSON</a>
               <a href="/docs/api.md">Raw API markdown</a>
               <a href="/">Back to Terminal</a>
@@ -626,6 +634,73 @@
   -d '{"ticker":"AAPL"}'</pre>
           </section>
 
+          <section id="agent" class="docs-section">
+            <div class="panel-label">Product</div>
+            <h2>Research agent</h2>
+            <p>
+              <a href="/chat"><code>/chat</code></a> is a conversational front end over every
+              capability listed below. It streams answers, renders the charts it generates inline,
+              and can publish a saveable research brief with explicit recommendations and
+              invalidation conditions.
+            </p>
+            <ul>
+              <li>Conversations and briefs save to your account when signed in, and to this
+                device otherwise.</li>
+              <li><code>POST /api/agent/chat/stream</code> returns NDJSON events:
+                <code>start</code>, <code>text</code>, <code>tool_call</code>,
+                <code>tool_result</code>, <code>article</code>, <code>done</code>.</li>
+              <li><code>POST /api/agent/chat</code> is the same turn, folded into one JSON body.</li>
+              <li><code>GET /api/agent/tools</code> returns the capability catalog the agent
+                routes against.</li>
+            </ul>
+            <pre>curl -N -X POST http://127.0.0.1:5050/api/agent/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"How does NVDA look this week?"}]}'</pre>
+            <p>
+              Set <code>ANTHROPIC_API_KEY</code> to enable the agent. Optionally set
+              <code>ANTHROPIC_AGENT_MODEL</code> to run the conversation on a different model from
+              memo generation.
+            </p>
+          </section>
+
+          <section id="mcp" class="docs-section">
+            <div class="panel-label">Integration</div>
+            <h2>MCP</h2>
+            <p>
+              Every tool is declared once in <code>app/tool_registry.py</code>. The HTTP API, the
+              OpenAPI document, the agent, and both MCP transports are generated from that one
+              declaration, so they cannot drift apart.
+            </p>
+            <h3>Streamable HTTP</h3>
+            <p>
+              Point any MCP client at <code>/api/mcp</code>. No API key, no session handshake.
+            </p>
+            <pre>{
+  "mcpServers": {
+    "underlying": {
+      "url": "https://underlying-terminal-production.up.railway.app/api/mcp"
+    }
+  }
+}</pre>
+            <h3>stdio</h3>
+            <pre>python -m pip install -e ".[mcp]"
+UNDERLYING_BASE_URL=https://underlying-terminal-production.up.railway.app underlying-mcp</pre>
+            <h3>Live tool catalog</h3>
+            <p id="mcp-tools-status">Loading the catalog from <code>/api/agent/tools</code>...</p>
+            <div class="docs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tool</th>
+                    <th>Route</th>
+                    <th>When to use</th>
+                  </tr>
+                </thead>
+                <tbody id="mcp-tools-body"></tbody>
+              </table>
+            </div>
+          </section>
+
           <section id="api-auth" class="docs-section">
             <div class="panel-label">HTTP API</div>
             <h2>Auth</h2>
@@ -679,6 +754,43 @@
         </div>
       </div>
     </main>
+    <script>
+      (function () {
+        var body = document.getElementById("mcp-tools-body");
+        var status = document.getElementById("mcp-tools-status");
+        if (!body) return;
+        function esc(value) {
+          return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+          });
+        }
+        fetch("/api/agent/tools")
+          .then(function (response) {
+            if (!response.ok) throw new Error("catalog unavailable");
+            return response.json();
+          })
+          .then(function (catalog) {
+            body.innerHTML = catalog.tools
+              .map(function (tool) {
+                return (
+                  "<tr><td><code>" + esc(tool.name) + "</code></td><td><code>" +
+                  esc(tool.http.method + " " + tool.http.path) + "</code></td><td>" +
+                  esc(tool.when_to_use) + "</td></tr>"
+                );
+              })
+              .join("");
+            if (status) {
+              status.textContent = catalog.tool_count + " tools, generated from the registry.";
+            }
+          })
+          .catch(function () {
+            if (status) {
+              status.textContent =
+                "Could not load the live catalog. See /api/agent/tools or /api/openapi.";
+            }
+          });
+      })();
+    </script>
     <script>
       (function () {
         var links = Array.prototype.slice.call(document.querySelectorAll(".docs-nav a"));
