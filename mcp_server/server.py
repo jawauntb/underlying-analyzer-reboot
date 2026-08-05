@@ -1,41 +1,54 @@
-"""stdio MCP server for The Underlying Analyzer public HTTP API."""
+"""stdio MCP server for The Underlying Analyzer public HTTP API.
+
+Tools are not hand-written here. They are generated from
+:mod:`app.tool_registry`, the same declaration that drives the HTTP API, the
+``/api/mcp`` streamable endpoint, and the in-product agent. Adding a tool to the
+registry adds it to every surface at once.
+
+This process talks to a deployment over HTTPS, so it works against production
+without running the Flask app locally.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
-from mcp.server.fastmcp import FastMCP
 
-DEFAULT_BASE_URL = "https://underlying-terminal-production.up.railway.app"
-CHART_TYPES = (
-    "auction",
-    "performance",
-    "regression",
-    "ridge-growth",
-    "flow-compass",
-    "torque",
-    "portfolio",
-    "volatility",
+from app.tool_registry import (
+    CHART_TYPES,
+    ToolArgumentError,
+    build_request,
+    get_tool,
+    mcp_tool_definitions,
+    tool_catalog_payload,
 )
 
-mcp = FastMCP(
-    "underlying-analyzer",
-    instructions=(
-        "Public market research tools for The Underlying Analyzer Terminal. "
-        "Call these tools without an API key. Prefer compact JSON responses "
-        "(images stripped by default)."
-    ),
+__all__ = [
+    "CHART_TYPES",
+    "call_tool",
+    "list_tools",
+    "main",
+]
+
+DEFAULT_BASE_URL = "https://underlying-terminal-production.up.railway.app"
+MAX_TEXT_CHARS = 200
+
+INSTRUCTIONS = (
+    "Chart-led market research tools from The Underlying Analyzer Terminal. "
+    "No API key is required. Call list_capabilities first if you are unsure "
+    "which tool fits a question. Rendered chart images are omitted by default; "
+    "pass include_images=true when you actually need the base64 payload."
 )
 
 
 def _base_url() -> str:
     return (
-        os.getenv("UNDERLYING_BASE_URL")
-        or os.getenv("APP_URL")
-        or DEFAULT_BASE_URL
+        os.getenv("UNDERLYING_BASE_URL") or os.getenv("APP_URL") or DEFAULT_BASE_URL
     ).rstrip("/")
 
 
@@ -48,6 +61,7 @@ def _timeout() -> float:
 
 
 def _strip_heavy_fields(value: Any) -> Any:
+    """Replace base64 blobs with a short placeholder so results stay readable."""
     if isinstance(value, list):
         return [_strip_heavy_fields(item) for item in value]
     if not isinstance(value, dict):
@@ -55,249 +69,127 @@ def _strip_heavy_fields(value: Any) -> Any:
 
     cleaned: dict[str, Any] = {}
     for key, item in value.items():
-        if key in {"data", "image"} and isinstance(item, str) and len(item) > 200:
+        is_blob = key in {"data", "image", "b64_json"} and isinstance(item, str)
+        if is_blob and len(item) > MAX_TEXT_CHARS:
             cleaned[key] = f"<omitted base64 ({len(item)} chars)>"
-            continue
-        if key == "images" and isinstance(item, list):
-            cleaned[key] = [
-                {
-                    "filename": img.get("filename"),
-                    "mime": img.get("mime"),
-                    "data": (
-                        f"<omitted base64 ({len(img.get('data', ''))} chars)>"
-                        if isinstance(img, dict) and isinstance(img.get("data"), str)
-                        else None
-                    ),
-                }
-                if isinstance(img, dict)
-                else img
-                for img in item
-            ]
             continue
         cleaned[key] = _strip_heavy_fields(item)
     return cleaned
 
 
-def _request(
-    method: str,
-    path: str,
-    *,
-    json_body: dict[str, Any] | None = None,
-    include_images: bool = False,
-) -> dict[str, Any]:
-    url = f"{_base_url()}{path}"
-    response = requests.request(
-        method,
-        url,
-        json=json_body,
-        timeout=_timeout(),
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
-    )
+def list_tools() -> list[dict[str, Any]]:
+    """Tool descriptors, with the transport-level include_images switch added."""
+    tools = mcp_tool_definitions()
+    for tool in tools:
+        schema = json.loads(json.dumps(tool["inputSchema"]))
+        properties = schema.setdefault("properties", {})
+        properties["include_images"] = {
+            "type": "boolean",
+            "default": False,
+            "description": "Return base64 image payloads instead of placeholders",
+        }
+        tool["inputSchema"] = schema
+    return tools
+
+
+def call_tool(name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run one registry tool against the configured deployment."""
+    args = dict(arguments or {})
+    include_images = bool(args.pop("include_images", False))
+
+    try:
+        spec = get_tool(name)
+        method, path, body, query = build_request(spec, args)
+    except ToolArgumentError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    url = f"{_base_url()}{path}" + (f"?{urlencode(query)}" if query else "")
+    try:
+        response = requests.request(
+            method,
+            url,
+            json=body if method != "GET" else None,
+            timeout=_timeout(),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+    except requests.RequestException as exc:
+        return {"ok": False, "error": f"{spec.title} request failed: {exc}", "url": url}
+
     try:
         payload: Any = response.json()
     except ValueError:
         payload = {"raw": response.text[:4000]}
-
     if not isinstance(payload, dict):
         payload = {"data": payload}
 
-    result = {
+    return {
         "ok": response.ok,
         "status_code": response.status_code,
         "url": url,
         "body": payload if include_images else _strip_heavy_fields(payload),
     }
-    return result
 
 
-def _ticker_payload(
-    ticker: str | None = None,
-    tickers: str | None = None,
-    watchlist_url: str | None = None,
-    max_results: int = 10,
-    **extra: Any,
-) -> dict[str, Any]:
-    body: dict[str, Any] = {"max_results": max_results, **extra}
-    if watchlist_url:
-        body["watchlist_url"] = watchlist_url
-    elif tickers:
-        body["tickers"] = tickers
-    elif ticker:
-        body["ticker"] = ticker
-    else:
-        raise ValueError("Provide ticker, tickers, or watchlist_url")
-    return body
+async def _serve() -> None:
+    import mcp.types as types
+    from mcp.server.lowlevel import NotificationOptions, Server
+    from mcp.server.models import InitializationOptions
+    from mcp.server.stdio import stdio_server
 
+    server: Server[Any, Any] = Server("underlying-analyzer", instructions=INSTRUCTIONS)
 
-@mcp.tool()
-def health() -> dict[str, Any]:
-    """Check Underlying Analyzer API health."""
-    return _request("GET", "/api/health")
+    @server.list_tools()
+    async def handle_list_tools() -> list[types.Tool]:
+        return [
+            types.Tool(
+                name=tool["name"],
+                title=tool.get("title"),
+                description=tool["description"],
+                inputSchema=tool["inputSchema"],
+            )
+            for tool in list_tools()
+        ]
 
+    @server.call_tool()
+    async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+        result = await asyncio.to_thread(call_tool, name, arguments)
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
-@mcp.tool()
-def api_docs() -> dict[str, Any]:
-    """Fetch the public machine-readable API catalog from /api/docs."""
-    return _request("GET", "/api/docs")
+    @server.list_resources()
+    async def handle_list_resources() -> list[types.Resource]:
+        return [
+            types.Resource(
+                uri=types.AnyUrl("underlying://catalog/tools"),
+                name="Tool catalog",
+                description="Every tool with arguments, routing guidance, and cost.",
+                mimeType="application/json",
+            )
+        ]
 
+    @server.read_resource()
+    async def handle_read_resource(uri: types.AnyUrl) -> str:
+        if str(uri) != "underlying://catalog/tools":
+            raise ValueError(f"Unknown resource '{uri}'")
+        return json.dumps(tool_catalog_payload(), indent=2)
 
-@mcp.tool()
-def analyze_ticker(ticker: str) -> dict[str, Any]:
-    """Run a single-ticker analysis brief."""
-    return _request("GET", f"/api/analysis/{ticker.strip().upper()}")
-
-
-@mcp.tool()
-def analyze_batch(
-    tickers: str | None = None,
-    watchlist_url: str | None = None,
-    max_results: int = 10,
-) -> dict[str, Any]:
-    """Batch analysis for tickers or a TradingView watchlist URL."""
-    body = _ticker_payload(
-        tickers=tickers, watchlist_url=watchlist_url, max_results=max_results
-    )
-    return _request("POST", "/api/analysis", json_body=body)
-
-
-@mcp.tool()
-def render_chart(
-    chart_type: str,
-    ticker: str | None = None,
-    tickers: str | None = None,
-    watchlist_url: str | None = None,
-    period: str = "1y",
-    max_results: int = 10,
-    include_images: bool = False,
-) -> dict[str, Any]:
-    """Render a chart pack.
-
-    chart_type: auction, performance, regression, ridge-growth, flow-compass,
-    torque, portfolio, or volatility.
-    """
-    normalized = chart_type.strip().lower().replace("_", "-")
-    if normalized not in CHART_TYPES:
-        return {
-            "ok": False,
-            "error": f"Unsupported chart_type '{chart_type}'. Use one of: {', '.join(CHART_TYPES)}",
-        }
-    body = _ticker_payload(
-        ticker=ticker,
-        tickers=tickers,
-        watchlist_url=watchlist_url,
-        max_results=max_results,
-        period=period,
-    )
-    return _request(
-        "POST",
-        f"/api/charts/{normalized}",
-        json_body=body,
-        include_images=include_images,
-    )
-
-
-@mcp.tool()
-def stock_fax(ticker: str) -> dict[str, Any]:
-    """Generate a Stock Fax narrative pack for a ticker."""
-    return _request("POST", "/api/tools/fax", json_body={"ticker": ticker})
-
-
-@mcp.tool()
-def vision_memo(ticker: str, version: str = "v2") -> dict[str, Any]:
-    """Generate a Vision market memo. version: v2 (default) or classic."""
-    path = "/api/tools/vision/v2" if version.strip().lower() != "classic" else "/api/tools/vision"
-    return _request("POST", path, json_body={"ticker": ticker})
-
-
-@mcp.tool()
-def torque(ticker: str, include_images: bool = False) -> dict[str, Any]:
-    """Compute torque score and chart for a ticker."""
-    return _request(
-        "POST",
-        "/api/tools/torque",
-        json_body={"ticker": ticker},
-        include_images=include_images,
-    )
-
-
-@mcp.tool()
-def torque_scan(
-    tickers: str | None = None,
-    watchlist_url: str | None = None,
-    max_results: int = 10,
-) -> dict[str, Any]:
-    """Batch torque scan over tickers or a watchlist."""
-    body = _ticker_payload(
-        tickers=tickers, watchlist_url=watchlist_url, max_results=max_results
-    )
-    return _request("POST", "/api/tools/torque/scan", json_body=body)
-
-
-@mcp.tool()
-def moneyline(
-    ticker: str, expiry: str | None = None, include_images: bool = False
-) -> dict[str, Any]:
-    """Render options moneyline / moneywall chart."""
-    body: dict[str, Any] = {"ticker": ticker}
-    if expiry:
-        body["expiry"] = expiry
-    return _request(
-        "POST",
-        "/api/tools/moneyline",
-        json_body=body,
-        include_images=include_images,
-    )
-
-
-@mcp.tool()
-def watchlist_cockpit(
-    tickers: str | None = None,
-    watchlist_url: str | None = None,
-    max_results: int = 10,
-) -> dict[str, Any]:
-    """Rank tickers in a cockpit table (lane, ridge, flow, auction)."""
-    body = _ticker_payload(
-        tickers=tickers, watchlist_url=watchlist_url, max_results=max_results
-    )
-    return _request("POST", "/api/watchlists/cockpit", json_body=body)
-
-
-@mcp.tool()
-def resolve_watchlist(watchlist_url: str, max_results: int = 10) -> dict[str, Any]:
-    """Resolve a public TradingView watchlist URL to tickers."""
-    return _request(
-        "POST",
-        "/api/watchlists/resolve",
-        json_body={"watchlist_url": watchlist_url, "max_results": max_results},
-    )
-
-
-@mcp.tool()
-def sec_source_pack(ticker: str) -> dict[str, Any]:
-    """Fetch SEC EDGAR source pack for a ticker."""
-    return _request("GET", f"/api/sec/{ticker.strip().upper()}")
-
-
-@mcp.tool()
-def pixel_image(prompt: str, include_images: bool = False) -> dict[str, Any]:
-    """Generate a Pixel image from a text prompt."""
-    return _request(
-        "POST",
-        "/api/tools/pixel",
-        json_body={"prompt": prompt},
-        include_images=include_images,
-    )
-
-
-@mcp.resource("underlying://docs/api")
-def api_docs_resource() -> str:
-    """Raw public API catalog JSON."""
-    result = _request("GET", "/api/docs")
-    return json.dumps(result.get("body", result), indent=2)
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name="underlying-analyzer",
+                server_version="1.0.0",
+                capabilities=server.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+                instructions=INSTRUCTIONS,
+            ),
+        )
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    asyncio.run(_serve())
 
 
 if __name__ == "__main__":

@@ -48,6 +48,25 @@ class StreamingTextGenerator(TextGenerator, Protocol):
         ...
 
 
+class MessageStreamer(Protocol):
+    """A client that can stream a full Messages turn, tool blocks included."""
+
+    model: str
+
+    def stream_messages(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+        model: str | None = None,
+        timeout: int = 600,
+    ) -> Iterator[dict[str, Any]]:
+        ...
+
+
 class AnthropicTextClient:
     def __init__(
         self,
@@ -140,6 +159,68 @@ class AnthropicTextClient:
         finally:
             response.close()
 
+    def stream_messages(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+        model: str | None = None,
+        timeout: int = 600,
+    ) -> Iterator[dict[str, Any]]:
+        """Stream a full Messages turn, including tool-use blocks.
+
+        Yields normalized events so callers never parse raw SSE:
+
+        ``{"type": "text", "text": str}``
+            An incremental slice of assistant prose.
+        ``{"type": "tool_use", "id": str, "name": str, "input": dict}``
+            A completed tool call, emitted once its JSON arguments finish.
+        ``{"type": "stop", "stop_reason": str}``
+            The turn ended; ``tool_use`` means the caller must run the tools
+            and continue the conversation.
+        """
+        if not self.api_key:
+            raise AnthropicError("ANTHROPIC_API_KEY is not configured for the agent")
+
+        target_model = model or self.model
+        payload: dict[str, Any] = {
+            "model": target_model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+        if supports_temperature(target_model):
+            payload["temperature"] = temperature
+
+        response = self.session.post(
+            ANTHROPIC_MESSAGES_URL,
+            headers=self.headers(),
+            json=payload,
+            stream=True,
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            raise AnthropicError(anthropic_error_text(response))
+
+        blocks: dict[int, dict[str, Any]] = {}
+        try:
+            for raw_line in response.iter_lines(decode_unicode=True):
+                line = stream_line(raw_line)
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if not data or data == "[DONE]":
+                    continue
+                yield from _messages_stream_events(data, blocks)
+        finally:
+            response.close()
+
     def headers(self) -> dict[str, str]:
         return {
             "x-api-key": self.api_key or "",
@@ -215,6 +296,82 @@ def stream_event_text(data: str) -> str:
 
     text = delta.get("text")
     return text if isinstance(text, str) else ""
+
+
+def _messages_stream_events(
+    data: str, blocks: dict[int, dict[str, Any]]
+) -> Iterator[dict[str, Any]]:
+    """Translate one raw SSE payload into normalized agent stream events."""
+    try:
+        event = json.loads(data)
+    except json.JSONDecodeError:
+        return
+
+    if not isinstance(event, dict):
+        return
+
+    kind = event.get("type")
+
+    if kind == "error":
+        error = event.get("error")
+        message = (
+            str(error["message"])
+            if isinstance(error, dict) and error.get("message")
+            else "Anthropic streaming request failed"
+        )
+        raise AnthropicError(friendly_anthropic_error(message))
+
+    if kind == "content_block_start":
+        index = int(event.get("index", 0))
+        block = event.get("content_block")
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            blocks[index] = {
+                "id": str(block.get("id") or ""),
+                "name": str(block.get("name") or ""),
+                "json": "",
+            }
+        return
+
+    if kind == "content_block_delta":
+        delta = event.get("delta")
+        if not isinstance(delta, dict):
+            return
+        if delta.get("type") == "text_delta":
+            text = delta.get("text")
+            if isinstance(text, str) and text:
+                yield {"type": "text", "text": text}
+            return
+        if delta.get("type") == "input_json_delta":
+            index = int(event.get("index", 0))
+            block = blocks.get(index)
+            if block is not None:
+                block["json"] += str(delta.get("partial_json") or "")
+        return
+
+    if kind == "content_block_stop":
+        index = int(event.get("index", 0))
+        block = blocks.pop(index, None)
+        if block is None:
+            return
+        raw = block["json"].strip()
+        try:
+            parsed = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        yield {
+            "type": "tool_use",
+            "id": block["id"],
+            "name": block["name"],
+            "input": parsed if isinstance(parsed, dict) else {},
+        }
+        return
+
+    if kind == "message_delta":
+        delta = event.get("delta")
+        stop_reason = delta.get("stop_reason") if isinstance(delta, dict) else None
+        if stop_reason:
+            yield {"type": "stop", "stop_reason": str(stop_reason)}
+        return
 
 
 def supports_temperature(model: str) -> bool:

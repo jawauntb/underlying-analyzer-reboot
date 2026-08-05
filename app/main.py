@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,26 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app.agent import (
+    AgentError,
+    normalize_history,
+    run_agent_stream,
+    select_tools,
+)
 from app.api_catalog import build_api_docs_payload
+from app.articles import (
+    ArticleError,
+    article_markdown,
+    article_summary,
+    normalize_article,
+)
+from app.mcp_http import (
+    handle_mcp_payload,
+    parse_error_response,
+    server_descriptor,
+)
+from app.openapi import build_openapi_document
+from app.tool_registry import tool_catalog_payload
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -41,7 +60,12 @@ from app.alerts import (
     build_alert_digest,
 )
 from app.analysis import build_scanner_rows, summarize_stock
-from app.anthropic import DEFAULT_ANTHROPIC_MODEL, AnthropicError
+from app.anthropic import (
+    DEFAULT_ANTHROPIC_MODEL,
+    AnthropicError,
+    AnthropicTextClient,
+    MessageStreamer,
+)
 from app.charts import (
     RenderedImage,
     build_ridge_growth_memo,
@@ -121,6 +145,8 @@ def create_app() -> Flask:
     app.config["ANTHROPIC_TEXT_MODEL"] = os.getenv(
         "ANTHROPIC_TEXT_MODEL", DEFAULT_ANTHROPIC_MODEL
     )
+    app.config["ANTHROPIC_AGENT_MODEL"] = os.getenv("ANTHROPIC_AGENT_MODEL")
+    app.config["AGENT_CLIENT"] = None
     app.config["SUPABASE_URL"] = public_env("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
     app.config["SUPABASE_ANON_KEY"] = public_env(
         "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"
@@ -140,6 +166,10 @@ def create_app() -> Flask:
     @app.get("/moneyline")
     def legacy_tool() -> Response:
         return send_from_directory(STATIC_DIR, "legacy-tool.html")
+
+    @app.get("/chat")
+    def chat_console() -> Response:
+        return send_from_directory(STATIC_DIR, "chat.html")
 
     @app.get("/design")
     def design_sandbox() -> Response:
@@ -616,6 +646,88 @@ def create_app() -> Flask:
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.post("/api/news")
+    def news_search() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify(build_news_response(get_exa_client(), payload))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.get("/api/openapi")
+    def openapi_document() -> Any:
+        base_url = request.url_root.rstrip("/") if request.url_root else None
+        return jsonify(build_openapi_document(base_url=base_url))
+
+    @app.get("/api/mcp")
+    def mcp_descriptor() -> Any:
+        base_url = request.url_root.rstrip("/") if request.url_root else None
+        return jsonify(server_descriptor(base_url=base_url))
+
+    @app.post("/api/mcp")
+    def mcp_endpoint() -> Any:
+        payload = request.get_json(silent=True)
+        if payload is None:
+            return jsonify(parse_error_response()), 400
+
+        result = handle_mcp_payload(payload)
+        if result is None:
+            return Response(status=202)
+
+        if "text/event-stream" in (request.headers.get("Accept") or ""):
+            body = f"event: message\ndata: {json.dumps(result)}\n\n"
+            response = Response(body, mimetype="text/event-stream")
+            response.headers["Cache-Control"] = "no-cache, no-transform"
+            response.headers["X-Accel-Buffering"] = "no"
+            return response
+        return jsonify(result)
+
+    @app.get("/api/agent/tools")
+    def agent_tool_catalog() -> Any:
+        catalog = tool_catalog_payload()
+        catalog["agent_ready"] = bool(
+            current_app.config.get("ANTHROPIC_API_KEY")
+            or current_app.config.get("AGENT_CLIENT")
+        )
+        catalog["model"] = current_app.config.get("ANTHROPIC_AGENT_MODEL")
+        return jsonify(catalog)
+
+    @app.post("/api/agent/article")
+    def agent_article() -> Any:
+        payload = request.get_json(silent=True) or {}
+        try:
+            article = normalize_article(payload)
+        except ArticleError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(
+            {
+                "article": article,
+                "markdown": article_markdown(article),
+                "summary": article_summary(article),
+            }
+        )
+
+    @app.post("/api/agent/chat/stream")
+    def agent_chat_stream() -> Any:
+        try:
+            options = agent_run_options(request.get_json(silent=True) or {})
+        except (AgentError, AnthropicError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        def events() -> Iterator[str]:
+            for event in run_agent_stream(**options):
+                yield ndjson(event)
+
+        return _ndjson_streaming_response(events())
+
+    @app.post("/api/agent/chat")
+    def agent_chat() -> Any:
+        try:
+            options = agent_run_options(request.get_json(silent=True) or {})
+        except (AgentError, AnthropicError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(collect_agent_turn(run_agent_stream(**options)))
+
     register_compat_routes(app)
     return app
 
@@ -731,6 +843,165 @@ def public_env(*names: str) -> str | None:
         if value:
             return value
     return None
+
+
+def get_agent_client() -> MessageStreamer:
+    """Streaming Messages client for the research agent.
+
+    Tests inject ``AGENT_CLIENT``; production builds one from the configured
+    Anthropic key, preferring ``ANTHROPIC_AGENT_MODEL`` when it is set so the
+    conversational agent can run a different model from memo generation.
+    """
+    configured = current_app.config.get("AGENT_CLIENT")
+    if configured is not None:
+        return configured
+
+    api_key = current_app.config.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise AnthropicError(
+            "ANTHROPIC_API_KEY is not configured, so the research agent is offline."
+        )
+    return AnthropicTextClient(
+        api_key=str(api_key),
+        model=str(
+            current_app.config.get("ANTHROPIC_AGENT_MODEL")
+            or current_app.config.get("ANTHROPIC_TEXT_MODEL")
+            or DEFAULT_ANTHROPIC_MODEL
+        ),
+    )
+
+
+def agent_run_options(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a chat request body into ``run_agent_stream`` keyword arguments."""
+    client = get_agent_client()
+    messages = normalize_history(payload.get("messages"))
+    context = payload.get("context")
+    return {
+        "client": client,
+        "messages": messages,
+        "model": getattr(client, "model", None),
+        "tool_specs": select_tools(payload.get("tools")),
+        "system_extra": context if isinstance(context, str) else None,
+    }
+
+
+def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
+    """Fold the agent event stream into one non-streaming response body."""
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
+    articles: list[dict[str, Any]] = []
+    tool_trace: list[str] = []
+    error: str | None = None
+    stop_reason = "end_turn"
+
+    for event in events:
+        kind = event.get("type")
+        if kind == "text":
+            text_parts.append(str(event.get("text") or ""))
+        elif kind == "tool_result":
+            tool_calls.append(
+                {
+                    "name": event.get("name"),
+                    "ok": event.get("ok"),
+                    "duration_ms": event.get("duration_ms"),
+                    "error": event.get("error"),
+                }
+            )
+            for artifact in event.get("artifacts") or []:
+                artifacts.append(artifact)
+        elif kind == "article":
+            articles.append(event.get("article") or {})
+        elif kind == "error":
+            error = str(event.get("message") or "Agent run failed")
+        elif kind == "done":
+            stop_reason = str(event.get("stop_reason") or "end_turn")
+            trace = event.get("tool_trace")
+            if isinstance(trace, list):
+                tool_trace = [str(item) for item in trace]
+            if not text_parts and event.get("text"):
+                text_parts.append(str(event["text"]))
+
+    if error:
+        return {"error": error}
+    return {
+        "ok": True,
+        "stop_reason": stop_reason,
+        "text": "".join(text_parts).strip(),
+        "tool_calls": tool_calls,
+        "tool_trace": tool_trace,
+        "artifacts": artifacts,
+        "articles": articles,
+    }
+
+
+def build_news_response(
+    exa_client: ExaClient, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Recent news for a ticker and/or free-text topic."""
+    ticker = str(payload.get("ticker") or "").strip().upper()
+    query = str(payload.get("query") or "").strip()
+    if not query and not ticker:
+        raise ValueError("Provide a query, a ticker, or both")
+
+    days_back = _bounded_int(payload.get("days_back"), default=14, low=1, high=90)
+    num_results = _bounded_int(payload.get("num_results"), default=6, low=1, high=12)
+
+    search_terms = " ".join(part for part in [ticker, query] if part).strip()
+    if not getattr(exa_client, "api_key", None):
+        return {
+            "ok": False,
+            "status": "not configured",
+            "provider": "Exa",
+            "query": search_terms,
+            "results": [],
+            "error": "EXA_API_KEY is not configured, so news search is unavailable.",
+        }
+
+    start = (datetime.now(UTC) - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    try:
+        results = exa_client.search(
+            search_terms,
+            num_results=num_results,
+            start_published_date=start,
+            category="news",
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "error",
+            "provider": "Exa",
+            "query": search_terms,
+            "results": [],
+            "error": f"News search failed: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "provider": "Exa",
+        "query": search_terms,
+        "ticker": ticker or None,
+        "days_back": days_back,
+        "results": [
+            {
+                "title": result.title,
+                "url": result.url,
+                "published_date": result.published_date,
+                "snippet": result.snippet,
+                "author": result.author,
+            }
+            for result in results
+        ],
+    }
+
+
+def _bounded_int(value: Any, *, default: int, low: int, high: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, parsed))
 
 
 def text_generation_options() -> dict[str, Any]:

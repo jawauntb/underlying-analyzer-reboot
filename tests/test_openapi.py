@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from app.main import create_app
+from app.openapi import build_openapi_document
+from app.tool_registry import TOOLS
+
+
+def test_document_covers_every_tool() -> None:
+    document = build_openapi_document()
+    operations = {
+        operation["operationId"]
+        for path in document["paths"].values()
+        for operation in path.values()
+    }
+    assert {spec.name for spec in TOOLS} <= operations
+
+
+def test_path_parameters_are_declared() -> None:
+    operation = build_openapi_document()["paths"]["/api/analysis/{ticker}"]["get"]
+    names = {parameter["name"] for parameter in operation["parameters"]}
+    assert "ticker" in names
+    assert all(parameter["in"] == "path" for parameter in operation["parameters"])
+
+
+def test_post_tools_declare_a_request_body() -> None:
+    operation = build_openapi_document()["paths"]["/api/charts/{chart_type}"]["post"]
+    schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert "ticker" in schema["properties"]
+    assert "chart_type" not in schema["properties"]
+
+
+def test_supporting_routes_are_documented() -> None:
+    paths = build_openapi_document()["paths"]
+    assert "post" in paths["/api/mcp"]
+    assert "post" in paths["/api/agent/chat/stream"]
+    assert "get" in paths["/api/config"]
+
+
+def test_served_document_includes_this_deployment() -> None:
+    payload = create_app().test_client().get("/api/openapi").get_json()
+    assert payload["openapi"] == "3.1.0"
+    assert payload["servers"][0]["url"].startswith("http")
+    assert payload["x-mcp"]["endpoint"] == "/api/mcp"
+
+
+def test_docs_catalog_advertises_the_new_surfaces() -> None:
+    payload = create_app().test_client().get("/api/docs").get_json()
+    assert payload["mcp"]["endpoint"] == "/api/mcp"
+    assert payload["docs"]["openapi"] == "/api/openapi"
+    assert payload["agent"]["chat"] == "/chat"
+    assert len(payload["tools"]) == len(TOOLS)
+    assert any(tool["id"] == "chat" for tool in payload["site_tools"])

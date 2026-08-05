@@ -1,32 +1,52 @@
 # Underlying Analyzer MCP
 
-stdio MCP server that calls the public Terminal HTTP API. No API key required.
+Two transports, one tool set. Every tool is generated from
+[`app/tool_registry.py`](../app/tool_registry.py), the same declaration that
+drives the HTTP API, the OpenAPI document, and the in-product agent at `/chat`.
 
-Default base URL:
+No API key is required for either transport.
 
-`https://underlying-terminal-production.up.railway.app`
+## Streamable HTTP (recommended)
 
-Override with `UNDERLYING_BASE_URL` or `APP_URL`.
+`POST /api/mcp` speaks JSON-RPC 2.0. It is stateless — no session id, no
+handshake beyond `initialize`. `GET /api/mcp` returns a descriptor of the server.
 
-## Install
+```json
+{
+  "mcpServers": {
+    "underlying": {
+      "url": "https://underlying-terminal-production.up.railway.app/api/mcp"
+    }
+  }
+}
+```
 
-From this repo:
+Try it directly:
+
+```bash
+curl -s -X POST https://underlying-terminal-production.up.railway.app/api/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+```
+
+Supported methods: `initialize`, `ping`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`, `prompts/list`. Protocol versions
+`2025-06-18`, `2025-03-26`, and `2024-11-05` are accepted.
+
+Resources: `underlying://catalog/tools` and `underlying://catalog/openapi`.
+
+## stdio
+
+For clients that only speak stdio, or when you want the tools pointed at a local
+Flask process.
 
 ```bash
 python -m pip install -e ".[mcp]"
-```
-
-Or rely on the main package deps (includes `mcp`).
-
-## Run
-
-```bash
 UNDERLYING_BASE_URL=https://underlying-terminal-production.up.railway.app underlying-mcp
 ```
 
-## Cursor config
-
-Add to Cursor MCP settings (`~/.cursor/mcp.json` or project `.cursor/mcp.json`):
+Default base URL is the Railway production deployment; override with
+`UNDERLYING_BASE_URL` or `APP_URL`.
 
 ```json
 {
@@ -41,7 +61,7 @@ Add to Cursor MCP settings (`~/.cursor/mcp.json` or project `.cursor/mcp.json`):
 }
 ```
 
-If the script is not on PATH, point command at the venv python module:
+If the script is not on PATH:
 
 ```json
 {
@@ -60,27 +80,41 @@ If the script is not on PATH, point command at the venv python module:
 
 ## Tools
 
-| Tool | Maps to |
-| --- | --- |
-| `health` | `GET /api/health` |
-| `api_docs` | `GET /api/docs` |
-| `analyze_ticker` | `GET /api/analysis/<ticker>` |
-| `analyze_batch` | `POST /api/analysis` |
-| `render_chart` | `POST /api/charts/<type>` |
-| `stock_fax` | `POST /api/tools/fax` |
-| `vision_memo` | `POST /api/tools/vision[/v2]` |
-| `torque` | `POST /api/tools/torque` |
-| `torque_scan` | `POST /api/tools/torque/scan` |
-| `moneyline` | `POST /api/tools/moneyline` |
-| `watchlist_cockpit` | `POST /api/watchlists/cockpit` |
-| `resolve_watchlist` | `POST /api/watchlists/resolve` |
-| `sec_source_pack` | `GET /api/sec/<ticker>` |
-| `pixel_image` | `POST /api/tools/pixel` |
+The catalog is generated, so the authoritative list is always live:
 
-Image base64 payloads are omitted by default. Pass `include_images=true` on chart/image tools when you need them.
+- `GET /api/agent/tools` — full catalog with schemas, cost hints, and routing guidance
+- `GET /api/openapi` — the same surface as OpenAPI 3.1
+- `/docs#mcp` — rendered in the browser
+
+| Group | Tools |
+| --- | --- |
+| meta | `list_capabilities`, `health_check`, `provider_status` |
+| research | `analyze_ticker`, `analyze_batch`, `stock_fax`, `vision_memo`, `sec_source_pack`, `search_news` |
+| charts | `render_chart` |
+| signals | `torque_score`, `torque_scan`, `moneyline` |
+| watchlists | `resolve_watchlist`, `watchlist_cockpit`, `watchlist_alerts` |
+| studio | `compose_research_article`, `pixel_image` |
+
+Start with `list_capabilities` if you are unsure which tool fits a question — it
+returns when-to-use guidance and a cost hint (`fast`, `slow`, `llm`) for each.
+
+## Images
+
+Chart tools render real PNGs. Both transports omit the base64 payload by default
+and hand back a short reference instead, so a tool result stays small. Pass
+`include_images: true` when you actually need the bytes:
+
+- **stdio** — adds the base64 back into `body`
+- **streamable HTTP** — appends MCP `image` content blocks to the result
+
+## Safety
+
+Read-only research tooling. There is no broker integration and no order
+execution path anywhere in the registry.
 
 ## HTTP docs
 
-- Site: `/docs` and `/docs#api`
+- Site: `/docs`, `/docs#mcp`, `/docs#api`
 - Markdown: `/docs/api.md`
 - Catalog JSON: `/api/docs`
+- OpenAPI: `/api/openapi`

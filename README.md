@@ -9,6 +9,8 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
 - SEC EDGAR source packs for filings, XBRL company facts, and Vision memo citations
 - Supabase-backed saved research, watchlists, daily alert rules, and alert-run inbox
+- A research agent at `/chat` with streaming answers, inline charts, and saveable briefs
+- One tool registry driving the HTTP API, OpenAPI 3.1, both MCP transports, and the agent
 - JSON exports for generated ticker/watchlist data
 
 ## Data Provider Notes
@@ -35,15 +37,47 @@ watchlist and repeated Vision runs do not refetch the same filing payloads.
 If SEC blocks the runtime, the app falls back to Yahoo-hosted SEC filing copies for 10-K/10-Q/8-K
 sections; XBRL company facts are only available from the direct SEC API path.
 
+## Research Agent
+
+`/chat` is a conversational console over every capability in the terminal. It streams
+answers, renders the charts it generates inline, remembers past conversations, and can
+publish a saveable research brief with explicit recommendations and invalidation
+conditions.
+
+Every capability is declared once in [`app/tool_registry.py`](app/tool_registry.py).
+Five surfaces are generated from that single declaration, so they cannot drift apart:
+
+| Surface | Endpoint |
+| --- | --- |
+| Machine-readable catalog | `GET /api/docs` |
+| OpenAPI 3.1 | `GET /api/openapi` |
+| MCP over streamable HTTP | `POST /api/mcp` |
+| MCP over stdio | `underlying-mcp` |
+| The agent | `/chat`, `POST /api/agent/chat/stream` |
+
+Tools execute in-process against the app's own public HTTP routes, so there is exactly one
+implementation of each capability and no network hop between the agent and the API.
+Rendered charts are lifted out of tool results as artifacts: the model reads a cheap
+reference, the browser receives the image and renders it inline.
+
+Set `ANTHROPIC_API_KEY` to enable the agent, and optionally `ANTHROPIC_AGENT_MODEL` to run
+the conversation on a different model from memo generation. Conversations and briefs save
+to Supabase when signed in and to local storage otherwise.
+
+See [docs/agent.md](docs/agent.md) for the streaming protocol.
+
 ## Docs
 
-On-site docs: `/docs` (API section at `/docs#api`).
+On-site docs: `/docs` (API section at `/docs#api`, MCP at `/docs#mcp`).
 
-Machine-readable catalog: `GET /api/docs` (lists every public endpoint + site tool).
+Machine-readable catalog: `GET /api/docs` (lists every public endpoint, tool, and site tool).
+
+OpenAPI 3.1: `GET /api/openapi`.
 
 Raw markdown API reference: `/docs/api.md` and [docs/api.md](docs/api.md).
 
-MCP server (stdio, no API key): [docs/mcp.md](docs/mcp.md). Default target is the Railway production URL.
+MCP (no API key): [docs/mcp.md](docs/mcp.md). Streamable HTTP at `/api/mcp`, or stdio via
+`underlying-mcp` pointed at the Railway production URL by default.
 
 ## Local Setup
 
@@ -63,6 +97,7 @@ used only for Pixel image generation.
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_TEXT_MODEL=claude-opus-4-8
+ANTHROPIC_AGENT_MODEL=
 OPENAI_API_KEY=sk-proj-...
 OPENAI_IMAGE_MODEL=gpt-image-2
 SEC_USER_AGENT="The Underlying Analyzer Reboot contact:jawauntb@users.noreply.github.com"

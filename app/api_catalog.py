@@ -1,8 +1,16 @@
-"""Public machine-readable catalog of HTTP API routes and tools."""
+"""Public machine-readable catalog of HTTP API routes and tools.
+
+The route list below documents the whole HTTP surface. The agent/MCP tool
+surface is derived from :mod:`app.tool_registry` so the catalog can never
+disagree with what the tools actually do.
+"""
 
 from __future__ import annotations
 
 from typing import Any
+
+from app.mcp_http import PROTOCOL_VERSION, SERVER_VERSION
+from app.tool_registry import TOOLS, tool_catalog_payload
 
 PUBLIC_BASE_NOTE = (
     "All listed endpoints are publicly callable without an API key. "
@@ -37,6 +45,78 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "group": "meta",
         "summary": "Market data provider notes",
         "auth": "none",
+    },
+    {
+        "method": "GET",
+        "path": "/api/openapi",
+        "group": "meta",
+        "summary": "OpenAPI 3.1 document for the whole HTTP surface",
+        "auth": "none",
+    },
+    {
+        "method": "GET",
+        "path": "/api/mcp",
+        "group": "mcp",
+        "summary": "MCP server descriptor",
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/api/mcp",
+        "group": "mcp",
+        "summary": "MCP streamable HTTP endpoint (JSON-RPC 2.0)",
+        "auth": "none",
+    },
+    {
+        "method": "GET",
+        "path": "/api/agent/tools",
+        "group": "agent",
+        "summary": "Capability catalog the agent routes against",
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/api/agent/chat",
+        "group": "agent",
+        "summary": "Run one agent turn and return the final message",
+        "auth": "none",
+        "body": {
+            "messages": "[{role, content}]",
+            "tools": "string[]?",
+            "context": "string?",
+        },
+    },
+    {
+        "method": "POST",
+        "path": "/api/agent/chat/stream",
+        "group": "agent",
+        "summary": "Run one agent turn as an NDJSON event stream",
+        "auth": "none",
+        "body": {
+            "messages": "[{role, content}]",
+            "tools": "string[]?",
+            "context": "string?",
+        },
+    },
+    {
+        "method": "POST",
+        "path": "/api/agent/article",
+        "group": "agent",
+        "summary": "Normalize and render a research article artifact",
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/api/news",
+        "group": "research",
+        "summary": "Recent news and web results for a ticker or topic",
+        "auth": "none",
+        "body": {
+            "query": "string",
+            "ticker": "string?",
+            "days_back": "int (default 14)",
+            "num_results": "int (default 6)",
+        },
     },
     {
         "method": "GET",
@@ -233,6 +313,11 @@ API_ENDPOINTS: list[dict[str, Any]] = [
 
 SITE_TOOLS: list[dict[str, str]] = [
     {"id": "terminal", "path": "/", "summary": "Chart modes, cockpit, briefs, alerts"},
+    {
+        "id": "chat",
+        "path": "/chat",
+        "summary": "Agent chat over every tool, with saved briefs and history",
+    },
     {"id": "vision", "path": "/vision", "summary": "Market memo with SEC citations"},
     {"id": "pixel", "path": "/pixel", "summary": "Prompt to image"},
     {"id": "fax", "path": "/fax", "summary": "Stock Fax narrative pack"},
@@ -243,9 +328,11 @@ SITE_TOOLS: list[dict[str, str]] = [
 
 
 def build_api_docs_payload(*, base_url: str | None = None) -> dict[str, Any]:
+    catalog = tool_catalog_payload()
     return {
         "ok": True,
         "service": "underlying-analyzer-reboot",
+        "version": SERVER_VERSION,
         "public": True,
         "note": PUBLIC_BASE_NOTE,
         "base_url": base_url,
@@ -254,7 +341,23 @@ def build_api_docs_payload(*, base_url: str | None = None) -> dict[str, Any]:
             "api_html": "/docs#api",
             "markdown": "/docs/api.md",
             "catalog": "/api/docs",
+            "openapi": "/api/openapi",
+        },
+        "mcp": {
+            "endpoint": "/api/mcp",
+            "transport": "streamable-http",
+            "protocol_version": PROTOCOL_VERSION,
+            "authentication": "none",
+            "stdio_command": "underlying-mcp",
+            "tool_count": len(TOOLS),
+        },
+        "agent": {
+            "chat": "/chat",
+            "stream": "/api/agent/chat/stream",
+            "tools": "/api/agent/tools",
         },
         "site_tools": SITE_TOOLS,
         "endpoints": API_ENDPOINTS,
+        "tool_groups": catalog["groups"],
+        "tools": catalog["tools"],
     }

@@ -4,7 +4,12 @@ Base URL (local): `http://127.0.0.1:5050`
 Production: `https://underlying-terminal-production.up.railway.app`
 
 Public access: research and tool endpoints require **no API key**. CORS is open.  
-Machine-readable catalog: `GET /api/docs` · Site docs: `/docs` · MCP: [mcp.md](mcp.md)
+Machine-readable catalog: `GET /api/docs` · OpenAPI 3.1: `GET /api/openapi` · Site docs: `/docs`
+MCP: [mcp.md](mcp.md) (streamable HTTP at `POST /api/mcp`) · Agent: [agent.md](agent.md)
+
+Every agent/MCP tool is a thin binding over one of the routes below, declared once in
+`app/tool_registry.py`. The catalog, the OpenAPI document, both MCP transports, and the
+`/chat` agent are all generated from it.
 
 All JSON request bodies use `Content-Type: application/json`. Errors return:
 
@@ -435,6 +440,84 @@ Kept for older frontends. Prefer `/api/...` above.
 
 ---
 
+## Agent
+
+See [agent.md](agent.md) for the streaming protocol and event vocabulary.
+
+### `GET /api/agent/tools`
+
+Capability catalog the agent routes against: name, group, when-to-use guidance, cost hint,
+HTTP binding, and argument names. Also reports `agent_ready`.
+
+### `POST /api/agent/chat/stream`
+
+Run one agent turn as an NDJSON event stream (`application/x-ndjson`).
+
+```json
+{
+  "messages": [{ "role": "user", "content": "How does NVDA look this week?" }],
+  "tools": ["render_chart", "search_news"],
+  "context": "optional extra system context"
+}
+```
+
+`messages` is required; `tools` is an optional allowlist and falls back to everything.
+Events: `start`, `text`, `tool_call`, `tool_result`, `article`, `error`, `done`.
+
+```bash
+curl -N -X POST http://127.0.0.1:5050/api/agent/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"How does NVDA look?"}]}'
+```
+
+### `POST /api/agent/chat`
+
+Same turn, folded into one JSON body: `text`, `tool_calls`, `tool_trace`, `artifacts`,
+`articles`, `stop_reason`.
+
+### `POST /api/agent/article`
+
+Validate and normalize a research article. Requires `title`, `thesis`, and `sections`;
+optional `subtitle`, `tickers`, `recommendations`, `risks`, `sources`. Returns the
+normalized `article`, rendered `markdown`, and a short `summary`.
+
+---
+
+## MCP
+
+### `GET /api/mcp`
+
+Server descriptor: transport, protocol version, tool count, supported methods.
+
+### `POST /api/mcp`
+
+Streamable HTTP MCP endpoint speaking JSON-RPC 2.0. Stateless, no API key.
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`,
+`resources/read`, `prompts/list`. Send `Accept: text/event-stream` to receive the response
+as a single SSE frame. Notifications return `202` with no body.
+
+---
+
+## News
+
+### `POST /api/news`
+
+Recent news and web results for a ticker and/or topic. Requires `EXA_API_KEY`; without it
+the route returns `ok: false` with `status: "not configured"` rather than failing.
+
+```json
+{ "ticker": "NVDA", "query": "data center capex", "days_back": 14, "num_results": 6 }
+```
+
+---
+
 ## Auth summary
 
 | Endpoint | Auth |
@@ -450,12 +533,13 @@ Kept for older frontends. Prefer `/api/...` above.
 
 | Variable | Used for |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Briefs, Fax, Vision memos |
+| `ANTHROPIC_API_KEY` | Briefs, Fax, Vision memos, and the research agent |
 | `ANTHROPIC_TEXT_MODEL` | Text model override |
+| `ANTHROPIC_AGENT_MODEL` | Agent model override (defaults to `ANTHROPIC_TEXT_MODEL`) |
 | `OPENAI_API_KEY` | Pixel images |
 | `OPENAI_IMAGE_MODEL` | Image model override |
 | `SEC_USER_AGENT` | SEC EDGAR polite access |
 | `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Public config + client auth |
 | `SUPABASE_SERVICE_ROLE_KEY` | Scheduled alert runs |
 | `ALERT_SCHEDULER_TOKEN` | Cron/Function → scheduled run |
-| `EXA_API_KEY` | Vision v2 enrichment (optional) |
+| `EXA_API_KEY` | Vision v2 enrichment and `/api/news` (optional) |
