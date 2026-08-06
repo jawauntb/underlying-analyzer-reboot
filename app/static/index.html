@@ -13,9 +13,9 @@
       href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;800;900&family=Press+Start+2P&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=docs-nav-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=results-first-1" />
   </head>
-  <body>
+  <body class="results-first">
     <main class="shell">
       <header class="masthead">
         <a class="icon-link" href="/" aria-label="Terminal home">
@@ -62,273 +62,227 @@
         </nav>
       </header>
 
-      <section class="home-brief" aria-labelledby="home-brief-title">
-        <div class="home-brief-copy">
-          <div class="panel-label">Market research terminal</div>
-          <h2 id="home-brief-title">Chart-led ticker research.</h2>
-          <p>
-            Build chart packs, volatility scans, watchlist runs, and AI-assisted briefs from a
-            ticker or public TradingView watchlist.
-          </p>
-          <div class="home-brief-actions" aria-label="Terminal entry points">
-            <a class="brief-primary" href="#tickers">Enter ticker</a>
-            <a class="brief-secondary" href="#watchlist-url">Use watchlist</a>
-            <a class="brief-secondary" href="/docs#api">API docs</a>
-          </div>
+      <!-- Single primary control surface, pinned so results scroll under it. -->
+      <section class="command-rail" aria-label="Run a chart">
+        <div class="rail-field rail-field-ticker">
+          <label for="command-tickers">Ticker(s)</label>
+          <input id="command-tickers" value="AAPL" autocomplete="off" inputmode="text" spellcheck="false" />
         </div>
-        <div class="home-brief-console" aria-label="Terminal capabilities">
-          <div class="brief-console-head">
-            <span class="dot ok"></span>
-            <span>ready for diligence</span>
-          </div>
-          <dl class="brief-capabilities">
-            <div>
-              <dt>Chart packs</dt>
-              <dd>Auction, trend, seasonality, and volatility views.</dd>
-            </div>
-            <div>
-              <dt>Watchlist runs</dt>
-              <dd>Batch scans from public TradingView watchlists.</dd>
-            </div>
-            <div>
-              <dt>Research saves</dt>
-              <dd>Export JSON or save generated work to the library.</dd>
-            </div>
-          </dl>
+        <!-- Visible mode control is the chip strip below; this select stays as the JS sync hook. -->
+        <label class="visually-hidden" for="command-mode">Mode</label>
+        <select id="command-mode" class="visually-hidden" tabindex="-1" aria-hidden="true">
+          <optgroup label="Charts">
+            <option value="auction">Auction</option>
+            <option value="performance">Month Map</option>
+            <option value="regression">Regression</option>
+          </optgroup>
+          <optgroup label="Signals">
+            <option value="ridge-growth">Ridge</option>
+            <option value="flow-compass">Compass</option>
+            <option value="torque">Torque</option>
+            <option value="volatility">Volatility</option>
+          </optgroup>
+          <optgroup label="Lists">
+            <option value="cockpit">Cockpit</option>
+            <option value="torque-scan">Torque Scan</option>
+            <option value="portfolio">Portfolio</option>
+          </optgroup>
+          <optgroup label="Research">
+            <option value="analysis">Brief</option>
+          </optgroup>
+          <optgroup label="Monitor">
+            <option value="alerts">Alerts</option>
+          </optgroup>
+        </select>
+        <label class="rail-field rail-field-window" data-command-field="period">
+          <span>Window</span>
+          <select id="command-period">
+            <option value="1mo">1M</option>
+            <option value="3mo">3M</option>
+            <option value="6mo">6M</option>
+            <option value="1y" selected>1Y</option>
+            <option value="2y">2Y</option>
+            <option value="5y">5Y</option>
+            <option value="10y">10Y</option>
+          </select>
+        </label>
+        <label class="rail-field rail-field-month" data-command-field="month" hidden>
+          <span>Month</span>
+          <select id="command-month">
+            <option value="1">Jan</option>
+            <option value="2">Feb</option>
+            <option value="3">Mar</option>
+            <option value="4">Apr</option>
+            <option value="5">May</option>
+            <option value="6">Jun</option>
+            <option value="7">Jul</option>
+            <option value="8">Aug</option>
+            <option value="9">Sep</option>
+            <option value="10">Oct</option>
+            <option value="11">Nov</option>
+            <option value="12">Dec</option>
+          </select>
+        </label>
+        <button class="command-run" id="command-run" type="button">Run</button>
+        <div class="rail-secondary">
+          <button class="export-button" id="export-json" type="button" disabled>Export</button>
+          <button
+            class="advanced-toggle"
+            id="advanced-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="advanced-drawer"
+          >
+            Advanced
+          </button>
         </div>
+        <code id="command-preview" class="command-preview">AAPL auction 1Y</code>
       </section>
 
-      <section class="panel command-panel" aria-labelledby="command-title">
-        <div class="command-head">
+      <!-- Mode picker: one-tap horizontal chips, always in reach, never pushes results down. -->
+      <nav class="mode-strip" aria-label="Analysis mode">
+        <div class="mode-grid" role="group" aria-label="Analysis mode">
+          <button class="mode-button active" data-mode="auction" type="button">Auction</button>
+          <button class="mode-button" data-mode="performance" type="button">Month Map</button>
+          <button class="mode-button" data-mode="regression" type="button">Regression</button>
+          <button class="mode-button" data-mode="ridge-growth" type="button">Ridge</button>
+          <button class="mode-button" data-mode="flow-compass" type="button">Compass</button>
+          <button class="mode-button" data-mode="torque" type="button">Torque</button>
+          <button class="mode-button" data-mode="volatility" type="button">Volatility</button>
+          <button class="mode-button" data-mode="cockpit" type="button">Cockpit</button>
+          <button class="mode-button" data-mode="torque-scan" type="button">Torque Scan</button>
+          <button class="mode-button" data-mode="portfolio" type="button">Portfolio</button>
+          <button class="mode-button" data-mode="analysis" type="button">Brief</button>
+          <button class="mode-button" data-mode="alerts" type="button">Alerts</button>
+        </div>
+        <p id="mode-contract" class="mode-contract">
+          Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
+        </p>
+      </nav>
+
+      <!-- THE RESULT. First large region, dominant on every screen. -->
+      <section class="panel output-panel results-canvas" aria-labelledby="output-title" tabindex="-1">
+        <div class="output-head">
           <div>
-            <div class="panel-label">Command</div>
-            <h2 id="command-title">Ticker, mode, run.</h2>
+            <div class="panel-label">Packet</div>
+            <h2 id="output-title">Auction Levels</h2>
+            <p id="output-contract" class="output-contract">
+              Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
+            </p>
           </div>
-          <code id="command-preview" class="command-preview">AAPL auction 1Y</code>
+          <span id="source-chip" class="source-chip">idle</span>
         </div>
-        <div class="command-bar" aria-label="Quick terminal command">
-          <label class="command-field command-field-ticker">
-            <span>Ticker(s)</span>
-            <input id="command-tickers" value="AAPL" autocomplete="off" inputmode="text" />
-          </label>
-          <label class="command-field command-field-mode">
-            <span>Mode</span>
-            <select id="command-mode">
-              <optgroup label="Charts">
-                <option value="auction">Auction</option>
-                <option value="performance">Month Map</option>
-                <option value="regression">Regression</option>
-              </optgroup>
-              <optgroup label="Signals">
-                <option value="ridge-growth">Ridge</option>
-                <option value="flow-compass">Compass</option>
-                <option value="torque">Torque</option>
-                <option value="volatility">Volatility</option>
-              </optgroup>
-              <optgroup label="Lists">
-                <option value="cockpit">Cockpit</option>
-                <option value="torque-scan">Torque Scan</option>
-                <option value="portfolio">Portfolio</option>
-              </optgroup>
-              <optgroup label="Research">
-                <option value="analysis">Brief</option>
-              </optgroup>
-              <optgroup label="Monitor">
-                <option value="alerts">Alerts</option>
-              </optgroup>
-            </select>
-          </label>
-          <label class="command-field" data-command-field="period">
-            <span>Window</span>
-            <select id="command-period">
-              <option value="1mo">1M</option>
-              <option value="3mo">3M</option>
-              <option value="6mo">6M</option>
-              <option value="1y" selected>1Y</option>
-              <option value="2y">2Y</option>
-              <option value="5y">5Y</option>
-              <option value="10y">10Y</option>
-            </select>
-          </label>
-          <label class="command-field" data-command-field="month" hidden>
-            <span>Month</span>
-            <select id="command-month">
-              <option value="1">Jan</option>
-              <option value="2">Feb</option>
-              <option value="3">Mar</option>
-              <option value="4">Apr</option>
-              <option value="5">May</option>
-              <option value="6">Jun</option>
-              <option value="7">Jul</option>
-              <option value="8">Aug</option>
-              <option value="9">Sep</option>
-              <option value="10">Oct</option>
-              <option value="11">Nov</option>
-              <option value="12">Dec</option>
-            </select>
-          </label>
-          <button class="command-run" id="command-run" type="button">Run</button>
+        <div id="error" class="error" hidden></div>
+        <div id="warnings" class="warning-list" hidden></div>
+        <div id="summary" class="summary-grid" hidden></div>
+        <div id="images" class="image-stack"></div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-visual" aria-hidden="true">
+            <span class="empty-grid"></span>
+            <span class="empty-scan"></span>
+            <span class="empty-sparkline empty-sparkline-a"></span>
+            <span class="empty-sparkline empty-sparkline-b"></span>
+            <img src="/static/assets/toro.png" alt="" />
+          </div>
+          <span>Ready</span>
+          <strong>Enter a ticker and run</strong>
         </div>
       </section>
 
-      <section class="workspace">
-        <aside class="panel tools-panel">
-          <div class="panel-label">Modes</div>
-          <p id="mode-contract" class="mode-contract">
-            Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
-          </p>
-          <div class="mode-grid" role="group" aria-label="Analysis mode">
-            <div class="mode-group">
-              <div class="mode-group-label">Charts</div>
-              <button class="mode-button active" data-mode="auction" type="button">Auction</button>
-              <button class="mode-button" data-mode="performance" type="button">Month Map</button>
-              <button class="mode-button" data-mode="regression" type="button">Regression</button>
-            </div>
-            <div class="mode-group">
-              <div class="mode-group-label">Signals</div>
-              <button class="mode-button" data-mode="ridge-growth" type="button">Ridge</button>
-              <button class="mode-button" data-mode="flow-compass" type="button">Compass</button>
-              <button class="mode-button" data-mode="torque" type="button">Torque</button>
-              <button class="mode-button" data-mode="volatility" type="button">Volatility</button>
-            </div>
-            <div class="mode-group">
-              <div class="mode-group-label">Lists</div>
-              <button class="mode-button" data-mode="cockpit" type="button">Cockpit</button>
-              <button class="mode-button" data-mode="torque-scan" type="button">Torque Scan</button>
-              <button class="mode-button" data-mode="portfolio" type="button">Portfolio</button>
-            </div>
-            <div class="mode-group">
-              <div class="mode-group-label">Research</div>
-              <button class="mode-button" data-mode="analysis" type="button">Brief</button>
-            </div>
-            <div class="mode-group">
-              <div class="mode-group-label">Monitor</div>
-              <button class="mode-button" data-mode="alerts" type="button">Alerts</button>
-            </div>
+      <!-- Advanced / secondary controls: collapsed by default, below the result. -->
+      <section class="advanced-drawer" id="advanced-drawer" hidden>
+        <form id="chart-form">
+          <div class="panel-label">Run settings</div>
+          <div class="form-grid">
+            <label>
+              <span>Ticker(s)</span>
+              <input id="tickers" name="tickers" value="AAPL" autocomplete="off" />
+            </label>
+            <label data-field="watchlist-url">
+              <span>Watchlist URL</span>
+              <input
+                id="watchlist-url"
+                name="watchlist_url"
+                placeholder="https://www.tradingview.com/watchlists/..."
+                autocomplete="off"
+              />
+            </label>
+            <div id="saved-watchlists" data-field="watchlist-url"></div>
+            <label data-field="max-results">
+              <span>Max results</span>
+              <input id="max-results" name="max_results" type="number" min="1" max="50" step="1" value="10" />
+            </label>
+            <label data-field="max-alerts" hidden>
+              <span>Max alerts</span>
+              <input id="max-alerts" name="max_alerts" type="number" min="1" max="50" step="1" value="12" />
+            </label>
+            <label data-field="vol-threshold" hidden>
+              <span>Vol alert >=</span>
+              <input
+                id="vol-threshold"
+                name="volatility_threshold"
+                type="number"
+                min="0"
+                max="2"
+                step="0.05"
+                value="0.55"
+              />
+            </label>
+            <label data-field="period">
+              <span>Period</span>
+              <select id="period" name="period">
+                <option value="1mo">1M</option>
+                <option value="3mo">3M</option>
+                <option value="6mo">6M</option>
+                <option value="1y" selected>1Y</option>
+                <option value="2y">2Y</option>
+                <option value="5y">5Y</option>
+                <option value="10y">10Y</option>
+              </select>
+            </label>
+            <label data-field="month" hidden>
+              <span>Month</span>
+              <select id="month" name="month">
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+            </label>
+            <label data-field="start-date" hidden>
+              <span>Start</span>
+              <input id="start-date" name="start_date" type="date" />
+            </label>
+            <label data-field="end-date" hidden>
+              <span>End</span>
+              <input id="end-date" name="end_date" type="date" />
+            </label>
+            <label data-field="investment" hidden>
+              <span>Per stock</span>
+              <input id="investment" name="investment_per_stock" type="number" min="1" step="1" value="100" />
+            </label>
+            <label data-field="benchmark" hidden>
+              <span>Benchmark</span>
+              <input id="benchmark" name="benchmark_ticker" value="SPY" autocomplete="off" />
+            </label>
           </div>
-        </aside>
-
-        <section class="panel form-panel">
-          <form id="chart-form">
-            <div class="panel-label">Run settings</div>
-            <div class="form-grid">
-              <label>
-                <span>Ticker(s)</span>
-                <input id="tickers" name="tickers" value="AAPL" autocomplete="off" />
-              </label>
-              <label data-field="watchlist-url">
-                <span>Watchlist URL</span>
-                <input
-                  id="watchlist-url"
-                  name="watchlist_url"
-                  placeholder="https://www.tradingview.com/watchlists/..."
-                  autocomplete="off"
-                />
-              </label>
-              <div id="saved-watchlists" data-field="watchlist-url"></div>
-              <label data-field="max-results">
-                <span>Max results</span>
-                <input id="max-results" name="max_results" type="number" min="1" max="50" step="1" value="10" />
-              </label>
-              <label data-field="max-alerts" hidden>
-                <span>Max alerts</span>
-                <input id="max-alerts" name="max_alerts" type="number" min="1" max="50" step="1" value="12" />
-              </label>
-              <label data-field="vol-threshold" hidden>
-                <span>Vol alert >=</span>
-                <input
-                  id="vol-threshold"
-                  name="volatility_threshold"
-                  type="number"
-                  min="0"
-                  max="2"
-                  step="0.05"
-                  value="0.55"
-                />
-              </label>
-              <label data-field="period">
-                <span>Period</span>
-                <select id="period" name="period">
-                  <option value="1mo">1M</option>
-                  <option value="3mo">3M</option>
-                  <option value="6mo">6M</option>
-                  <option value="1y" selected>1Y</option>
-                  <option value="2y">2Y</option>
-                  <option value="5y">5Y</option>
-                  <option value="10y">10Y</option>
-                </select>
-              </label>
-              <label data-field="month" hidden>
-                <span>Month</span>
-                <select id="month" name="month">
-                  <option value="1">January</option>
-                  <option value="2">February</option>
-                  <option value="3">March</option>
-                  <option value="4">April</option>
-                  <option value="5">May</option>
-                  <option value="6">June</option>
-                  <option value="7">July</option>
-                  <option value="8">August</option>
-                  <option value="9">September</option>
-                  <option value="10">October</option>
-                  <option value="11">November</option>
-                  <option value="12">December</option>
-                </select>
-              </label>
-              <label data-field="start-date" hidden>
-                <span>Start</span>
-                <input id="start-date" name="start_date" type="date" />
-              </label>
-              <label data-field="end-date" hidden>
-                <span>End</span>
-                <input id="end-date" name="end_date" type="date" />
-              </label>
-              <label data-field="investment" hidden>
-                <span>Per stock</span>
-                <input id="investment" name="investment_per_stock" type="number" min="1" step="1" value="100" />
-              </label>
-              <label data-field="benchmark" hidden>
-                <span>Benchmark</span>
-                <input id="benchmark" name="benchmark_ticker" value="SPY" autocomplete="off" />
-              </label>
-            </div>
-            <div class="form-actions">
-              <button class="generate-button" id="generate" type="submit">Generate</button>
-              <button class="export-button" id="export-json" type="button" disabled>Export JSON</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="panel output-panel">
-          <div class="output-head">
-            <div>
-              <div class="panel-label">Packet</div>
-              <h2 id="output-title">Auction Levels</h2>
-              <p id="output-contract" class="output-contract">
-                Maps value, POC, and range acceptance; watch VAH/VAL breaks to judge where price is accepting or rejecting.
-              </p>
-            </div>
-            <span id="source-chip" class="source-chip">idle</span>
+          <div class="form-actions">
+            <button class="generate-button" id="generate" type="submit">Generate</button>
           </div>
-          <div id="error" class="error" hidden></div>
-          <div id="warnings" class="warning-list" hidden></div>
-          <div id="summary" class="summary-grid" hidden></div>
-          <div id="images" class="image-stack"></div>
-          <div id="empty-state" class="empty-state">
-            <div class="empty-visual" aria-hidden="true">
-              <span class="empty-grid"></span>
-              <span class="empty-scan"></span>
-              <span class="empty-sparkline empty-sparkline-a"></span>
-              <span class="empty-sparkline empty-sparkline-b"></span>
-              <img src="/static/assets/toro.png" alt="" />
-            </div>
-            <span>Ready</span>
-            <strong>Awaiting run</strong>
-          </div>
-        </section>
+        </form>
       </section>
     </main>
-    <div id="mobile-run-bar" class="mobile-run-bar is-active" aria-label="Quick run">
+
+    <!-- Legacy quick-run bar retained as a JS hook; hidden by the results-first layout. -->
+    <div id="mobile-run-bar" class="mobile-run-bar" aria-hidden="true" hidden>
       <input
         id="mobile-run-ticker"
         class="mobile-run-ticker"
@@ -349,6 +303,6 @@
       <button id="mobile-run-go" class="mobile-run-go" type="button">Run</button>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="/static/app.js" type="module"></script>
+    <script src="/static/app.js?v=results-first-1" type="module"></script>
   </body>
 </html>

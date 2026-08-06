@@ -86,6 +86,8 @@ const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
 const healthDot = document.querySelector("#health-dot");
 const formActionsEl = document.querySelector("#chart-form .form-actions");
+const advancedToggle = document.querySelector("#advanced-toggle");
+const advancedDrawer = document.querySelector("#advanced-drawer");
 const mobileLayoutQuery = window.matchMedia("(max-width: 680px)");
 const commandTickersInput = document.querySelector("#command-tickers");
 const commandModeSelect = document.querySelector("#command-mode");
@@ -154,6 +156,7 @@ commandRunButton.addEventListener("click", () => {
   form.requestSubmit(generateButton);
 });
 
+const mobileRunBar = document.querySelector("#mobile-run-bar");
 const mobileRunTicker = document.querySelector("#mobile-run-ticker");
 const mobileRunMode = document.querySelector("#mobile-run-mode");
 const mobileRunGo = document.querySelector("#mobile-run-go");
@@ -164,6 +167,11 @@ if (mobileRunGo && mobileRunTicker && mobileRunMode) {
   mobileRunMode.value = state.mode;
 
   mobileRunGo.addEventListener("click", () => {
+    // Results-first layout hides the legacy mobile run bar; a hidden control
+    // must never trigger a run. Retained only as an inert JS hook.
+    if (mobileRunBar?.hidden) {
+      return;
+    }
     formTickersInput.value = mobileRunTicker.value;
     commandTickersInput.value = mobileRunTicker.value;
     if (mobileRunMode.value !== state.mode) {
@@ -182,6 +190,12 @@ if (mobileRunGo && mobileRunTicker && mobileRunMode) {
   });
   formTickersInput.addEventListener("change", () => {
     mobileRunTicker.value = formTickersInput.value;
+  });
+}
+
+if (advancedToggle && advancedDrawer) {
+  advancedToggle.addEventListener("click", () => {
+    setAdvancedDrawer(advancedDrawer.hidden);
   });
 }
 
@@ -216,9 +230,11 @@ form.addEventListener("submit", async (event) => {
     } else {
       await fetchChart(payload);
     }
+    if (outputPanel) outputPanel.scrollTop = 0;
     focusOutputOnMobile();
   } catch (error) {
     showError(error.message || "Request failed");
+    if (outputPanel) outputPanel.scrollTop = 0;
     focusOutputOnMobile();
   } finally {
     setLoading(false);
@@ -281,6 +297,15 @@ function setMode(mode, options = {}) {
   }
 }
 
+function setAdvancedDrawer(open) {
+  if (!advancedDrawer || !advancedToggle) {
+    return;
+  }
+  advancedDrawer.hidden = !open;
+  advancedToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  advancedToggle.textContent = open ? "Hide advanced" : "Advanced";
+}
+
 function syncSecondaryPanelPlacement() {
   if (!formActionsEl || !outputPanel) {
     return;
@@ -291,6 +316,11 @@ function syncSecondaryPanelPlacement() {
     anchor.after(panel);
     anchor = panel;
   });
+  // On desktop the secondary tools anchor inside the collapsed advanced drawer;
+  // reveal it so Research Library / Alert Monitor are never silently hidden.
+  if (!mobileLayoutQuery.matches && panels.length) {
+    setAdvancedDrawer(true);
+  }
 }
 
 function syncFormFromCommand() {

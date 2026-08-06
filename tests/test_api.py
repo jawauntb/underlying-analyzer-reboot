@@ -422,7 +422,9 @@ def test_index_includes_underlying_tool_dock() -> None:
     assert response.status_code == 200
     for route in (b"/vision", b"/pixel", b"/fax", b"/moneyline", b"/docs"):
         assert route in response.data
-    assert b"/docs#api" in response.data
+    # The results-first redesign removed the marketing hero (which held the
+    # only /docs#api CTA); docs stay reachable via the tool-dock /docs link
+    # asserted above.
     for mode in (
         b'data-mode="ridge-growth"',
         b'data-mode="flow-compass"',
