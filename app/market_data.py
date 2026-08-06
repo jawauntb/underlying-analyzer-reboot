@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from threading import Lock
 from typing import Any
 
 import pandas as pd
 import requests
 import yfinance as yf
 
+from app._perf import TTLCache, tune_session
+
 REQUIRED_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
+
+# Short TTL: history/quote reads are idempotent but must not go stale during a live
+# session. 90s coalesces the repeated per-ticker fan-out within a request/burst while
+# still refreshing well inside a trading minute.
+_HISTORY_TTL_SECONDS = 90.0
+_PROFILE_TTL_SECONDS = 90.0
 
 
 class MarketDataError(RuntimeError):
@@ -90,9 +97,11 @@ def normalize_ohlcv(data: pd.DataFrame) -> pd.DataFrame:
 class MarketDataClient:
     def __init__(self, session: requests.Session | None = None) -> None:
         self.session = session or requests.Session()
-        self._history_cache: dict[tuple[str, str, date, date, str], HistoryResult] = {}
-        self._profile_cache: dict[str, dict[str, Any]] = {}
-        self._cache_lock = Lock()
+        # Widen the connection pool so concurrent per-ticker fetches reuse keep-alive
+        # sockets instead of churning new connections under fan-out.
+        tune_session(self.session, pool_maxsize=32)
+        self._history_cache: TTLCache = TTLCache(_HISTORY_TTL_SECONDS)
+        self._profile_cache: TTLCache = TTLCache(_PROFILE_TTL_SECONDS)
 
     def get_history(
         self,
@@ -112,8 +121,7 @@ class MarketDataClient:
             end_date = end_date or period_end
 
         cache_key = (symbol, period, start_date, end_date, interval)
-        with self._cache_lock:
-            cached = self._history_cache.get(cache_key)
+        cached = self._history_cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -146,8 +154,7 @@ class MarketDataClient:
 
     def get_profile(self, ticker: str) -> dict[str, Any]:
         symbol = clean_ticker(ticker)
-        with self._cache_lock:
-            cached = self._profile_cache.get(symbol)
+        cached = self._profile_cache.get(symbol)
         if cached is not None:
             return cached
 
@@ -160,15 +167,13 @@ class MarketDataClient:
         except Exception:
             profile = {}
 
-        with self._cache_lock:
-            self._profile_cache[symbol] = profile
+        self._profile_cache.set(symbol, profile)
         return profile
 
     def _remember_history(
         self, cache_key: tuple[str, str, date, date, str], result: HistoryResult
     ) -> None:
-        with self._cache_lock:
-            self._history_cache[cache_key] = result
+        self._history_cache.set(cache_key, result)
 
     def _history_from_yfinance(
         self,

@@ -6,6 +6,7 @@ import os
 import re
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 import requests
 import yfinance as yf
 
+from app._perf import tune_session
 from app.analysis import trim_text
 from app.market_data import clean_ticker
 
@@ -186,6 +188,11 @@ class SecClient:
         backoff_max_seconds: float | None = None,
     ) -> None:
         self.session = session or requests.Session()
+        # Widen the connection pool so parallel per-filing fetches reuse keep-alive
+        # sockets instead of churning new ones. Only real requests.Session objects
+        # expose ``mount``; test doubles are left untouched.
+        if isinstance(self.session, requests.Session):
+            tune_session(self.session, pool_maxsize=32)
         self.user_agent = user_agent or os.getenv("SEC_USER_AGENT") or DEFAULT_SEC_USER_AGENT
         self.timeout = timeout
         self.request_interval_seconds = (
@@ -256,9 +263,19 @@ class SecClient:
         cik = self.cik_for_ticker(symbol)
         submissions = self.submissions(cik)
         filings = latest_filings(submissions)
-        sections, section_errors = self.filing_sections(filings)
-        earnings_sections, earnings_errors = self.earnings_sections(filings)
-        facts, fact_errors = self.company_facts(cik)
+        # The 10-K/10-Q text, 8-K text and XBRL company facts come from three
+        # independent, idempotent SEC endpoints; fetch them concurrently. The
+        # shared request gate still rate-limits actual dispatch, so this mainly
+        # overlaps document parsing with the next request's network wait.
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            sections_future = executor.submit(self.filing_sections, filings)
+            earnings_future = executor.submit(self.earnings_sections, filings)
+            facts_future = executor.submit(self.company_facts, cik)
+            # Resolve in the original sequential order so an escaping SecDataError
+            # from filing_sections still wins and triggers the Yahoo fallback.
+            sections, section_errors = sections_future.result()
+            earnings_sections, earnings_errors = earnings_future.result()
+            facts, fact_errors = facts_future.result()
         errors = section_errors + earnings_errors + fact_errors
         citations = source_citations(filings, sections, facts, earnings_sections)
         status = (
@@ -314,8 +331,13 @@ class SecClient:
             }
 
         selected = latest_yahoo_filings(filings)
-        sections, section_errors = self.yahoo_filing_sections(selected)
-        earnings_sections, earnings_errors = self.yahoo_earnings_sections(selected)
+        # The Yahoo-hosted 10-K/10-Q and 8-K documents are independent fetches;
+        # both helpers swallow their own errors, so run them concurrently.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sections_future = executor.submit(self.yahoo_filing_sections, selected)
+            earnings_future = executor.submit(self.yahoo_earnings_sections, selected)
+            sections, section_errors = sections_future.result()
+            earnings_sections, earnings_errors = earnings_future.result()
         citations = source_citations(selected, sections, {}, earnings_sections)
         status = "partial" if selected or sections or earnings_sections else "unavailable"
         return {

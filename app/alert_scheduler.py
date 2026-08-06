@@ -8,6 +8,8 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from app._perf import tune_session
+
 DEFAULT_SCHEDULED_RULE_LIMIT = 25
 MAX_SCHEDULED_RULE_LIMIT = 100
 WEBHOOK_TIMEOUT_SECONDS = 15
@@ -63,6 +65,9 @@ class SupabaseAlertStore:
         self.supabase_url = supabase_url.rstrip("/")
         self.service_role_key = service_role_key
         self.session = session or requests.Session()
+        # Widen the connection pool so scheduled runs reuse keep-alive sockets to
+        # Supabase across their many sequential REST calls per rule.
+        tune_session(self.session, pool_maxsize=32)
 
     def list_due_rules(self, *, run_date: date, force: bool = False) -> list[ScheduledAlertRule]:
         rows = self._request(
@@ -358,7 +363,7 @@ def deliver_alert_webhook(
             error="No High severity alerts fired.",
         )
 
-    request_session = session or requests.Session()
+    request_session = session or tune_session(requests.Session(), pool_maxsize=32)
     body = {
         "type": "underlying.alert_digest",
         "rule": {

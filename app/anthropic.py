@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 import requests
 
+from app._perf import tune_session
+
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 ANTHROPIC_API_VERSION = "2023-06-01"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -81,7 +83,10 @@ class AnthropicTextClient:
             if model is not None
             else os.getenv("ANTHROPIC_TEXT_MODEL") or DEFAULT_ANTHROPIC_MODEL
         )
-        self.session = session or requests.Session()
+        # Tune only sessions we create; an injected session is the caller's to
+        # configure (and callers/tests may pass a lightweight stand-in without a
+        # real adapter mount point).
+        self.session = session if session is not None else tune_session(requests.Session())
 
     def generate_text(
         self,

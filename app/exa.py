@@ -12,6 +12,8 @@ from typing import Any
 
 import requests
 
+from app._perf import tune_session
+
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 EXA_CONTENTS_URL = "https://api.exa.ai/contents"
 
@@ -169,7 +171,14 @@ class ExaClient:
         backoff_max_seconds: float | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("EXA_API_KEY")
-        self.session = session or requests.Session()
+        if session is None:
+            # Own the session lifecycle: widen the keep-alive connection pool so the
+            # per-request Exa fan-out (six curated search buckets, plus contents calls)
+            # reuses sockets under gunicorn's worker threads instead of churning new
+            # TLS handshakes. Injected sessions (tests, callers) are left untouched.
+            self.session = tune_session(requests.Session())
+        else:
+            self.session = session
         self.timeout = timeout
         self.response_cache_seconds = response_cache_seconds
         self.request_interval_seconds = (
@@ -357,23 +366,26 @@ class ExaClient:
         }
 
     def _cached(self, key: str) -> list[ExaResult] | None:
+        now = time.monotonic()
         with self._cache_lock:
             entry = self._cache.get(key)
             if entry is None:
                 return None
-            if entry.expires_at < time.monotonic():
+            if entry.expires_at < now:
                 self._cache.pop(key, None)
                 return None
-            return copy.deepcopy(entry.value)
+        # Copy outside the lock: CacheEntry is frozen and its value list is never
+        # mutated in place (_remember always replaces the entry), so the reference is
+        # a stable snapshot and the expensive deepcopy need not hold the lock.
+        return copy.deepcopy(entry.value)
 
     def _remember(self, key: str, value: list[ExaResult]) -> None:
         if self.response_cache_seconds <= 0:
             return
+        snapshot = copy.deepcopy(value)
+        expires_at = time.monotonic() + self.response_cache_seconds
         with self._cache_lock:
-            self._cache[key] = CacheEntry(
-                expires_at=time.monotonic() + self.response_cache_seconds,
-                value=copy.deepcopy(value),
-            )
+            self._cache[key] = CacheEntry(expires_at=expires_at, value=snapshot)
 
 
 def _retry_after_seconds(response: Any | None) -> float | None:

@@ -9,6 +9,13 @@ from urllib.parse import urlparse
 
 import requests
 
+from app._perf import TTLCache, tune_session
+
+# TradingView watchlist symbol lists change rarely; a short TTL dedupes refetches of
+# the same public watchlist within a scheduled batch (multiple rules can share a URL)
+# without serving meaningfully stale symbols.
+WATCHLIST_CACHE_TTL_SECONDS = 60.0
+
 
 class WatchlistError(ValueError):
     """Raised when a watchlist URL cannot be resolved into symbols."""
@@ -35,11 +42,22 @@ class WatchlistResult:
 
 
 class TradingViewWatchlistClient:
-    def __init__(self, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        session: requests.Session | None = None,
+        *,
+        cache_ttl_seconds: float = WATCHLIST_CACHE_TTL_SECONDS,
+    ) -> None:
         self.session = session or requests.Session()
+        # Widen the connection pool for concurrent watchlist fetches / keep-alive reuse.
+        tune_session(self.session, pool_maxsize=32)
+        self._cache = TTLCache(cache_ttl_seconds)
 
     def get_watchlist(self, url: str) -> WatchlistResult:
         watchlist_url = normalize_watchlist_url(url)
+        cached = self._cache.get(watchlist_url)
+        if cached is not None:
+            return cached
         response = self.session.get(
             watchlist_url,
             headers={
@@ -52,7 +70,9 @@ class TradingViewWatchlistClient:
             timeout=15,
         )
         response.raise_for_status()
-        return parse_tradingview_watchlist(response.text, source_url=watchlist_url)
+        result = parse_tradingview_watchlist(response.text, source_url=watchlist_url)
+        self._cache.set(watchlist_url, result)
+        return result
 
 
 def normalize_watchlist_url(url: str) -> str:

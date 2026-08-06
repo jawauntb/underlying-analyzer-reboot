@@ -964,10 +964,18 @@ def verify_citations(
         )
 
     total = len(checks)
-    verified = sum(1 for c in checks if c.status == STATUS_VERIFIED)
-    value_mismatch = sum(1 for c in checks if c.status == STATUS_VALUE_MISMATCH)
-    concept_missing = sum(1 for c in checks if c.status == STATUS_CONCEPT_MISSING)
-    uncheckable = sum(1 for c in checks if c.status == STATUS_UNCHECKABLE)
+    # Single pass over checks instead of four separate generator scans.
+    verified = value_mismatch = concept_missing = uncheckable = 0
+    for c in checks:
+        status = c.status
+        if status == STATUS_VERIFIED:
+            verified += 1
+        elif status == STATUS_VALUE_MISMATCH:
+            value_mismatch += 1
+        elif status == STATUS_CONCEPT_MISSING:
+            concept_missing += 1
+        elif status == STATUS_UNCHECKABLE:
+            uncheckable += 1
     checkable = total - uncheckable
     if checkable <= 0:
         # Document choice: when there's nothing to check, we report 1.0

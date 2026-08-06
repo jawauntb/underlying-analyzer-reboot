@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import time
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from threading import Lock
 from typing import Any
@@ -194,22 +195,28 @@ def build_sec_trend_pack(
     except Exception as exc:  # noqa: BLE001 - any client failure is recoverable
         return _empty_pack(symbol, None, "unavailable", [f"CIK lookup failed: {exc}"])
 
+    # Submissions metadata and the (large) XBRL companyfacts payload come from
+    # two independent, idempotent SEC endpoints. Fetch them concurrently: the
+    # client's own request gate still rate-limits dispatch, but the companyfacts
+    # JSON parse can overlap the submissions fetch.
     submissions: Mapping[str, Any] = {}
-    try:
-        submissions = sec_client.submissions(cik) or {}
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"Could not fetch SEC submissions: {exc}")
+    facts_url = f"{SEC_DATA_BASE}/api/xbrl/companyfacts/CIK{cik}.json"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        submissions_future = executor.submit(sec_client.submissions, cik)
+        facts_future = executor.submit(sec_client.fetch_json, facts_url)
+        try:
+            submissions = submissions_future.result() or {}
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Could not fetch SEC submissions: {exc}")
 
-    try:
-        facts_payload = sec_client.fetch_json(
-            f"{SEC_DATA_BASE}/api/xbrl/companyfacts/CIK{cik}.json"
-        )
-    except SecDataError as exc:
-        return _empty_pack(symbol, cik, "unavailable", [*errors, str(exc)])
-    except Exception as exc:  # noqa: BLE001
-        return _empty_pack(
-            symbol, cik, "unavailable", [*errors, f"Could not fetch SEC companyfacts: {exc}"]
-        )
+        try:
+            facts_payload = facts_future.result()
+        except SecDataError as exc:
+            return _empty_pack(symbol, cik, "unavailable", [*errors, str(exc)])
+        except Exception as exc:  # noqa: BLE001
+            return _empty_pack(
+                symbol, cik, "unavailable", [*errors, f"Could not fetch SEC companyfacts: {exc}"]
+            )
 
     facts = _facts_dict(facts_payload)
     if not facts:

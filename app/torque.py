@@ -875,356 +875,361 @@ def render_torque_chart(
     )
 
     fig = plt.figure(figsize=(15, 13))
-    gs = fig.add_gridspec(
-        3,
-        2,
-        height_ratios=[2.5, 1.0, 1.05],
-        width_ratios=[1.0, 1.0],
-        hspace=0.55,
-        wspace=0.22,
-    )
-    price_ax = fig.add_subplot(gs[0, :])
-    rev_ax = fig.add_subplot(gs[1, 0])
-    om_ax = fig.add_subplot(gs[1, 1])
-    score_ax = fig.add_subplot(gs[2, :])
+    try:
+        gs = fig.add_gridspec(
+            3,
+            2,
+            height_ratios=[2.5, 1.0, 1.05],
+            width_ratios=[1.0, 1.0],
+            hspace=0.55,
+            wspace=0.22,
+        )
+        price_ax = fig.add_subplot(gs[0, :])
+        rev_ax = fig.add_subplot(gs[1, 0])
+        om_ax = fig.add_subplot(gs[1, 1])
+        score_ax = fig.add_subplot(gs[2, :])
 
-    # ---------------- Panel 1: Price -----------------
-    style_axis(
-        price_ax,
-        title=f"{ticker} misclassified revenue torque",
-        subtitle=(
-            f"stage {torque.stage_label} | total {torque.total_score:.1f}"
-            f" | rec {torque.recommendation} | zone {torque.target_zone}"
-        ),
-    )
+        # ---------------- Panel 1: Price -----------------
+        style_axis(
+            price_ax,
+            title=f"{ticker} misclassified revenue torque",
+            subtitle=(
+                f"stage {torque.stage_label} | total {torque.total_score:.1f}"
+                f" | rec {torque.recommendation} | zone {torque.target_zone}"
+            ),
+        )
 
-    have_price = False
-    if isinstance(history, HistoryResult) and not history.data.empty:
-        data = history.data.copy()
-        if "Close" in data.columns:
-            close = pd.to_numeric(data["Close"], errors="coerce").dropna()
-            if not close.empty:
-                have_price = True
-                ema75 = terminal_ema(close, 75)
-                sma200 = terminal_sma(close, 200)
-                price_ax.plot(
-                    close.index,
-                    close,
-                    color=TEXT_STRONG,
-                    linewidth=1.35,
-                    label="Close",
-                    path_effects=glow_effect(4.0),
-                )
-                price_ax.plot(
-                    close.index, ema75, color=CYAN, linewidth=1.8, label="EMA 75"
-                )
-                price_ax.plot(
-                    close.index, sma200, color=AMBER, linewidth=1.8, label="SMA 200"
-                )
-                # Coiled-spring band: compression below 50DMA*1.05, extension above
-                sma50 = terminal_sma(close, 50)
-                if not sma50.dropna().empty:
-                    band_low = sma50 * 0.92
-                    band_high = sma50 * 1.08
-                    price_ax.fill_between(
+        have_price = False
+        if isinstance(history, HistoryResult) and not history.data.empty:
+            # Read-only access below (pd.to_numeric copies internally), so avoid a
+            # full-frame defensive copy on every render.
+            data = history.data
+            if "Close" in data.columns:
+                close = pd.to_numeric(data["Close"], errors="coerce").dropna()
+                if not close.empty:
+                    have_price = True
+                    ema75 = terminal_ema(close, 75)
+                    sma200 = terminal_sma(close, 200)
+                    price_ax.plot(
                         close.index,
-                        band_low,
-                        band_high,
-                        color=GREEN if torque.stage_label == "Coiled Spring" else AMBER,
-                        alpha=0.07,
-                        label="Coiled-spring zone",
+                        close,
+                        color=TEXT_STRONG,
+                        linewidth=1.35,
+                        label="Close",
+                        path_effects=glow_effect(4.0),
                     )
-                price_ax.set_ylabel("Price")
-                style_legend(price_ax, ncols=4)
+                    price_ax.plot(
+                        close.index, ema75, color=CYAN, linewidth=1.8, label="EMA 75"
+                    )
+                    price_ax.plot(
+                        close.index, sma200, color=AMBER, linewidth=1.8, label="SMA 200"
+                    )
+                    # Coiled-spring band: compression below 50DMA*1.05, extension above
+                    sma50 = terminal_sma(close, 50)
+                    if not sma50.dropna().empty:
+                        band_low = sma50 * 0.92
+                        band_high = sma50 * 1.08
+                        price_ax.fill_between(
+                            close.index,
+                            band_low,
+                            band_high,
+                            color=GREEN if torque.stage_label == "Coiled Spring" else AMBER,
+                            alpha=0.07,
+                            label="Coiled-spring zone",
+                        )
+                    price_ax.set_ylabel("Price")
+                    style_legend(price_ax, ncols=4)
 
-    if not have_price:
-        price_ax.text(
-            0.5,
-            0.5,
-            "NO PRICE HISTORY",
-            transform=price_ax.transAxes,
-            ha="center",
-            va="center",
-            color=MUTED,
-            fontsize=14,
-            fontweight="bold",
-        )
+        if not have_price:
+            price_ax.text(
+                0.5,
+                0.5,
+                "NO PRICE HISTORY",
+                transform=price_ax.transAxes,
+                ha="center",
+                va="center",
+                color=MUTED,
+                fontsize=14,
+                fontweight="bold",
+            )
 
-    # ---------------- Panel 2: Revenue + GM ----------
-    style_axis(rev_ax, title="Revenue (8Q) + Gross Margin", grid_axis="y")
-    rev_labels, rev_values = _revenue_series(sec_trend)
-    gm_values = _gross_margin_series(sec_trend)
+        # ---------------- Panel 2: Revenue + GM ----------
+        style_axis(rev_ax, title="Revenue (8Q) + Gross Margin", grid_axis="y")
+        rev_labels, rev_values = _revenue_series(sec_trend)
+        gm_values = _gross_margin_series(sec_trend)
 
-    if rev_values:
-        x_positions = np.arange(len(rev_values))
-        rev_ax.bar(
-            x_positions,
-            rev_values,
-            color=CYAN,
-            alpha=0.78,
-            edgecolor=AMBER,
-            linewidth=0.4,
-            label="Revenue",
-        )
-        rev_ax.set_xticks(x_positions)
-        rev_ax.set_xticklabels(rev_labels, rotation=35, ha="right", fontsize=8)
-        rev_ax.set_ylabel("Revenue ($)")
+        if rev_values:
+            x_positions = np.arange(len(rev_values))
+            rev_ax.bar(
+                x_positions,
+                rev_values,
+                color=CYAN,
+                alpha=0.78,
+                edgecolor=AMBER,
+                linewidth=0.4,
+                label="Revenue",
+            )
+            rev_ax.set_xticks(x_positions)
+            rev_ax.set_xticklabels(rev_labels, rotation=35, ha="right", fontsize=8)
+            rev_ax.set_ylabel("Revenue ($)")
 
-        if gm_values and len(gm_values) >= 1:
-            gm_x = x_positions[-len(gm_values) :]
-            twin = rev_ax.twinx()
-            twin.plot(
-                gm_x,
-                gm_values,
-                color=GREEN,
-                linewidth=2.0,
+            if gm_values and len(gm_values) >= 1:
+                gm_x = x_positions[-len(gm_values) :]
+                twin = rev_ax.twinx()
+                twin.plot(
+                    gm_x,
+                    gm_values,
+                    color=GREEN,
+                    linewidth=2.0,
+                    marker="o",
+                    markersize=5,
+                    label="Gross Margin",
+                    path_effects=glow_effect(3.0),
+                )
+                twin.set_ylabel("GM %", color=GREEN)
+                twin.tick_params(colors=GREEN, labelsize=8)
+                twin.set_ylim(
+                    bottom=max(0.0, min(gm_values) - 5.0),
+                    top=min(100.0, max(gm_values) + 5.0),
+                )
+                for spine in twin.spines.values():
+                    spine.set_color(AMBER)
+                    spine.set_alpha(0.3)
+        else:
+            rev_ax.text(
+                0.5,
+                0.55,
+                "Fundamental data unavailable",
+                transform=rev_ax.transAxes,
+                ha="center",
+                va="center",
+                color=AMBER,
+                fontsize=11,
+                fontweight="bold",
+            )
+            rev_ax.text(
+                0.5,
+                0.4,
+                "SEC trend pack returned no quarterly\n"
+                "revenue series for this issuer.\n"
+                "Torque uses technical signals only.",
+                transform=rev_ax.transAxes,
+                ha="center",
+                va="center",
+                color=MUTED,
+                fontsize=9,
+            )
+            rev_ax.set_xticks([])
+            rev_ax.set_yticks([])
+            for spine in rev_ax.spines.values():
+                spine.set_alpha(0.2)
+
+        # ---------------- Panel 3: Operating margin -----
+        style_axis(om_ax, title="Operating Margin + Op-Leverage", grid_axis="y")
+        om_values = _operating_margin_series(sec_trend)
+        if om_values:
+            om_x = np.arange(len(om_values))
+            om_ax.plot(
+                om_x,
+                om_values,
+                color=AMBER_HOT,
+                linewidth=2.1,
                 marker="o",
                 markersize=5,
-                label="Gross Margin",
                 path_effects=glow_effect(3.0),
+                label="Op. Margin",
             )
-            twin.set_ylabel("GM %", color=GREEN)
-            twin.tick_params(colors=GREEN, labelsize=8)
-            twin.set_ylim(
-                bottom=max(0.0, min(gm_values) - 5.0),
-                top=min(100.0, max(gm_values) + 5.0),
+            om_ax.fill_between(om_x, 0, om_values, color=AMBER, alpha=0.15)
+            om_ax.axhline(0, color=TEXT, linewidth=0.8, alpha=0.65)
+            om_ax.set_xticks(om_x)
+            om_ax.set_xticklabels(
+                (rev_labels[-len(om_values):] if rev_labels else [str(i) for i in om_x]),
+                rotation=35,
+                ha="right",
+                fontsize=8,
             )
-            for spine in twin.spines.values():
-                spine.set_color(AMBER)
-                spine.set_alpha(0.3)
-    else:
-        rev_ax.text(
-            0.5,
-            0.55,
-            "Fundamental data unavailable",
-            transform=rev_ax.transAxes,
+            om_ax.set_ylabel("Op. Margin %")
+
+            # Op-leverage value annotation
+            op_lev_label = _op_leverage_label(sec_trend) or "n/a"
+            op_lev_value = _op_leverage_value(sec_trend)
+            annotation = f"op-lev: {op_lev_label}"
+            if op_lev_value is not None:
+                annotation += f" ({op_lev_value:+.2f})"
+            om_ax.text(
+                0.02,
+                0.94,
+                annotation,
+                transform=om_ax.transAxes,
+                ha="left",
+                va="top",
+                color=AMBER_HOT,
+                fontsize=9,
+                fontweight="bold",
+                bbox={
+                    "facecolor": PANEL,
+                    "edgecolor": AMBER,
+                    "alpha": 0.9,
+                    "boxstyle": "round,pad=0.3",
+                },
+            )
+        else:
+            om_ax.text(
+                0.5,
+                0.55,
+                "Operating margin unavailable",
+                transform=om_ax.transAxes,
+                ha="center",
+                va="center",
+                color=AMBER,
+                fontsize=11,
+                fontweight="bold",
+            )
+            om_ax.text(
+                0.5,
+                0.4,
+                "No quarterly operating-income series\n"
+                "in this issuer's SEC trend pack.",
+                transform=om_ax.transAxes,
+                ha="center",
+                va="center",
+                color=MUTED,
+                fontsize=9,
+            )
+            om_ax.set_xticks([])
+            om_ax.set_yticks([])
+            for spine in om_ax.spines.values():
+                spine.set_alpha(0.2)
+
+        # ---------------- Panel 4: Score gauge + components --
+        style_axis(score_ax, title="Composite Torque Score", grid_axis="x")
+        score_ax.set_xlim(0, 100)
+
+        component_names = [c.name for c in torque.components]
+        component_scores = [c.score for c in torque.components]
+        y_positions = np.arange(len(component_names))
+
+        # Component bars (lower half of the score axis layout).
+        bars = score_ax.barh(
+            y_positions,
+            component_scores,
+            color=[_component_bar_color(s) for s in component_scores],
+            alpha=0.86,
+            edgecolor=TEXT,
+            linewidth=0.35,
+            height=0.62,
+        )
+        score_ax.set_yticks(y_positions, labels=component_names)
+        score_ax.invert_yaxis()
+        for bar, comp in zip(bars, torque.components, strict=False):
+            score_ax.text(
+                min(98.0, comp.score + 1.5),
+                bar.get_y() + bar.get_height() / 2,
+                f"{comp.score:.0f}  ({comp.weight:.0%})",
+                ha="left",
+                va="center",
+                color=TEXT_STRONG,
+                fontsize=9,
+                fontweight="bold",
+            )
+
+        # Gauge: vertical band on right side showing total.
+        gauge_color = _gauge_color(torque.total_score)
+        score_ax.axvline(
+            torque.total_score,
+            color=gauge_color,
+            linewidth=2.6,
+            alpha=0.92,
+            path_effects=glow_effect(4.5),
+        )
+        score_ax.axvspan(0, torque.total_score, color=gauge_color, alpha=0.07)
+
+        score_ax.text(
+            torque.total_score,
+            -0.6,
+            f"TOTAL {torque.total_score:.0f}",
             ha="center",
-            va="center",
-            color=AMBER,
+            va="bottom",
+            color=gauge_color,
             fontsize=11,
-            fontweight="bold",
-        )
-        rev_ax.text(
-            0.5,
-            0.4,
-            "SEC trend pack returned no quarterly\n"
-            "revenue series for this issuer.\n"
-            "Torque uses technical signals only.",
-            transform=rev_ax.transAxes,
-            ha="center",
-            va="center",
-            color=MUTED,
-            fontsize=9,
-        )
-        rev_ax.set_xticks([])
-        rev_ax.set_yticks([])
-        for spine in rev_ax.spines.values():
-            spine.set_alpha(0.2)
-
-    # ---------------- Panel 3: Operating margin -----
-    style_axis(om_ax, title="Operating Margin + Op-Leverage", grid_axis="y")
-    om_values = _operating_margin_series(sec_trend)
-    if om_values:
-        om_x = np.arange(len(om_values))
-        om_ax.plot(
-            om_x,
-            om_values,
-            color=AMBER_HOT,
-            linewidth=2.1,
-            marker="o",
-            markersize=5,
-            path_effects=glow_effect(3.0),
-            label="Op. Margin",
-        )
-        om_ax.fill_between(om_x, 0, om_values, color=AMBER, alpha=0.15)
-        om_ax.axhline(0, color=TEXT, linewidth=0.8, alpha=0.65)
-        om_ax.set_xticks(om_x)
-        om_ax.set_xticklabels(
-            (rev_labels[-len(om_values):] if rev_labels else [str(i) for i in om_x]),
-            rotation=35,
-            ha="right",
-            fontsize=8,
-        )
-        om_ax.set_ylabel("Op. Margin %")
-
-        # Op-leverage value annotation
-        op_lev_label = _op_leverage_label(sec_trend) or "n/a"
-        op_lev_value = _op_leverage_value(sec_trend)
-        annotation = f"op-lev: {op_lev_label}"
-        if op_lev_value is not None:
-            annotation += f" ({op_lev_value:+.2f})"
-        om_ax.text(
-            0.02,
-            0.94,
-            annotation,
-            transform=om_ax.transAxes,
-            ha="left",
-            va="top",
-            color=AMBER_HOT,
-            fontsize=9,
             fontweight="bold",
             bbox={
-                "facecolor": PANEL,
-                "edgecolor": AMBER,
-                "alpha": 0.9,
-                "boxstyle": "round,pad=0.3",
+                "facecolor": CHART_BG,
+                "edgecolor": gauge_color,
+                "alpha": 0.92,
+                "boxstyle": "round,pad=0.35",
             },
         )
-    else:
-        om_ax.text(
-            0.5,
-            0.55,
-            "Operating margin unavailable",
-            transform=om_ax.transAxes,
-            ha="center",
-            va="center",
-            color=AMBER,
+        score_ax.text(
+            1.0,
+            1.06,
+            f"STAGE: {torque.stage_label.upper()}  -  {torque.recommendation}",
+            transform=score_ax.transAxes,
+            ha="right",
+            va="bottom",
+            color=AMBER_HOT,
             fontsize=11,
             fontweight="bold",
         )
-        om_ax.text(
-            0.5,
-            0.4,
-            "No quarterly operating-income series\n"
-            "in this issuer's SEC trend pack.",
-            transform=om_ax.transAxes,
-            ha="center",
-            va="center",
-            color=MUTED,
-            fontsize=9,
-        )
-        om_ax.set_xticks([])
-        om_ax.set_yticks([])
-        for spine in om_ax.spines.values():
-            spine.set_alpha(0.2)
 
-    # ---------------- Panel 4: Score gauge + components --
-    style_axis(score_ax, title="Composite Torque Score", grid_axis="x")
-    score_ax.set_xlim(0, 100)
-
-    component_names = [c.name for c in torque.components]
-    component_scores = [c.score for c in torque.components]
-    y_positions = np.arange(len(component_names))
-
-    # Component bars (lower half of the score axis layout).
-    bars = score_ax.barh(
-        y_positions,
-        component_scores,
-        color=[_component_bar_color(s) for s in component_scores],
-        alpha=0.86,
-        edgecolor=TEXT,
-        linewidth=0.35,
-        height=0.62,
-    )
-    score_ax.set_yticks(y_positions, labels=component_names)
-    score_ax.invert_yaxis()
-    for bar, comp in zip(bars, torque.components, strict=False):
-        score_ax.text(
-            min(98.0, comp.score + 1.5),
-            bar.get_y() + bar.get_height() / 2,
-            f"{comp.score:.0f}  ({comp.weight:.0%})",
-            ha="left",
-            va="center",
-            color=TEXT_STRONG,
-            fontsize=9,
-            fontweight="bold",
+        # Stage legend chips along the top.
+        stage_chips = [
+            ("Coiled Spring", GREEN),
+            ("Inflecting", CYAN),
+            ("Proof Phase", AMBER),
+            ("Renaming", AMBER_HOT),
+            ("Extended", RED),
+        ]
+        chip_patches = [
+            mpatches.Patch(color=color, label=label, alpha=0.78)
+            for label, color in stage_chips
+        ]
+        score_ax.legend(
+            handles=chip_patches,
+            loc="upper left",
+            bbox_to_anchor=(0, 1.18),
+            ncols=5,
+            frameon=True,
+            fontsize=8,
+            facecolor=PANEL,
+            edgecolor=AMBER,
+            labelcolor=TEXT,
         )
 
-    # Gauge: vertical band on right side showing total.
-    gauge_color = _gauge_color(torque.total_score)
-    score_ax.axvline(
-        torque.total_score,
-        color=gauge_color,
-        linewidth=2.6,
-        alpha=0.92,
-        path_effects=glow_effect(4.5),
-    )
-    score_ax.axvspan(0, torque.total_score, color=gauge_color, alpha=0.07)
+        fig.tight_layout(rect=(0, 0.04, 1, 0.97))
+        add_terminal_footer(
+            fig,
+            left=(
+                f"{ticker} torque {torque.total_score:.0f} | "
+                f"stage {torque.stage_label} | {torque.recommendation}"
+            ),
+            right="misclassified revenue torque",
+        )
 
-    score_ax.text(
-        torque.total_score,
-        -0.6,
-        f"TOTAL {torque.total_score:.0f}",
-        ha="center",
-        va="bottom",
-        color=gauge_color,
-        fontsize=11,
-        fontweight="bold",
-        bbox={
-            "facecolor": CHART_BG,
-            "edgecolor": gauge_color,
-            "alpha": 0.92,
-            "boxstyle": "round,pad=0.35",
-        },
-    )
-    score_ax.text(
-        1.0,
-        1.06,
-        f"STAGE: {torque.stage_label.upper()}  -  {torque.recommendation}",
-        transform=score_ax.transAxes,
-        ha="right",
-        va="bottom",
-        color=AMBER_HOT,
-        fontsize=11,
-        fontweight="bold",
-    )
+        image = image_from_figure(fig, f"{ticker.lower()}-torque.png")
 
-    # Stage legend chips along the top.
-    stage_chips = [
-        ("Coiled Spring", GREEN),
-        ("Inflecting", CYAN),
-        ("Proof Phase", AMBER),
-        ("Renaming", AMBER_HOT),
-        ("Extended", RED),
-    ]
-    chip_patches = [
-        mpatches.Patch(color=color, label=label, alpha=0.78)
-        for label, color in stage_chips
-    ]
-    score_ax.legend(
-        handles=chip_patches,
-        loc="upper left",
-        bbox_to_anchor=(0, 1.18),
-        ncols=5,
-        frameon=True,
-        fontsize=8,
-        facecolor=PANEL,
-        edgecolor=AMBER,
-        labelcolor=TEXT,
-    )
-
-    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
-    add_terminal_footer(
-        fig,
-        left=(
-            f"{ticker} torque {torque.total_score:.0f} | "
-            f"stage {torque.stage_label} | {torque.recommendation}"
-        ),
-        right="misclassified revenue torque",
-    )
-
-    image = image_from_figure(fig, f"{ticker.lower()}-torque.png")
-
-    meta: dict[str, Any] = {
-        "ticker": ticker,
-        "total_score": torque.total_score,
-        "stage_label": torque.stage_label,
-        "stage_detail": torque.stage_detail,
-        "recommendation": torque.recommendation,
-        "target_zone": torque.target_zone,
-        "components": _component_summary(torque.components),
-        "panel_layout": {
-            "price": "ema75/sma200 + coiled-spring band",
-            "revenue": "8Q revenue bars + GM overlay",
-            "operating_margin": "trajectory + op-leverage label",
-            "score": "horizontal component bars + total gauge",
-        },
-        "weights": dict(COMPONENT_WEIGHTS),
-        "fundamental_data_available": _sec_available(sec_trend),
-    }
-    # Ensure unused face colors are bound for static analyzers.
-    _ = AX_BG
-    return image, meta
+        meta: dict[str, Any] = {
+            "ticker": ticker,
+            "total_score": torque.total_score,
+            "stage_label": torque.stage_label,
+            "stage_detail": torque.stage_detail,
+            "recommendation": torque.recommendation,
+            "target_zone": torque.target_zone,
+            "components": _component_summary(torque.components),
+            "panel_layout": {
+                "price": "ema75/sma200 + coiled-spring band",
+                "revenue": "8Q revenue bars + GM overlay",
+                "operating_margin": "trajectory + op-leverage label",
+                "score": "horizontal component bars + total gauge",
+            },
+            "weights": dict(COMPONENT_WEIGHTS),
+            "fundamental_data_available": _sec_available(sec_trend),
+        }
+        # Ensure unused face colors are bound for static analyzers.
+        _ = AX_BG
+        return image, meta
+    finally:
+        plt.close(fig)
 
 
 __all__ = [

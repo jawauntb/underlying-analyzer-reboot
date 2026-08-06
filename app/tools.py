@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from collections.abc import Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta
@@ -13,6 +14,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+from app._perf import tune_session
 from app.analysis import (
     compact_number,
     missing_profile_value,
@@ -52,6 +54,25 @@ PIXEL_STYLE = (
     "esoteric market symbols, vibrant colors, and no visible text of:"
 )
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
+
+# Reused, connection-pooled session for OpenAI image calls so repeated Pixel
+# generations keep TLS/keep-alive connections instead of building a fresh pool
+# per call. Lazily created and shared across threads (requests.Session sends are
+# safe over a sized pool). Callers may still inject their own session.
+_openai_session: requests.Session | None = None
+_openai_session_lock = threading.Lock()
+
+
+def _shared_openai_session() -> requests.Session:
+    global _openai_session
+    session = _openai_session
+    if session is None:
+        with _openai_session_lock:
+            session = _openai_session
+            if session is None:
+                session = tune_session(requests.Session())
+                _openai_session = session
+    return session
 MARKET_TEXT_SYSTEM = (
     "You are The Underlying's institutional equity analyst. Produce sober, evidence-based "
     "research for a serious investor using only the provided structured data. Separate facts "
@@ -1098,7 +1119,7 @@ def generate_pixel_image(
         raise MarketDataError("OPENAI_API_KEY is not configured for Pixel generation")
     model = image_model or os.getenv("OPENAI_IMAGE_MODEL") or DEFAULT_OPENAI_IMAGE_MODEL
 
-    http = session or requests.Session()
+    http = session if session is not None else _shared_openai_session()
     response = http.post(
         "https://api.openai.com/v1/images/generations",
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},

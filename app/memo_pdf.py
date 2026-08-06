@@ -216,6 +216,44 @@ STYLES: dict[str, ParagraphStyle] = {
 }
 
 
+# Derived list/citation styles. These have constant parameters, so we build
+# them once at import and reuse them across every render instead of allocating
+# a fresh ParagraphStyle per list item / citation row (which the hot markdown
+# and section builders previously did on every call).
+_LI_STYLES: dict[str, ParagraphStyle] = {
+    "ul": ParagraphStyle(
+        "li_ul",
+        parent=STYLES["body"],
+        leftIndent=14,
+        firstLineIndent=-10,
+        spaceAfter=2,
+    ),
+    "ol": ParagraphStyle(
+        "li_ol",
+        parent=STYLES["bullet_cyan"],
+        leftIndent=14,
+        firstLineIndent=-10,
+        spaceAfter=2,
+    ),
+}
+
+_LI_CAT_STYLE = ParagraphStyle(
+    "li_cat",
+    parent=STYLES["body"],
+    leftIndent=12,
+    firstLineIndent=-10,
+    spaceAfter=4,
+)
+
+_CITE_STYLE = ParagraphStyle(
+    "cite",
+    parent=STYLES["body"],
+    leftIndent=16,
+    firstLineIndent=-16,
+    spaceAfter=4,
+)
+
+
 # ---------------------------------------------------------------------------
 # Markdown → flowable converter.
 # ---------------------------------------------------------------------------
@@ -299,19 +337,12 @@ def _markdown_to_flowables(text: str) -> list[Flowable]:
             return
         for kind, content in list_buf:
             bullet = "&bull;" if kind == "ul" else "&#9656;"
-            style = STYLES["bullet_cyan"] if kind == "ol" else STYLES["body"]
             try:
                 out.append(
                     Paragraph(
                         f'<font color="#57d9ff">{bullet}</font>&nbsp;&nbsp;'
                         + _md_inline(content),
-                        ParagraphStyle(
-                            "li",
-                            parent=style,
-                            leftIndent=14,
-                            firstLineIndent=-10,
-                            spaceAfter=2,
-                        ),
+                        _LI_STYLES.get(kind, _LI_STYLES["ul"]),
                     )
                 )
             except Exception:
@@ -1187,13 +1218,7 @@ def _catalysts_section(payload: MemoPdfPayload) -> list[Flowable]:
                 Paragraph(
                     f'<font color="{color.hexval()}">&bull;</font>&nbsp;&nbsp;'
                     + _md_inline(str(item)),
-                    ParagraphStyle(
-                        "li_cat",
-                        parent=STYLES["body"],
-                        leftIndent=12,
-                        firstLineIndent=-10,
-                        spaceAfter=4,
-                    ),
+                    _LI_CAT_STYLE,
                 )
             )
         return col
@@ -1306,13 +1331,7 @@ def _citations_section(payload: MemoPdfPayload) -> list[Flowable]:
         story.append(
             Paragraph(
                 body,
-                ParagraphStyle(
-                    "cite",
-                    parent=STYLES["body"],
-                    leftIndent=16,
-                    firstLineIndent=-16,
-                    spaceAfter=4,
-                ),
+                _CITE_STYLE,
             )
         )
     return story

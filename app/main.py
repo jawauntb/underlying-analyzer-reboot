@@ -23,6 +23,7 @@ from flask import (
 )
 from flask_cors import CORS
 
+from app._perf import ttl_cached
 from app.agent import (
     AgentError,
     normalize_history,
@@ -117,10 +118,25 @@ DOCS_DIR = ROOT_DIR / "docs"
 DEFAULT_MAX_RESULTS = 10
 MAX_RESULTS_CAP = 50
 RIDGE_GROWTH_PERIODS = ("6mo", "1y", "2y")
+# Short TTL: SEC source packs are idempotent per ticker and only change when a new
+# filing lands (quarterly cadence), so a few minutes of response caching is safe and
+# spares repeat callers the per-filing fetch + assembly work on cache-cold clients.
+SEC_SOURCE_PACK_TTL_SECONDS = 300
 
 
 class SupabaseAuthError(ValueError):
     pass
+
+
+@ttl_cached(SEC_SOURCE_PACK_TTL_SECONDS)
+def _cached_sec_source_pack(client: SecClient, ticker: str) -> dict[str, Any]:
+    """Memoize the idempotent SEC source pack by (client, ticker) for a short TTL.
+
+    Keyed on the client instance so distinct app instances (and tests) never share
+    cache state. Side-effect-free read; the returned dict is already a shared cached
+    object inside ``SecClient`` and callers here only serialize it.
+    """
+    return client.get_source_pack(ticker)
 
 
 @dataclass(frozen=True)
@@ -227,7 +243,7 @@ def create_app() -> Flask:
     @app.get("/api/sec/<ticker>")
     def sec_source_pack(ticker: str) -> Any:
         try:
-            return jsonify(get_sec_client().get_source_pack(ticker))
+            return jsonify(_cached_sec_source_pack(get_sec_client(), ticker))
         except (ValueError, SecDataError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -531,18 +547,34 @@ def create_app() -> Flask:
             payload = request.get_json(silent=True) or {}
             ticker = clean_ticker(str(payload.get("ticker") or ""))
             client = get_market_client()
-            history = client.get_history(ticker, period="2y", interval="1d")
-            try:
-                profile = client.get_profile(ticker)
-            except Exception:
-                profile = {}
-            sec_trend_pack: dict[str, Any] | None = None
-            try:
-                from app.sec_trend import build_sec_trend_pack
+            sec_client = get_sec_client()
 
-                sec_trend_pack = build_sec_trend_pack(get_sec_client(), ticker, quarters=8)
-            except Exception:
-                sec_trend_pack = None
+            def _load_profile() -> dict[str, Any]:
+                try:
+                    return client.get_profile(ticker)
+                except Exception:
+                    return {}
+
+            def _load_sec_trend() -> dict[str, Any] | None:
+                try:
+                    from app.sec_trend import build_sec_trend_pack
+
+                    return build_sec_trend_pack(sec_client, ticker, quarters=8)
+                except Exception:
+                    return None
+
+            # These three fetches are independent (all keyed by ticker); run them
+            # concurrently. history_future.result() re-raises MarketDataError/ValueError
+            # into the route's existing handler exactly as the sequential version did.
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                history_future = executor.submit(
+                    client.get_history, ticker, period="2y", interval="1d"
+                )
+                profile_future = executor.submit(_load_profile)
+                sec_trend_future = executor.submit(_load_sec_trend)
+                history = history_future.result()
+                profile = profile_future.result()
+                sec_trend_pack: dict[str, Any] | None = sec_trend_future.result()
             torque_result = compute_torque_score(
                 history=history,
                 sec_trend=sec_trend_pack,
@@ -1450,16 +1482,19 @@ def build_chart_response(
         histories = []
         results: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
-        for ticker in selection.tickers:
+        history_slots = fetch_history_slots(client, selection.tickers, period=period)
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
             try:
-                history = client.get_history(ticker, period=period)
-                image, meta = render_auction_chart(history, period=period)
+                image, meta = render_auction_chart(slot, period=period)
             except (ValueError, MarketDataError) as exc:
                 errors.append({"ticker": ticker, "error": str(exc)})
                 continue
-            histories.append(history)
+            histories.append(slot)
             images.append(image)
-            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, meta))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -1481,16 +1516,19 @@ def build_chart_response(
         histories = []
         results = []
         errors = []
-        for ticker in selection.tickers:
+        history_slots = fetch_history_slots(client, selection.tickers, period="10y")
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
             try:
-                history = client.get_history(ticker, period="10y")
-                image, meta = render_performance_chart(history, month=month)
+                image, meta = render_performance_chart(slot, month=month)
             except (ValueError, MarketDataError) as exc:
                 errors.append({"ticker": ticker, "error": str(exc)})
                 continue
-            histories.append(history)
+            histories.append(slot)
             images.append(image)
-            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, meta))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -1511,21 +1549,25 @@ def build_chart_response(
         histories = []
         results = []
         errors = []
-        for ticker in selection.tickers:
+        history_slots = fetch_history_slots(
+            client,
+            selection.tickers,
+            period=str(payload.get("period") or "1y"),
+            start=payload.get("start_date"),
+            end=payload.get("end_date"),
+        )
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
             try:
-                history = client.get_history(
-                    ticker,
-                    period=str(payload.get("period") or "1y"),
-                    start=payload.get("start_date"),
-                    end=payload.get("end_date"),
-                )
-                image, meta = render_regression_chart(history)
+                image, meta = render_regression_chart(slot)
             except (ValueError, MarketDataError) as exc:
                 errors.append({"ticker": ticker, "error": str(exc)})
                 continue
-            histories.append(history)
+            histories.append(slot)
             images.append(image)
-            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, meta))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -1547,20 +1589,51 @@ def build_chart_response(
         results = []
         errors = []
         windows: list[dict[str, Any]] = []
+        # Fetch every (ticker, period) window concurrently, preserving nested order, then
+        # render sequentially (matplotlib is not thread-safe). Collapses 3xN sequential
+        # network round-trips into a single parallel batch.
+        jobs = [
+            (ticker, period)
+            for ticker in selection.tickers
+            for period in RIDGE_GROWTH_PERIODS
+        ]
+        job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
+        with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
+            futures = {
+                executor.submit(
+                    client.get_history, ticker, period=period, interval="1d"
+                ): index
+                for index, (ticker, period) in enumerate(jobs)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    job_slots[index] = future.result()
+                except (ValueError, MarketDataError) as exc:
+                    job_slots[index] = exc
+        job_index = 0
         for ticker in selection.tickers:
             ticker_windows: list[dict[str, Any]] = []
             for period in RIDGE_GROWTH_PERIODS:
+                job_slot = job_slots[job_index]
+                job_index += 1
+                if isinstance(job_slot, Exception):
+                    errors.append({"ticker": ticker, "error": f"{period}: {job_slot}"})
+                    continue
+                if job_slot is None:
+                    continue
                 try:
-                    history = client.get_history(ticker, period=period, interval="1d")
-                    image, meta = render_ridge_growth_chart(history, period=period)
+                    image, meta = render_ridge_growth_chart(job_slot, period=period)
                 except (ValueError, MarketDataError) as exc:
                     errors.append({"ticker": ticker, "error": f"{period}: {exc}"})
                     continue
-                histories.append(history)
+                histories.append(job_slot)
                 images.append(image)
                 ticker_windows.append(meta)
                 windows.append(meta)
-                results.append(result_payload(history.ticker, history.provider, history.note, meta))
+                results.append(
+                    result_payload(job_slot.ticker, job_slot.provider, job_slot.note, meta)
+                )
             if ticker_windows:
                 ticker_windows[-1]["analysis_memo"] = build_ridge_growth_memo(
                     ticker, ticker_windows
@@ -1611,16 +1684,21 @@ def build_chart_response(
         histories = []
         results = []
         errors = []
-        for ticker in selection.tickers:
+        history_slots = fetch_history_slots(
+            client, selection.tickers, period=period, interval="1d"
+        )
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
             try:
-                history = client.get_history(ticker, period=period, interval="1d")
-                image, meta = render_flow_compass_chart(history, period=period)
+                image, meta = render_flow_compass_chart(slot, period=period)
             except (ValueError, MarketDataError) as exc:
                 errors.append({"ticker": ticker, "error": str(exc)})
                 continue
-            histories.append(history)
+            histories.append(slot)
             images.append(image)
-            results.append(result_payload(history.ticker, history.provider, history.note, meta))
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, meta))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -1643,12 +1721,11 @@ def build_chart_response(
         histories = []
         results = []
         errors = []
-        for ticker in selection.tickers:
-            try:
-                history = client.get_history(ticker, period=period, interval="1d")
-            except (ValueError, MarketDataError) as exc:
-                errors.append({"ticker": ticker, "error": str(exc)})
-                continue
+
+        def _torque_bundle(
+            tk: str,
+        ) -> tuple[HistoryResult, dict[str, Any], dict[str, Any] | None]:
+            history = client.get_history(tk, period=period, interval="1d")
             try:
                 profile = client.get_profile(history.ticker)
             except Exception:
@@ -1660,6 +1737,27 @@ def build_chart_response(
                 sec_trend_pack = build_sec_trend_pack(sec_client, history.ticker, quarters=8)
             except Exception:
                 sec_trend_pack = None
+            return history, profile, sec_trend_pack
+
+        # Per-ticker Torque data pull (history + profile + SEC trend) runs concurrently,
+        # matching the existing cockpit fan-out; render stays sequential (matplotlib).
+        bundle_slots: list[Any] = [None] * len(selection.tickers)
+        with ThreadPoolExecutor(max_workers=batch_worker_count(selection.tickers)) as executor:
+            bundle_futures = {
+                executor.submit(_torque_bundle, ticker): index
+                for index, ticker in enumerate(selection.tickers)
+            }
+            for bundle_future in as_completed(bundle_futures):
+                index = bundle_futures[bundle_future]
+                try:
+                    bundle_slots[index] = bundle_future.result()
+                except (ValueError, MarketDataError) as exc:
+                    bundle_slots[index] = exc
+        for ticker, slot in zip(selection.tickers, bundle_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            history, profile, sec_trend_pack = slot
             try:
                 image, meta = render_torque_chart(
                     history=history,
@@ -2256,6 +2354,35 @@ def collect_benchmark(
     except (ValueError, MarketDataError) as exc:
         errors.append({"ticker": benchmark_label, "error": f"Benchmark unavailable: {exc}"})
         return None
+
+
+def fetch_history_slots(
+    client: MarketDataClient, tickers: list[str], **history_options: Any
+) -> list[HistoryResult | Exception]:
+    """Fetch per-ticker histories concurrently, preserving ticker order.
+
+    Returns a list aligned to ``tickers`` where each entry is the ``HistoryResult`` on
+    success or the caught ``ValueError``/``MarketDataError`` on failure. Only the
+    independent network fetches are parallelized here; callers keep chart rendering
+    sequential because matplotlib is not thread-safe. Mirrors the established
+    ``collect_histories`` fan-out pattern so error types and behavior are unchanged.
+    """
+    slots: list[HistoryResult | Exception | None] = [None] * len(tickers)
+    with ThreadPoolExecutor(max_workers=batch_worker_count(tickers)) as executor:
+        futures = {
+            executor.submit(client.get_history, ticker, **history_options): index
+            for index, ticker in enumerate(tickers)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                slots[index] = future.result()
+            except (ValueError, MarketDataError) as exc:
+                slots[index] = exc
+    # Every ticker is submitted and resolves to a HistoryResult or a caught exception,
+    # so no slot stays None; the filter only narrows the type and preserves ticker order
+    # (and length) for aligned zip() in callers.
+    return [slot for slot in slots if slot is not None]
 
 
 def collect_histories(

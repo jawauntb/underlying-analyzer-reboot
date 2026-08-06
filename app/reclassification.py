@@ -18,6 +18,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from app.market_data import HistoryResult
@@ -488,6 +489,18 @@ def _assemble_corpus(
 _WORD_BOUNDARY_RE = re.compile(r"[a-z0-9]")
 
 
+@lru_cache(maxsize=2048)
+def _boundary_pattern(kw: str) -> re.Pattern[str]:
+    """Compile (and memoize) the word-boundary regex for a single-token keyword.
+
+    The keyword set is fixed across requests, so compiling each pattern once and
+    reusing it avoids re-running ``re.escape`` + recompilation on every ticker's
+    corpus scan. Behavior is identical to the previous inline ``re.search``.
+    """
+
+    return re.compile(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])")
+
+
 def _keyword_hit(corpus: str, keyword: str) -> bool:
     """Substring match with light word-boundary heuristics.
 
@@ -504,8 +517,7 @@ def _keyword_hit(corpus: str, keyword: str) -> bool:
     if any(ch in kw for ch in (" ", "-", ".", "/")):
         return kw in corpus
 
-    pattern = rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])"
-    return re.search(pattern, corpus) is not None
+    return _boundary_pattern(kw).search(corpus) is not None
 
 
 def _score_theme(corpus: str, theme_def: Mapping[str, Any]) -> tuple[int, list[str]]:
