@@ -122,9 +122,9 @@ _MAX_RESULTS = {
 }
 _PERIOD = {
     "type": "string",
-    "enum": ["1mo", "3mo", "6mo", "1y", "2y", "5y", "10y"],
+    "enum": ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y"],
     "default": "1y",
-    "description": "History window",
+    "description": "History window (5d is roughly one trading week)",
 }
 
 

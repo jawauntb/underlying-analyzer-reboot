@@ -35,6 +35,9 @@ Request bodies are identical to the image routes. Ticker selection (all routes):
 
 Per-type extras:
 
+Supported `period` tokens: `5d` (≈ one trading week), `1mo`, `3mo`, `6mo`,
+`1y`, `2y`, `5y`, `10y`.
+
 | Type | Extra body fields | History window used |
 | --- | --- | --- |
 | `auction` | `period` (default `1y`) | `period` |
@@ -397,7 +400,14 @@ In the `underlying-analyzer-reboot` repo:
 ## Client tips
 
 - OHLCV windows are full history for the period (1y daily ≈ 250 points, 2y ≈
-  500). Decimate client-side if your chart lib struggles.
+  500, 5d ≈ 5 candles). Decimate client-side if your chart lib struggles.
+- On short windows like `5d`, SMA-based series (`sma50`, `sma200`,
+  ridge-growth `major_ma`) need a full lookback and come back short or empty —
+  hide those overlays rather than erroring. EMA series (`ema21`/`ema50`/
+  `ema200`, `fast_ma`, `base_ma`, `ema75`) always return values from the first
+  bar but are weak estimates until the window exceeds their span; consider
+  hiding long-span EMAs on very short windows. Auction levels compute over
+  whatever sessions exist (nominally the trailing 21).
 - Ridge-growth returns 3 datasets per ticker; on mobile fetch one ticker at a
   time and lazy-load windows.
 - `provider` tells you where data came from (`yfinance`, `nasdaq`, mixed as

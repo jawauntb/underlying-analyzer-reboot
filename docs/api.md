@@ -107,6 +107,9 @@ Supported `chart_type` values:
 
 Underscores are accepted (`ridge_growth` → `ridge-growth`).
 
+`period` accepts `5d` (≈ one trading week), `1mo`, `3mo`, `6mo`, `1y`, `2y`,
+`5y`, `10y` wherever a chart type takes a period.
+
 **Request**
 
 ```bash
