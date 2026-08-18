@@ -465,6 +465,7 @@ def test_api_docs_catalog_is_public() -> None:
     paths = {item["path"] for item in payload["endpoints"]}
     assert "/api/tools/vision/v2" in paths
     assert "/api/charts/{chart_type}" in paths
+    assert "/api/data/charts/{chart_type}" in paths
     assert any(tool["id"] == "docs" for tool in payload["site_tools"])
 
 
@@ -492,6 +493,42 @@ def test_chart_endpoint_returns_image_payload() -> None:
     assert payload["provider"] == "fake"
     assert payload["images"][0]["mime"] == "image/png"
     assert len(payload["images"][0]["data"]) > 100
+
+
+def test_chart_data_endpoint_returns_series_without_images() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/data/charts/auction", json={"ticker": "AAPL", "period": "1y"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert "images" not in payload
+    assert payload["provider"] == "fake"
+    assert payload["export"]["mode"] == "auction-data"
+    assert payload["export"]["image_files"] == []
+    dataset = payload["datasets"][0]
+    assert dataset["chart_type"] == "auction"
+    assert dataset["ticker"] == "AAPL"
+    assert "poc" in dataset["levels"]
+    assert len(dataset["series"]["ohlcv"]) > 10
+    assert len(dataset["series"]["close"]) > 10
+
+
+def test_regression_data_endpoint_returns_bands() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post("/api/data/charts/regression", json={"ticker": "AAPL"})
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    dataset = payload["datasets"][0]
+    assert "slope_per_day" in dataset["meta"]
+    assert "upper_band" in dataset["series"]
+    assert "ema21" in dataset["series"]
 
 
 def test_ridge_growth_endpoint_returns_strategy_package() -> None:

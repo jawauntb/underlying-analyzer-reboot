@@ -148,6 +148,64 @@ curl -s -X POST http://127.0.0.1:5050/api/charts/portfolio \
 
 ---
 
+## Chart data (for upstream UIs)
+
+Existing `/api/charts/...` and image tool routes are unchanged. Prefer these
+`/api/data/...` routes when your app will draw charts itself.
+
+### `POST /api/data/charts/<chart_type>`
+
+Same `chart_type` values and request body as `/api/charts/<chart_type>`. Returns
+`datasets` (series / levels / tables / meta) instead of `images`.
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/data/charts/auction \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL","period":"1y"}'
+```
+
+**Response shape (common)**
+
+```json
+{
+  "datasets": [
+    {
+      "chart_type": "auction",
+      "ticker": "AAPL",
+      "meta": { "vah": 1.0, "val": 1.0, "poc": 1.0 },
+      "levels": { "vah": 1.0, "val": 1.0, "poc": 1.0 },
+      "series": { "ohlcv": [], "close": [] }
+    }
+  ],
+  "provider": "yfinance",
+  "provider_note": "...",
+  "meta": {},
+  "export": { "mode": "auction-data", "tickers": ["AAPL"], "image_files": [] }
+}
+```
+
+### `POST /api/data/tools/torque`
+
+Torque score + chartable price/fundamental series (no PNG).
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/data/tools/torque \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL"}'
+```
+
+### `POST /api/data/tools/moneyline`
+
+Options open-interest ladder as JSON (no PNG).
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/data/tools/moneyline \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL"}'
+```
+
+---
+
 ## Analysis / briefs
 
 ### `GET /api/analysis/<ticker>`

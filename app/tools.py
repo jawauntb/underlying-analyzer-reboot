@@ -902,9 +902,8 @@ def text_report_payload(report: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in report.items() if key != "Export Rows"}
 
 
-def render_moneyline_chart(
-    ticker: str, expiry: str | None = None
-) -> tuple[RenderedImage, dict[str, Any]]:
+def build_moneyline_data(ticker: str, expiry: str | None = None) -> dict[str, Any]:
+    """Gather options open-interest ladder data without rendering a chart image."""
     symbol = clean_ticker(ticker)
     stock = yf.Ticker(symbol)
     history = stock.history(period="5d")
@@ -918,13 +917,46 @@ def render_moneyline_chart(
     if not rows:
         raise MarketDataError(f"No usable option rows for {symbol} {selected_expiry}")
 
-    image = moneyline_image(symbol, selected_expiry, current_price, rows)
-    return image, {
+    meta = {
         "ticker": symbol,
         "expiry": selected_expiry,
         "current_price": current_price,
         "rows": rows,
     }
+    return {
+        "chart_type": "moneyline",
+        "ticker": symbol,
+        "meta": meta,
+        "series": {
+            "strikes": [
+                {
+                    "strike": row["strike"],
+                    "call_open_interest": row["call_open_interest"],
+                    "put_open_interest": row["put_open_interest"],
+                    "call_last": row["call_last"],
+                    "put_last": row["put_last"],
+                    "net_open_interest": row["net_open_interest"],
+                    "put_call_ratio": row["put_call_ratio"],
+                }
+                for row in rows
+            ]
+        },
+        "rows": rows,
+    }
+
+
+def render_moneyline_chart(
+    ticker: str, expiry: str | None = None
+) -> tuple[RenderedImage, dict[str, Any]]:
+    payload = build_moneyline_data(ticker, expiry=expiry)
+    meta = payload["meta"]
+    image = moneyline_image(
+        str(meta["ticker"]),
+        str(meta["expiry"]),
+        float(meta["current_price"]),
+        list(meta["rows"]),
+    )
+    return image, meta
 
 
 def choose_expiry(stock: yf.Ticker, expiry: str | None) -> str:

@@ -64,6 +64,9 @@ def test_anthropic_and_mcp_definitions_agree() -> None:
     mcp = {tool["name"] for tool in mcp_tool_definitions()}
     assert anthropic == mcp
     assert "render_chart" in anthropic
+    assert "chart_data" in anthropic
+    assert "torque_data" in anthropic
+    assert "moneyline_data" in anthropic
 
 
 def test_catalog_payload_covers_every_tool() -> None:

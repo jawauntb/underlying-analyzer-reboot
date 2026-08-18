@@ -35,6 +35,7 @@ CHART_TYPES: tuple[str, ...] = (
 GROUPS: dict[str, str] = {
     "meta": "Service metadata, capability discovery, and provider health",
     "charts": "Rendered chart packs for one ticker or a whole list",
+    "data": "Chartable JSON series for upstream apps to style themselves",
     "research": "Narrative research: briefs, memos, filings, and news",
     "signals": "Quantitative scores and scans",
     "watchlists": "Watchlist resolution, ranking, and alert digests",
@@ -252,6 +253,54 @@ TOOLS: tuple[ToolSpec, ...] = (
         cost=COST_SLOW,
     ),
     ToolSpec(
+        name="chart_data",
+        title="Chart data pack",
+        group="data",
+        summary=(
+            "Return chartable JSON series for one of eight chart packs "
+            "(no rendered images)"
+        ),
+        when_to_use=(
+            "Prefer this over render_chart when an upstream UI will draw its own "
+            "charts. Same inputs and math as render_chart; response carries "
+            "datasets with series/levels/tables instead of PNG base64."
+        ),
+        method="POST",
+        path="/api/data/charts/{chart_type}",
+        path_params=("chart_type",),
+        input_schema=_schema(
+            {
+                "chart_type": {
+                    "type": "string",
+                    "enum": list(CHART_TYPES),
+                    "description": "Which chart pack's data to return",
+                },
+                "ticker": _TICKER,
+                "tickers": _TICKERS,
+                "watchlist_url": _WATCHLIST_URL,
+                "max_results": _MAX_RESULTS,
+                "period": _PERIOD,
+                "month": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12,
+                    "description": "Month number for the performance / month-map pack",
+                },
+                "benchmark": {
+                    "type": "string",
+                    "description": "Benchmark ticker for portfolio runs (default SPY)",
+                },
+                "investment_per_stock": {
+                    "type": "number",
+                    "description": "Portfolio sizing per name",
+                },
+            },
+            required=["chart_type"],
+        ),
+        returns="datasets[] with series, levels, tables, and meta — no images.",
+        cost=COST_FAST,
+    ),
+    ToolSpec(
         name="stock_fax",
         title="Stock Fax",
         group="research",
@@ -364,6 +413,21 @@ TOOLS: tuple[ToolSpec, ...] = (
         cost=COST_SLOW,
     ),
     ToolSpec(
+        name="torque_data",
+        title="Torque data",
+        group="data",
+        summary="Torque score plus chartable price/fundamental series (no image)",
+        when_to_use=(
+            "Use when the caller needs torque numbers and series to plot, not "
+            "a terminal-styled PNG."
+        ),
+        method="POST",
+        path="/api/data/tools/torque",
+        input_schema=_schema({"ticker": _TICKER}, required=["ticker"]),
+        returns="Torque score, components, and price/fundamental series.",
+        cost=COST_FAST,
+    ),
+    ToolSpec(
         name="torque_scan",
         title="Torque scan",
         group="signals",
@@ -408,6 +472,29 @@ TOOLS: tuple[ToolSpec, ...] = (
         returns="Moneyline chart plus strike-level metrics.",
         produces_images=True,
         cost=COST_SLOW,
+    ),
+    ToolSpec(
+        name="moneyline_data",
+        title="Options moneyline data",
+        group="data",
+        summary="Options open-interest ladder as JSON (no image)",
+        when_to_use=(
+            "Use when an upstream UI will plot the moneyline / moneywall itself."
+        ),
+        method="POST",
+        path="/api/data/tools/moneyline",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "expiry": {
+                    "type": "string",
+                    "description": "Expiry as YYYY-MM-DD; omit for the nearest",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns="Strike ladder rows and meta — no images.",
+        cost=COST_FAST,
     ),
     ToolSpec(
         name="resolve_watchlist",

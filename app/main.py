@@ -78,6 +78,16 @@ from app.charts import (
     render_ridge_growth_chart,
     render_volatility_chart,
 )
+from app.chart_data import (
+    build_auction_chart_data,
+    build_flow_compass_chart_data,
+    build_performance_chart_data,
+    build_portfolio_chart_data,
+    build_regression_chart_data,
+    build_ridge_growth_chart_data,
+    build_torque_chart_data,
+    build_volatility_chart_data,
+)
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
 from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
@@ -98,6 +108,7 @@ from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
     build_market_memo_charts,
+    build_moneyline_data,
     build_stock_fax,
     build_stock_fax_data,
     generate_analysis_brief,
@@ -260,6 +271,21 @@ def create_app() -> Flask:
         except Exception as exc:
             app.logger.exception("Unexpected chart error")
             return jsonify({"error": f"Unexpected chart error: {exc}"}), 500
+
+    @app.post("/api/data/charts/<chart_type>")
+    def chart_data(chart_type: str) -> Any:
+        """Same chart math as /api/charts/<type>, but JSON series instead of PNGs."""
+        try:
+            payload = request.get_json(silent=True) or {}
+            response = build_chart_data_response(
+                get_market_client(), get_watchlist_client(), chart_type, payload
+            )
+            return jsonify(response)
+        except (ValueError, MarketDataError, WatchlistError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            app.logger.exception("Unexpected chart data error")
+            return jsonify({"error": f"Unexpected chart data error: {exc}"}), 500
 
     @app.post("/api/analysis")
     def analysis_batch() -> Any:
@@ -611,6 +637,57 @@ def create_app() -> Flask:
             app.logger.exception("Unexpected torque error")
             return jsonify({"error": f"Unexpected torque error: {exc}"}), 500
 
+    @app.post("/api/data/tools/torque")
+    def torque_data_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            ticker = clean_ticker(str(payload.get("ticker") or ""))
+            client = get_market_client()
+            sec_client = get_sec_client()
+
+            def _load_profile() -> dict[str, Any]:
+                try:
+                    return client.get_profile(ticker)
+                except Exception:
+                    return {}
+
+            def _load_sec_trend() -> dict[str, Any] | None:
+                try:
+                    from app.sec_trend import build_sec_trend_pack
+
+                    return build_sec_trend_pack(sec_client, ticker, quarters=8)
+                except Exception:
+                    return None
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                history_future = executor.submit(
+                    client.get_history, ticker, period="2y", interval="1d"
+                )
+                profile_future = executor.submit(_load_profile)
+                sec_trend_future = executor.submit(_load_sec_trend)
+                history = history_future.result()
+                profile = profile_future.result()
+                sec_trend_pack: dict[str, Any] | None = sec_trend_future.result()
+            dataset = build_torque_chart_data(
+                history=history,
+                sec_trend=sec_trend_pack,
+                profile=profile,
+            )
+            export = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "mode": "torque-data",
+                "ticker": ticker,
+                "torque": dataset.get("torque"),
+                "meta": dataset.get("meta"),
+                "image_files": [],
+            }
+            return jsonify({**dataset, "export": export})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            app.logger.exception("Unexpected torque data error")
+            return jsonify({"error": f"Unexpected torque data error: {exc}"}), 500
+
     @app.post("/api/tools/torque/scan")
     def torque_scan_tool() -> Any:
         try:
@@ -661,6 +738,24 @@ def create_app() -> Flask:
                 "image_files": [{"filename": image.filename, "mime": image.mime}],
             }
             return jsonify({"image": image.__dict__, "meta": meta, "export": export})
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/data/tools/moneyline")
+    def moneyline_data_tool() -> Any:
+        try:
+            payload = request.get_json(silent=True) or {}
+            dataset = build_moneyline_data(
+                str(payload.get("ticker") or ""), expiry=payload.get("expiry")
+            )
+            export = {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "mode": "moneyline-data",
+                "ticker": dataset["ticker"],
+                "meta": dataset["meta"],
+                "image_files": [],
+            }
+            return jsonify({**dataset, "export": export})
         except (ValueError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -1849,6 +1944,395 @@ def build_chart_response(
     raise ValueError(f"Unsupported chart type: {chart_type}")
 
 
+def build_chart_data_response(
+    client: MarketDataClient,
+    watchlist_client: TradingViewWatchlistClient,
+    chart_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Same inputs and market-data fan-out as build_chart_response, without PNG renders."""
+    chart_key = chart_type.replace("_", "-")
+    if chart_key == "auction":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        period = str(payload.get("period") or "1y")
+        datasets: list[dict[str, Any]] = []
+        histories = []
+        results: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        history_slots = fetch_history_slots(client, selection.tickers, period=period)
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            try:
+                dataset = build_auction_chart_data(slot, period=period)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(slot)
+            datasets.append(dataset)
+            results.append(
+                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
+            )
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Batch auction chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "performance":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        month = int(payload.get("month") or 1)
+        datasets = []
+        histories = []
+        results = []
+        errors = []
+        history_slots = fetch_history_slots(client, selection.tickers, period="10y")
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            try:
+                dataset = build_performance_chart_data(slot, month=month)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(slot)
+            datasets.append(dataset)
+            results.append(
+                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
+            )
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Batch monthly performance chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "regression":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        datasets = []
+        histories = []
+        results = []
+        errors = []
+        history_slots = fetch_history_slots(
+            client,
+            selection.tickers,
+            period=str(payload.get("period") or "1y"),
+            start=payload.get("start_date"),
+            end=payload.get("end_date"),
+        )
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            try:
+                dataset = build_regression_chart_data(slot)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(slot)
+            datasets.append(dataset)
+            results.append(
+                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
+            )
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Batch regression chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "ridge-growth":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        datasets = []
+        histories = []
+        results = []
+        errors = []
+        windows: list[dict[str, Any]] = []
+        jobs = [
+            (ticker, period)
+            for ticker in selection.tickers
+            for period in RIDGE_GROWTH_PERIODS
+        ]
+        job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
+        with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
+            futures = {
+                executor.submit(
+                    client.get_history, ticker, period=period, interval="1d"
+                ): index
+                for index, (ticker, period) in enumerate(jobs)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    job_slots[index] = future.result()
+                except (ValueError, MarketDataError) as exc:
+                    job_slots[index] = exc
+        job_index = 0
+        for ticker in selection.tickers:
+            ticker_windows: list[dict[str, Any]] = []
+            for period in RIDGE_GROWTH_PERIODS:
+                job_slot = job_slots[job_index]
+                job_index += 1
+                if isinstance(job_slot, Exception):
+                    errors.append({"ticker": ticker, "error": f"{period}: {job_slot}"})
+                    continue
+                if job_slot is None:
+                    continue
+                try:
+                    dataset = build_ridge_growth_chart_data(job_slot, period=period)
+                except (ValueError, MarketDataError) as exc:
+                    errors.append({"ticker": ticker, "error": f"{period}: {exc}"})
+                    continue
+                histories.append(job_slot)
+                datasets.append(dataset)
+                ticker_windows.append(dataset["meta"])
+                windows.append(dataset["meta"])
+                results.append(
+                    result_payload(
+                        job_slot.ticker, job_slot.provider, job_slot.note, dataset["meta"]
+                    )
+                )
+            if ticker_windows:
+                memo = build_ridge_growth_memo(ticker, ticker_windows)
+                ticker_windows[-1]["analysis_memo"] = memo
+                datasets[-1]["meta"]["analysis_memo"] = memo
+        require_results(results, errors)
+        meta = {**batch_meta(results, errors, selection.watchlist), "windows": windows}
+        first_memo = next(
+            (
+                str(window["analysis_memo"])
+                for window in windows
+                if window.get("analysis_memo")
+            ),
+            "",
+        )
+        if first_memo:
+            meta["analysis_memo"] = first_memo
+        if windows:
+            primary = next(
+                (window for window in windows if window.get("period") == "1y"),
+                windows[-1],
+            )
+            meta.update(
+                {
+                    "state": primary.get("state"),
+                    "recommendation": primary.get("recommendation"),
+                    "ending_equity": primary.get("ending_equity"),
+                    "total_return": primary.get("total_return"),
+                    "max_drawdown": primary.get("max_drawdown"),
+                    "flow_state": primary.get("flow_compass", {}).get("state"),
+                    "flow_score": primary.get("flow_compass", {}).get("score"),
+                    "auction_location": primary.get("auction", {}).get("location"),
+                }
+            )
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Ridge Growth daily strategy chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=selection.tickers,
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "flow-compass":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        period = str(payload.get("period") or "1y")
+        datasets = []
+        histories = []
+        results = []
+        errors = []
+        history_slots = fetch_history_slots(
+            client, selection.tickers, period=period, interval="1d"
+        )
+        for ticker, slot in zip(selection.tickers, history_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            try:
+                dataset = build_flow_compass_chart_data(slot, period=period)
+            except (ValueError, MarketDataError) as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            histories.append(slot)
+            datasets.append(dataset)
+            results.append(
+                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
+            )
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Flow Compass daily indicator chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "torque":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        period = str(payload.get("period") or "2y")
+        sec_client = current_app.config.get("SEC_CLIENT")
+        datasets = []
+        histories = []
+        results = []
+        errors = []
+
+        def _torque_bundle(
+            tk: str,
+        ) -> tuple[HistoryResult, dict[str, Any], dict[str, Any] | None]:
+            history = client.get_history(tk, period=period, interval="1d")
+            try:
+                profile = client.get_profile(history.ticker)
+            except Exception:
+                profile = {}
+            sec_trend_pack: dict[str, Any] | None = None
+            try:
+                from app.sec_trend import build_sec_trend_pack
+
+                sec_trend_pack = build_sec_trend_pack(sec_client, history.ticker, quarters=8)
+            except Exception:
+                sec_trend_pack = None
+            return history, profile, sec_trend_pack
+
+        bundle_slots: list[Any] = [None] * len(selection.tickers)
+        with ThreadPoolExecutor(max_workers=batch_worker_count(selection.tickers)) as executor:
+            bundle_futures = {
+                executor.submit(_torque_bundle, ticker): index
+                for index, ticker in enumerate(selection.tickers)
+            }
+            for bundle_future in as_completed(bundle_futures):
+                index = bundle_futures[bundle_future]
+                try:
+                    bundle_slots[index] = bundle_future.result()
+                except (ValueError, MarketDataError) as exc:
+                    bundle_slots[index] = exc
+        for ticker, slot in zip(selection.tickers, bundle_slots, strict=False):
+            if isinstance(slot, Exception):
+                errors.append({"ticker": ticker, "error": str(slot)})
+                continue
+            history, profile, sec_trend_pack = slot
+            try:
+                dataset = build_torque_chart_data(
+                    history=history,
+                    sec_trend=sec_trend_pack,
+                    profile=profile,
+                )
+            except Exception as exc:
+                errors.append({"ticker": ticker, "error": f"torque data failed: {exc}"})
+                continue
+            histories.append(history)
+            datasets.append(dataset)
+            results.append(
+                result_payload(history.ticker, history.provider, history.note, dataset["meta"])
+            )
+        require_results(results, errors)
+        meta = batch_meta(results, errors, selection.watchlist)
+        if len(results) == 1:
+            meta = {**results[0]["meta"], **meta}
+        return data_response_payload(
+            datasets,
+            mixed_provider(histories),
+            "Torque inflection indicator chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "portfolio":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        history_options = {
+            "start": payload.get("start_date"),
+            "end": payload.get("end_date"),
+            "period": "1y",
+        }
+        histories, errors = collect_histories(
+            client,
+            selection.tickers,
+            **history_options,
+        )
+        require_histories(histories, errors)
+        benchmark = collect_benchmark(client, payload, errors, **history_options)
+        dataset = build_portfolio_chart_data(
+            histories,
+            investment_per_stock=float(payload.get("investment_per_stock") or 100),
+            benchmark=benchmark,
+        )
+        results = [
+            result_payload(
+                history.ticker,
+                history.provider,
+                history.note,
+                {"final_value": dataset["meta"]["final_values"][history.ticker]},
+            )
+            for history in histories
+        ]
+        meta = {
+            **dataset["meta"],
+            **batch_meta(results, errors, selection.watchlist),
+        }
+        return data_response_payload(
+            [dataset],
+            mixed_provider(histories),
+            "Mixed provider portfolio chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    if chart_key == "volatility":
+        selection = resolve_ticker_selection(payload, watchlist_client)
+        histories, errors = collect_histories(client, selection.tickers, period="1y")
+        require_histories(histories, errors)
+        dataset = build_volatility_chart_data(histories)
+        results = [
+            result_payload(history.ticker, history.provider, history.note, row)
+            for history, row in zip(histories, dataset["rows"], strict=False)
+        ]
+        meta = {**dataset["meta"], **batch_meta(results, errors, selection.watchlist)}
+        return data_response_payload(
+            [dataset],
+            mixed_provider(histories),
+            "Mixed provider volatility chart data",
+            meta,
+            mode=f"{chart_key}-data",
+            tickers=[history.ticker for history in histories],
+            watchlist=selection.watchlist,
+        )
+
+    raise ValueError(f"Unsupported chart type: {chart_type}")
+
+
 def build_analysis_response(
     client: MarketDataClient,
     watchlist_client: TradingViewWatchlistClient,
@@ -2259,6 +2743,36 @@ def response_payload(
         watchlist=watchlist,
         image_files=[{"filename": image.filename, "mime": image.mime} for image in images],
     )
+    return payload
+
+
+def data_response_payload(
+    datasets: list[dict[str, Any]],
+    provider: str,
+    note: str,
+    meta: dict[str, Any],
+    *,
+    mode: str,
+    tickers: list[str],
+    watchlist: WatchlistResult | None,
+) -> dict[str, Any]:
+    payload = {
+        "datasets": datasets,
+        "provider": provider,
+        "provider_note": note,
+        "meta": meta,
+        "watchlist": watchlist_payload(watchlist),
+    }
+    payload["export"] = export_payload(
+        mode=mode,
+        provider=provider,
+        provider_note=note,
+        tickers=tickers,
+        meta=meta,
+        watchlist=watchlist,
+        image_files=[],
+    )
+    payload["export"]["datasets"] = datasets
     return payload
 
 
