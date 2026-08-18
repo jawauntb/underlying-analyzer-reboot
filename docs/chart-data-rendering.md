@@ -225,11 +225,16 @@ Scores are clamped to ±100. States: `STRONG LONG`, `LONG OK`, `STRONG SHORT`,
 }
 ```
 
-`series.price` is empty (`{}`) when no price history exists; fundamentals lists
-are empty when SEC trend data is unavailable (check
-`meta.fundamental_data_available`). Margins are percentages (0–100). Stages:
+`series.price` is empty (`{}`) when no price history exists. Key fundamentals
+panels off the arrays themselves: they can be empty even when
+`meta.fundamental_data_available` is `true` — the flag means SEC trend data
+informed the score, not that quarterly series exist (some issuers report YoY
+scalars without quarterly breakdowns). Margins are percentages (0–100). Stages:
 `Coiled Spring`, `Inflecting`, `Proof Phase`, `Renaming Phase`, `Extended`,
 `No Setup`.
+
+Note: `POST /api/data/tools/torque` always uses a 2y daily window and ignores
+`period`; the `period` extra applies only to `POST /api/data/charts/torque`.
 
 ### portfolio (one dataset for the whole basket)
 
