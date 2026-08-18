@@ -133,6 +133,13 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "auth": "none",
     },
     {
+        "method": "GET",
+        "path": "/docs/chart-data-rendering.md",
+        "group": "meta",
+        "summary": "Chart-data rendering guide for upstream UIs (schemas + style)",
+        "auth": "none",
+    },
+    {
         "method": "POST",
         "path": "/api/charts/{chart_type}",
         "group": "charts",

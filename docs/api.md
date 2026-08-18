@@ -153,6 +153,10 @@ curl -s -X POST http://127.0.0.1:5050/api/charts/portfolio \
 Existing `/api/charts/...` and image tool routes are unchanged. Prefer these
 `/api/data/...` routes when your app will draw charts itself.
 
+Full rendering guide (per-chart payload schemas + the terminal visual style
+rules for native UIs): [chart-data-rendering.md](chart-data-rendering.md),
+served at `GET /docs/chart-data-rendering.md`.
+
 ### `POST /api/data/charts/<chart_type>`
 
 Same `chart_type` values and request body as `/api/charts/<chart_type>`. Returns

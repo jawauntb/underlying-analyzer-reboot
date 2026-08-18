@@ -210,6 +210,12 @@ def create_app() -> Flask:
     def docs_api_markdown() -> Response:
         return send_from_directory(DOCS_DIR, "api.md", mimetype="text/markdown")
 
+    @app.get("/docs/chart-data-rendering.md")
+    def docs_chart_data_rendering_markdown() -> Response:
+        return send_from_directory(
+            DOCS_DIR, "chart-data-rendering.md", mimetype="text/markdown"
+        )
+
     @app.get("/api/health")
     def health() -> Any:
         return jsonify({"ok": True, "service": "underlying-analyzer-reboot"})
