@@ -80,11 +80,16 @@ describe('endpoint and configuration safety', () => {
 
   it('uppercases and validates symbols before URI encoding', () => {
     expect(normalizeSymbol(' brk.b ')).toBe('BRK.B');
+    expect(normalizeSymbol(' ^gspc ')).toBe('^GSPC');
     expect(encodeSymbol('brk.b')).toBe('BRK.B');
+    expect(encodeSymbol('^gspc')).toBe('%5EGSPC');
     expect(encodeSymbol('rds-a')).toBe('RDS-A');
     expect(() => encodeSymbol('A B')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('A/B')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('A?B')).toThrow(/symbol/i);
+    expect(() => normalizeSymbol('G^SPC')).toThrow(/symbol/i);
+    expect(() => normalizeSymbol('^^GSPC')).toThrow(/symbol/i);
+    expect(() => normalizeSymbol('^')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('A'.repeat(16))).toThrow(/symbol/i);
   });
 });
