@@ -117,6 +117,176 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "method": "GET",
+        "path": "/api/data/market/snapshot",
+        "tag": "data",
+        "summary": "Massive stock snapshot",
+        "parameters": [
+            {"name": "ticker", "in": "query", "required": True, "schema": {"type": "string"}},
+            {
+                "name": "asset_class",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "default": "stocks"},
+            },
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/capabilities",
+        "tag": "meta",
+        "summary": "Massive dataset availability and freshness hints",
+    },
+    {
+        "method": "GET",
+        "path": "/api/capabilities/{capability_id}",
+        "tag": "meta",
+        "summary": "One Massive capability availability record",
+        "parameters": [
+            {"name": "capability_id", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/aggregates/{ticker}",
+        "tag": "data",
+        "summary": "Massive custom aggregate bars",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {
+                "name": "start",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "format": "date"},
+            },
+            {
+                "name": "end",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "format": "date"},
+            },
+            {
+                "name": "multiplier",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "integer", "default": 1},
+            },
+            {
+                "name": "timespan",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "default": "day"},
+            },
+            {
+                "name": "asset_class",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "default": "stocks"},
+            },
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/trades/{ticker}",
+        "tag": "data",
+        "summary": "Massive historical trades",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/quotes/{ticker}",
+        "tag": "data",
+        "summary": "Massive historical quotes",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/options/{ticker}/chain",
+        "tag": "data",
+        "summary": "Massive option chain snapshot",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {
+                "name": "expiry",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "format": "date"},
+            },
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/options/{ticker}/expirations",
+        "tag": "data",
+        "summary": "Massive option expiration dates",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/options/{ticker}/contracts",
+        "tag": "data",
+        "summary": "Massive option contract reference data",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/events/{ticker}",
+        "tag": "data",
+        "summary": "Massive ticker events",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/dividends/{ticker}",
+        "tag": "data",
+        "summary": "Massive stock dividend events",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/splits/{ticker}",
+        "tag": "data",
+        "summary": "Massive stock split events",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}}
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/financials/{ticker}/{statement}",
+        "tag": "data",
+        "summary": "Massive financial statements and ratios",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {"name": "statement", "in": "path", "required": True, "schema": {"type": "string"}},
+            {
+                "name": "period_end",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "format": "date"},
+            },
+            {"name": "timeframe", "in": "query", "required": False, "schema": {"type": "string"}},
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/status",
+        "tag": "data",
+        "summary": "Massive current US market status",
+    },
+    {
+        "method": "GET",
         "path": "/api/openapi",
         "tag": "meta",
         "summary": "This document",
@@ -209,9 +379,7 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
         responses = _responses()
         success_media_type = route.get("success_media_type")
         if isinstance(success_media_type, str):
-            responses["200"]["content"] = {
-                success_media_type: {"schema": {"type": "string"}}
-            }
+            responses["200"]["content"] = {success_media_type: {"schema": {"type": "string"}}}
         supporting_operation: dict[str, Any] = {
             "operationId": _operation_id(str(route["method"]), path),
             "summary": route["summary"],
@@ -230,9 +398,7 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
                 responses[str(status)] = {
                     "description": str(description),
                     "content": {
-                        "application/json": {
-                            "schema": {"$ref": "#/components/schemas/Error"}
-                        }
+                        "application/json": {"schema": {"$ref": "#/components/schemas/Error"}}
                     },
                 }
         request_schema = route.get("request_schema")
@@ -251,8 +417,7 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
             "description": API_DESCRIPTION,
         },
         "tags": [
-            {"name": group, "description": description}
-            for group, description in GROUPS.items()
+            {"name": group, "description": description} for group, description in GROUPS.items()
         ]
         + [
             {"name": "mcp", "description": "Model Context Protocol transport"},
@@ -350,11 +515,7 @@ def _responses(success: str = "Success") -> dict[str, Any]:
         },
         "400": {
             "description": "Invalid request",
-            "content": {
-                "application/json": {
-                    "schema": {"$ref": "#/components/schemas/Error"}
-                }
-            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}},
         },
     }
 

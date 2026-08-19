@@ -30,20 +30,6 @@ from app.agent import (
     run_agent_stream,
     select_tools,
 )
-from app.api_catalog import build_api_docs_payload
-from app.articles import (
-    ArticleError,
-    article_markdown,
-    article_summary,
-    normalize_article,
-)
-from app.mcp_http import (
-    handle_mcp_payload,
-    parse_error_response,
-    server_descriptor,
-)
-from app.openapi import build_openapi_document
-from app.tool_registry import tool_catalog_payload
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -67,16 +53,12 @@ from app.anthropic import (
     AnthropicTextClient,
     MessageStreamer,
 )
-from app.charts import (
-    RenderedImage,
-    build_ridge_growth_memo,
-    render_auction_chart,
-    render_flow_compass_chart,
-    render_performance_chart,
-    render_portfolio_chart,
-    render_regression_chart,
-    render_ridge_growth_chart,
-    render_volatility_chart,
+from app.api_catalog import build_api_docs_payload
+from app.articles import (
+    ArticleError,
+    article_markdown,
+    article_summary,
+    normalize_article,
 )
 from app.chart_data import (
     build_auction_chart_data,
@@ -88,30 +70,38 @@ from app.chart_data import (
     build_torque_chart_data,
     build_volatility_chart_data,
 )
+from app.charts import (
+    RenderedImage,
+    build_ridge_growth_memo,
+    render_auction_chart,
+    render_flow_compass_chart,
+    render_performance_chart,
+    render_portfolio_chart,
+    render_regression_chart,
+    render_ridge_growth_chart,
+    render_volatility_chart,
+)
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
 from app.market_data import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_PROVIDER,
     HistoryResult,
-    MarketDataClient,
     MarketDataBusyError,
+    MarketDataCapabilityError,
+    MarketDataClient,
     MarketDataError,
     clean_ticker,
 )
+from app.mcp_http import (
+    handle_mcp_payload,
+    parse_error_response,
+    server_descriptor,
+)
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
+from app.openapi import build_openapi_document
 from app.sec import SecClient, SecDataError
-from app.torque import compute_torque_score, render_torque_chart
-from app.torque_scan import (
-    build_torque_scan_response,
-    stream_torque_scan_rows,
-)
-from app.vision_v2 import (
-    build_vision_v2_data,
-    build_vision_v2_memo,
-    parse_memo_sections,
-    stream_vision_v2_text,
-)
+from app.tool_registry import tool_catalog_payload
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
@@ -123,6 +113,16 @@ from app.tools import (
     generate_pixel_image,
     render_moneyline_chart,
     stream_market_memo_text,
+)
+from app.torque import compute_torque_score, render_torque_chart
+from app.torque_scan import (
+    build_torque_scan_response,
+    stream_torque_scan_rows,
+)
+from app.vision_v2 import (
+    build_vision_v2_memo,
+    parse_memo_sections,
+    stream_vision_v2_text,
 )
 from app.watchlists import (
     TradingViewWatchlistClient,
@@ -177,9 +177,7 @@ def create_app() -> Flask:
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
     app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
     app.config["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
-    app.config["ANTHROPIC_TEXT_MODEL"] = os.getenv(
-        "ANTHROPIC_TEXT_MODEL", DEFAULT_ANTHROPIC_MODEL
-    )
+    app.config["ANTHROPIC_TEXT_MODEL"] = os.getenv("ANTHROPIC_TEXT_MODEL", DEFAULT_ANTHROPIC_MODEL)
     app.config["ANTHROPIC_AGENT_MODEL"] = os.getenv("ANTHROPIC_AGENT_MODEL")
     app.config["AGENT_CLIENT"] = None
     app.config["SUPABASE_URL"] = public_env("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
@@ -220,9 +218,7 @@ def create_app() -> Flask:
 
     @app.get("/docs/chart-data-rendering.md")
     def docs_chart_data_rendering_markdown() -> Response:
-        return send_from_directory(
-            DOCS_DIR, "chart-data-rendering.md", mimetype="text/markdown"
-        )
+        return send_from_directory(DOCS_DIR, "chart-data-rendering.md", mimetype="text/markdown")
 
     @app.get("/api/health")
     def health() -> Any:
@@ -250,20 +246,46 @@ def create_app() -> Flask:
 
     @app.get("/api/providers")
     def providers() -> Any:
+        client = get_market_client()
+        configured = bool(getattr(getattr(client, "provider", None), "api_key", ""))
+        fallback_enabled = bool(getattr(client, "fallback_enabled", True))
         return jsonify(
             {
-                "primary": "yfinance",
-                "fallback": "nasdaq",
+                "primary": "massive",
+                "fallback": "yfinance + nasdaq" if fallback_enabled else None,
+                "massive_configured": configured,
+                "fallback_enabled": fallback_enabled,
+                "freshness": {
+                    "stocks": "Plan-dependent: end-of-day, 15-minute delayed, or real-time",
+                    "options": "Plan-dependent: unavailable, 15-minute delayed, or real-time",
+                },
                 "notes": [
+                    "Massive is the primary provider when MASSIVE_API_KEY is configured.",
                     (
-                        "yfinance is current and still usable, but it is unofficial "
-                        "Yahoo Finance access."
+                        "Legacy yfinance and Nasdaq routing is temporary and controlled by "
+                        "MARKET_DATA_FALLBACK_ENABLED."
                     ),
-                    "Daily US equity history falls back to Nasdaq when yfinance fails.",
-                    "For production volume, add a keyed provider such as FMP or Twelve Data.",
+                    (
+                        "Massive coverage and freshness depend on the subscribed Stocks and "
+                        "Options plans."
+                    ),
                 ],
             }
         )
+
+    @app.get("/api/capabilities")
+    def capabilities() -> Any:
+        return jsonify(build_capabilities_payload(get_market_client()))
+
+    @app.get("/api/capabilities/<capability_id>")
+    def capability(capability_id: str) -> Any:
+        payload = build_capabilities_payload(get_market_client())
+        selected = next(
+            (item for item in payload["capabilities"] if item["id"] == capability_id), None
+        )
+        if selected is None:
+            return jsonify({"error": f"Unknown capability: {capability_id}"}), 404
+        return jsonify(selected)
 
     @app.get("/api/data/search")
     def security_search() -> Any:
@@ -291,13 +313,165 @@ def create_app() -> Flask:
                 {
                     "query": query,
                     "results": get_market_client().search_securities(query, limit=limit),
-                    "provider": SEARCH_PROVIDER,
+                    "provider": (
+                        "Massive"
+                        if getattr(get_market_client(), "provider_label", "") == "massive"
+                        else SEARCH_PROVIDER
+                    ),
                 }
             )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except MarketDataBusyError as exc:
             return jsonify({"error": str(exc)}), 503
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/market/snapshot")
+    def market_snapshot() -> Any:
+        try:
+            ticker = clean_ticker(request.args.get("ticker", ""))
+            asset_class = request.args.get("asset_class", "stocks")
+            return jsonify(
+                market_data_envelope(
+                    get_market_client(), "get_snapshot", ticker, asset_class=asset_class
+                )
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/market/aggregates/<ticker>")
+    def market_aggregates(ticker: str) -> Any:
+        try:
+            start = request.args.get("start", "")
+            end = request.args.get("end", "")
+            if not start or not end:
+                raise ValueError("start and end are required")
+            multiplier = int(request.args.get("multiplier", "1"))
+            return jsonify(
+                market_data_envelope(
+                    get_market_client(),
+                    "get_aggregates",
+                    ticker,
+                    multiplier=multiplier,
+                    timespan=request.args.get("timespan", "day"),
+                    start=start,
+                    end=end,
+                    asset_class=request.args.get("asset_class", "stocks"),
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/market/trades/<ticker>")
+    def market_trades(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_trades", ticker)
+
+    @app.get("/api/data/market/quotes/<ticker>")
+    def market_quotes(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_quotes", ticker)
+
+    @app.get("/api/data/options/<ticker>/expirations")
+    def option_expirations(ticker: str) -> Any:
+        try:
+            symbol = clean_ticker(ticker)
+            client = get_market_client()
+            return jsonify(
+                {
+                    "ticker": symbol,
+                    "expirations": client.get_expirations(symbol),
+                    "provider": client.provider_label,
+                    "provider_note": client.provider_note,
+                }
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/options/<ticker>/chain")
+    def option_chain(ticker: str) -> Any:
+        try:
+            symbol = clean_ticker(ticker)
+            chain = get_market_client().get_option_chain(symbol, request.args.get("expiry"))
+            return jsonify(
+                {
+                    "ticker": chain.ticker,
+                    "expiry": chain.expiry,
+                    "current_price": chain.current_price,
+                    "expirations": chain.expirations,
+                    "rows": chain.rows,
+                    "provider": chain.provider,
+                    "provider_note": chain.note,
+                }
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/options/<ticker>/contracts")
+    def option_contracts(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_contracts", ticker)
+
+    @app.get("/api/data/market/events/<ticker>")
+    def market_events(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_events", ticker)
+
+    @app.get("/api/data/market/dividends/<ticker>")
+    def market_dividends(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_dividends", ticker)
+
+    @app.get("/api/data/market/splits/<ticker>")
+    def market_splits(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_splits", ticker)
+
+    @app.get("/api/data/market/financials/<ticker>/<statement>")
+    def market_financials(ticker: str, statement: str) -> Any:
+        try:
+            symbol = clean_ticker(ticker)
+            params = request.args.to_dict(flat=True)
+            return jsonify(
+                market_data_envelope(
+                    get_market_client(),
+                    "get_financials",
+                    symbol,
+                    statement=statement,
+                    params=params,
+                )
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/market/status")
+    def market_status() -> Any:
+        try:
+            client = get_market_client()
+            return jsonify(
+                {
+                    "provider": client.provider_label,
+                    "provider_note": client.provider_note,
+                    "data": client.get_market_status(),
+                }
+            )
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
         except MarketDataError as exc:
             return jsonify({"error": str(exc)}), 502
 
@@ -356,9 +530,7 @@ def create_app() -> Flask:
         try:
             summary = summarize_stock(get_market_client(), ticker)
             scanner = build_scanner_rows([summary])
-            generated = generate_analysis_brief(
-                [summary], scanner, **text_generation_options()
-            )
+            generated = generate_analysis_brief([summary], scanner, **text_generation_options())
             return jsonify(
                 {
                     **summary,
@@ -392,9 +564,7 @@ def create_app() -> Flask:
     def watchlist_cockpit() -> Any:
         payload = request.get_json(silent=True) or {}
         try:
-            response = build_cockpit_response(
-                get_market_client(), get_watchlist_client(), payload
-            )
+            response = build_cockpit_response(get_market_client(), get_watchlist_client(), payload)
             return jsonify(response)
         except (ValueError, WatchlistError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -406,9 +576,7 @@ def create_app() -> Flask:
     def watchlist_alerts() -> Any:
         payload = request.get_json(silent=True) or {}
         try:
-            response = build_alerts_response(
-                get_market_client(), get_watchlist_client(), payload
-            )
+            response = build_alerts_response(get_market_client(), get_watchlist_client(), payload)
             return jsonify(response)
         except (ValueError, WatchlistError, MarketDataError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -863,8 +1031,7 @@ def create_app() -> Flask:
     def agent_tool_catalog() -> Any:
         catalog = tool_catalog_payload()
         catalog["agent_ready"] = bool(
-            current_app.config.get("ANTHROPIC_API_KEY")
-            or current_app.config.get("AGENT_CLIENT")
+            current_app.config.get("ANTHROPIC_API_KEY") or current_app.config.get("AGENT_CLIENT")
         )
         catalog["model"] = current_app.config.get("ANTHROPIC_AGENT_MODEL")
         return jsonify(catalog)
@@ -911,6 +1078,143 @@ def create_app() -> Flask:
 
 def get_market_client() -> MarketDataClient:
     return current_app.config["MARKET_DATA_CLIENT"]
+
+
+def market_data_envelope(
+    client: MarketDataClient,
+    method: str,
+    ticker: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    data = getattr(client, method)(ticker, **kwargs)
+    return {
+        "ticker": ticker,
+        "provider": client.provider_label,
+        "provider_note": client.provider_note,
+        "data": data,
+    }
+
+
+def market_data_endpoint_response(
+    client: MarketDataClient,
+    method: str,
+    ticker: str,
+) -> Any:
+    try:
+        symbol = clean_ticker(ticker)
+        params = request.args.to_dict(flat=True)
+        return jsonify(market_data_envelope(client, method, symbol, params=params))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except MarketDataCapabilityError as exc:
+        return jsonify({"error": str(exc)}), 501
+    except MarketDataError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+def build_capabilities_payload(client: MarketDataClient) -> dict[str, Any]:
+    configured = bool(getattr(getattr(client, "provider", None), "api_key", ""))
+    stocks_plan = os.getenv("MASSIVE_STOCKS_PLAN", "").strip().lower()
+    options_plan = os.getenv("MASSIVE_OPTIONS_PLAN", "").strip().lower()
+    financials_plan = os.getenv("MASSIVE_FINANCIALS_PLAN", "").strip().lower()
+    ranks = {"basic": 0, "starter": 1, "developer": 2, "advanced": 3, "expansion": 1}
+
+    def capability(
+        identifier: str,
+        plan: str,
+        *,
+        minimum: str | None = None,
+        freshness: str = "subscription-dependent",
+        history: str = "subscription-dependent",
+        all_plans: bool = False,
+        partner: bool = False,
+    ) -> dict[str, Any]:
+        if partner:
+            available = False
+            reason = "dedicated partner subscription is not configured"
+        elif not configured:
+            available = False
+            reason = "MASSIVE_API_KEY is not configured"
+        elif all_plans:
+            available = True
+            reason = None
+        elif not plan:
+            available = False
+            reason = "Massive plan is not declared; entitlement must be verified"
+        else:
+            available = ranks.get(plan, -1) >= ranks.get(minimum or "basic", 0)
+            reason = None if available else f"requires Massive {minimum} plan or higher"
+        return {
+            "id": identifier,
+            "provider": "massive",
+            "available": available,
+            "freshness": freshness,
+            "history": history,
+            "plan": plan or None,
+            "reason": reason,
+        }
+
+    capabilities = [
+        capability(
+            "stocks.daily_bars",
+            stocks_plan,
+            all_plans=True,
+            freshness={
+                "basic": "end_of_day",
+                "starter": "delayed_15m",
+                "developer": "delayed_15m",
+                "advanced": "realtime",
+            }.get(stocks_plan, "subscription-dependent"),
+            history={"basic": "2y", "starter": "5y", "developer": "10y", "advanced": "20y+"}.get(
+                stocks_plan, "subscription-dependent"
+            ),
+        ),
+        capability(
+            "stocks.intraday_bars",
+            stocks_plan,
+            minimum="starter",
+            freshness="plan_dependent",
+        ),
+        capability("stocks.snapshot", stocks_plan, minimum="starter", freshness="plan_dependent"),
+        capability("stocks.trades", stocks_plan, minimum="developer", freshness="plan_dependent"),
+        capability("stocks.quotes", stocks_plan, minimum="advanced", freshness="realtime"),
+        capability(
+            "stocks.ticker_events",
+            stocks_plan,
+            all_plans=True,
+            freshness="updated_daily",
+            history="2y or all history",
+        ),
+        capability("stocks.dividends", stocks_plan, all_plans=True, history="all history"),
+        capability("stocks.splits", stocks_plan, all_plans=True, history="all history"),
+        capability(
+            "stocks.financials",
+            financials_plan,
+            minimum="starter",
+            history="plan-dependent",
+        ),
+        capability("options.contracts", options_plan, all_plans=True, history="plan-dependent"),
+        capability("options.chain", options_plan, minimum="starter", freshness="plan_dependent"),
+        capability(
+            "options.aggregates",
+            options_plan,
+            minimum="starter",
+            freshness="plan_dependent",
+        ),
+        capability("options.trades", options_plan, minimum="developer", freshness="plan_dependent"),
+        capability("options.quotes", options_plan, minimum="advanced", freshness="realtime"),
+        capability(
+            "partners.tmx_corporate_events", "", partner=True, freshness="subscription-dependent"
+        ),
+    ]
+    return {
+        "provider": "massive",
+        "massive_configured": configured,
+        "stocks_plan": stocks_plan or None,
+        "options_plan": options_plan or None,
+        "financials_plan": financials_plan or None,
+        "capabilities": capabilities,
+    }
 
 
 def get_watchlist_client() -> TradingViewWatchlistClient:
@@ -1061,9 +1365,7 @@ def agent_run_options(payload: dict[str, Any]) -> dict[str, Any]:
         "client": client,
         "messages": messages,
         "model": getattr(client, "model", None),
-        "tool_specs": select_tools(
-            payload.get("tools"), exact=exact_tool_policy
-        ),
+        "tool_specs": select_tools(payload.get("tools"), exact=exact_tool_policy),
         "suppress_refused_tool_events": exact_tool_policy,
         "system_extra": context if isinstance(context, str) else None,
     }
@@ -1128,9 +1430,7 @@ def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_news_response(
-    exa_client: ExaClient, payload: dict[str, Any]
-) -> dict[str, Any]:
+def build_news_response(exa_client: ExaClient, payload: dict[str, Any]) -> dict[str, Any]:
     """Recent news for a ticker and/or free-text topic."""
     ticker = str(payload.get("ticker") or "").strip().upper()
     query = str(payload.get("query") or "").strip()
@@ -1304,7 +1604,7 @@ def vision_v2_phased_stream(
         # build_vision_v2_data internally pulls profile, SEC source pack, SEC trend,
         # Exa research, torque, and reclassification. We emit a phase event before
         # each major chunk by calling smaller pieces directly when possible.
-        from app.tools import build_sec_source_pack, build_stock_fax_data
+        from app.tools import build_stock_fax_data
 
         yield phase("sec", "Pulling SEC filings", 0.18)
         report = build_stock_fax_data(market_client, ticker, sec_client=sec_client)
@@ -1465,9 +1765,7 @@ def build_memo_pdf_payload(
     snapshot = report.get("Snapshot") if isinstance(report.get("Snapshot"), dict) else {}
     torque = report.get("Torque") if isinstance(report.get("Torque"), dict) else None
     reclass = (
-        report.get("Reclassification")
-        if isinstance(report.get("Reclassification"), dict)
-        else None
+        report.get("Reclassification") if isinstance(report.get("Reclassification"), dict) else None
     )
     sections = report.get("Memo Sections")
     if not isinstance(sections, dict):
@@ -1482,12 +1780,11 @@ def build_memo_pdf_payload(
         torque_rec = torque.get("recommendation") or torque.get("Recommendation")
         if torque_rec and recommendation == "Hold":
             recommendation = str(torque_rec)
-    final_rating_section = sections.get("Final Rating + Target Price Band") if isinstance(sections, dict) else None
+    final_rating_section = (
+        sections.get("Final Rating + Target Price Band") if isinstance(sections, dict) else None
+    )
     if isinstance(final_rating_section, str) and "Rating:" in final_rating_section:
-        try:
-            recommendation = final_rating_section.split("Rating:", 1)[1].split(".")[0].strip()
-        except Exception:
-            pass
+        recommendation = final_rating_section.split("Rating:", 1)[1].split(".")[0].strip()
 
     scenarios = None
     if reclass:
@@ -1500,7 +1797,11 @@ def build_memo_pdf_payload(
             scenarios = [
                 {"name": "Bear", "price": targets["low"], "notes": "Conservative scenario"},
                 {"name": "Base", "price": targets["mid"], "notes": "Base case"},
-                {"name": "Bull", "price": targets["high"], "notes": "Reclassification thesis plays out"},
+                {
+                    "name": "Bull",
+                    "price": targets["high"],
+                    "notes": "Reclassification thesis plays out",
+                },
             ]
 
     citations: list[dict[str, Any]] = []
@@ -1753,17 +2054,11 @@ def build_chart_response(
         # Fetch every (ticker, period) window concurrently, preserving nested order, then
         # render sequentially (matplotlib is not thread-safe). Collapses 3xN sequential
         # network round-trips into a single parallel batch.
-        jobs = [
-            (ticker, period)
-            for ticker in selection.tickers
-            for period in RIDGE_GROWTH_PERIODS
-        ]
+        jobs = [(ticker, period) for ticker in selection.tickers for period in RIDGE_GROWTH_PERIODS]
         job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
         with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
             futures = {
-                executor.submit(
-                    client.get_history, ticker, period=period, interval="1d"
-                ): index
+                executor.submit(client.get_history, ticker, period=period, interval="1d"): index
                 for index, (ticker, period) in enumerate(jobs)
             }
             for future in as_completed(futures):
@@ -1802,11 +2097,7 @@ def build_chart_response(
         require_results(results, errors)
         meta = {**batch_meta(results, errors, selection.watchlist), "windows": windows}
         first_memo = next(
-            (
-                str(window["analysis_memo"])
-                for window in windows
-                if window.get("analysis_memo")
-            ),
+            (str(window["analysis_memo"]) for window in windows if window.get("analysis_memo")),
             "",
         )
         if first_memo:
@@ -1845,9 +2136,7 @@ def build_chart_response(
         histories = []
         results = []
         errors = []
-        history_slots = fetch_history_slots(
-            client, selection.tickers, period=period, interval="1d"
-        )
+        history_slots = fetch_history_slots(client, selection.tickers, period=period, interval="1d")
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2037,9 +2326,7 @@ def build_chart_data_response(
                 continue
             histories.append(slot)
             datasets.append(dataset)
-            results.append(
-                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
-            )
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"]))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -2073,9 +2360,7 @@ def build_chart_data_response(
                 continue
             histories.append(slot)
             datasets.append(dataset)
-            results.append(
-                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
-            )
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"]))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -2114,9 +2399,7 @@ def build_chart_data_response(
                 continue
             histories.append(slot)
             datasets.append(dataset)
-            results.append(
-                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
-            )
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"]))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
@@ -2138,17 +2421,11 @@ def build_chart_data_response(
         results = []
         errors = []
         windows: list[dict[str, Any]] = []
-        jobs = [
-            (ticker, period)
-            for ticker in selection.tickers
-            for period in RIDGE_GROWTH_PERIODS
-        ]
+        jobs = [(ticker, period) for ticker in selection.tickers for period in RIDGE_GROWTH_PERIODS]
         job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
         with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
             futures = {
-                executor.submit(
-                    client.get_history, ticker, period=period, interval="1d"
-                ): index
+                executor.submit(client.get_history, ticker, period=period, interval="1d"): index
                 for index, (ticker, period) in enumerate(jobs)
             }
             for future in as_completed(futures):
@@ -2189,11 +2466,7 @@ def build_chart_data_response(
         require_results(results, errors)
         meta = {**batch_meta(results, errors, selection.watchlist), "windows": windows}
         first_memo = next(
-            (
-                str(window["analysis_memo"])
-                for window in windows
-                if window.get("analysis_memo")
-            ),
+            (str(window["analysis_memo"]) for window in windows if window.get("analysis_memo")),
             "",
         )
         if first_memo:
@@ -2232,9 +2505,7 @@ def build_chart_data_response(
         histories = []
         results = []
         errors = []
-        history_slots = fetch_history_slots(
-            client, selection.tickers, period=period, interval="1d"
-        )
+        history_slots = fetch_history_slots(client, selection.tickers, period=period, interval="1d")
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2246,9 +2517,7 @@ def build_chart_data_response(
                 continue
             histories.append(slot)
             datasets.append(dataset)
-            results.append(
-                result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"])
-            )
+            results.append(result_payload(slot.ticker, slot.provider, slot.note, dataset["meta"]))
         require_results(results, errors)
         meta = batch_meta(results, errors, selection.watchlist)
         if len(results) == 1:
