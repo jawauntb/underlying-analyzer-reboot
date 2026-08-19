@@ -3,6 +3,7 @@ export const DEFAULT_API_BASE_URL = 'https://underlying-terminal-production.up.r
 export const API_ENDPOINTS = {
   health: '/api/health',
   tools: '/api/agent/tools',
+  search: '/api/data/search',
   resolveWatchlist: '/api/watchlists/resolve',
   alerts: '/api/watchlists/alerts',
   auction: '/api/data/charts/auction',
@@ -49,12 +50,12 @@ export function buildApiConfig(
   }
 }
 
-const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,15}$/;
+const SYMBOL_PATTERN = /^(?:[A-Z0-9][A-Z0-9.-]{0,31}|\^[A-Z0-9][A-Z0-9.-]{0,30})$/;
 
 export function normalizeSymbol(value: string): string {
   const symbol = value.trim().toUpperCase();
   if (!SYMBOL_PATTERN.test(symbol)) {
-    throw new Error('Symbol must be 1-15 letters, digits, dots, or hyphens.');
+    throw new Error('Symbol must be 1-32 letters, digits, dots, or hyphens, with at most one leading caret.');
   }
   return symbol;
 }

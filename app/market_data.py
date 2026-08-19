@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -17,10 +19,29 @@ REQUIRED_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
 # still refreshing well inside a trading minute.
 _HISTORY_TTL_SECONDS = 90.0
 _PROFILE_TTL_SECONDS = 90.0
+_SEARCH_TTL_SECONDS = 60.0
+_SEARCH_CONCURRENCY_PER_WORKER = 2
+
+MAX_SEARCH_QUERY_LENGTH = 100
+MAX_SECURITY_SYMBOL_LENGTH = 32
+SEARCH_PROVIDER = "Yahoo Finance via yfinance"
+SECURITY_SYMBOL_PATTERN = r"^(?:[A-Z0-9][A-Z0-9.-]{0,31}|\^[A-Z0-9][A-Z0-9.-]{0,30})$"
+_SECURITY_SYMBOL_RE = re.compile(SECURITY_SYMBOL_PATTERN)
+_SEARCH_ASSET_TYPES = {
+    "EQUITY": "equity",
+    "ETF": "etf",
+    "MUTUALFUND": "mutual_fund",
+    "INDEX": "index",
+    "CRYPTOCURRENCY": "crypto",
+}
 
 
 class MarketDataError(RuntimeError):
     """Raised when no provider can return usable market data."""
+
+
+class MarketDataBusyError(MarketDataError):
+    """Raised when the bounded provider search capacity is already in use."""
 
 
 @dataclass(frozen=True)
@@ -102,6 +123,8 @@ class MarketDataClient:
         tune_session(self.session, pool_maxsize=32)
         self._history_cache: TTLCache = TTLCache(_HISTORY_TTL_SECONDS)
         self._profile_cache: TTLCache = TTLCache(_PROFILE_TTL_SECONDS)
+        self._search_cache: TTLCache = TTLCache(_SEARCH_TTL_SECONDS)
+        self._search_slots = threading.BoundedSemaphore(_SEARCH_CONCURRENCY_PER_WORKER)
 
     def get_history(
         self,
@@ -169,6 +192,70 @@ class MarketDataClient:
 
         self._profile_cache.set(symbol, profile)
         return profile
+
+    def search_securities(self, query: str, *, limit: int = 8) -> list[dict[str, str]]:
+        cleaned_query = query.strip()
+        if not cleaned_query:
+            raise ValueError("Search query is required")
+        if len(cleaned_query) > MAX_SEARCH_QUERY_LENGTH:
+            raise ValueError(
+                f"Search query must be at most {MAX_SEARCH_QUERY_LENGTH} characters"
+            )
+        if not 1 <= limit <= 10:
+            raise ValueError("Search limit must be between 1 and 10")
+
+        cache_key = (cleaned_query.casefold(), limit)
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if not self._search_slots.acquire(blocking=False):
+            raise MarketDataBusyError("Security search is busy; try again shortly")
+        try:
+            try:
+                search = yf.Search(
+                    cleaned_query,
+                    max_results=limit,
+                    news_count=0,
+                    lists_count=0,
+                    include_cb=False,
+                    include_nav_links=False,
+                    include_research=False,
+                    include_cultural_assets=False,
+                    enable_fuzzy_query=True,
+                    timeout=10,
+                )
+                quotes = search.quotes if isinstance(search.quotes, list) else []
+            except Exception as exc:
+                raise MarketDataError(f"Security search failed: {exc}") from exc
+        finally:
+            self._search_slots.release()
+
+        results: list[dict[str, str]] = []
+        seen_symbols: set[str] = set()
+        for quote in quotes:
+            if not isinstance(quote, dict):
+                continue
+            asset_type = _SEARCH_ASSET_TYPES.get(str(quote.get("quoteType", "")).upper())
+            symbol = str(quote.get("symbol", "")).strip().upper()
+            if (
+                not asset_type
+                or not _SECURITY_SYMBOL_RE.fullmatch(symbol)
+                or symbol in seen_symbols
+            ):
+                continue
+            seen_symbols.add(symbol)
+            results.append(
+                {
+                    "symbol": symbol,
+                    "name": str(quote.get("longname") or quote.get("shortname") or "").strip(),
+                    "exchange": str(quote.get("exchDisp") or quote.get("exchange") or "").strip(),
+                    "asset_type": asset_type,
+                }
+            )
+
+        self._search_cache.set(cache_key, results)
+        return results
 
     def _remember_history(
         self, cache_key: tuple[str, str, date, date, str], result: HistoryResult

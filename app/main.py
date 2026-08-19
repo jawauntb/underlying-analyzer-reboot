@@ -90,7 +90,15 @@ from app.chart_data import (
 )
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
-from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.market_data import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_PROVIDER,
+    HistoryResult,
+    MarketDataClient,
+    MarketDataBusyError,
+    MarketDataError,
+    clean_ticker,
+)
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.sec import SecClient, SecDataError
 from app.torque import compute_torque_score, render_torque_chart
@@ -256,6 +264,42 @@ def create_app() -> Flask:
                 ],
             }
         )
+
+    @app.get("/api/data/search")
+    def security_search() -> Any:
+        try:
+            query = request.args.get("q", "").strip()
+            if not query:
+                raise ValueError("Search query is required")
+            if len(query) > MAX_SEARCH_QUERY_LENGTH:
+                raise ValueError(
+                    f"Search query must be at most {MAX_SEARCH_QUERY_LENGTH} characters"
+                )
+
+            limit_value = request.args.get("limit")
+            if limit_value is None:
+                limit = 8
+            else:
+                try:
+                    limit = int(limit_value)
+                except ValueError as exc:
+                    raise ValueError("Search limit must be an integer from 1 to 10") from exc
+                if not 1 <= limit <= 10:
+                    raise ValueError("Search limit must be an integer from 1 to 10")
+
+            return jsonify(
+                {
+                    "query": query,
+                    "results": get_market_client().search_securities(query, limit=limit),
+                    "provider": SEARCH_PROVIDER,
+                }
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataBusyError as exc:
+            return jsonify({"error": str(exc)}), 503
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
 
     @app.get("/api/sec/<ticker>")
     def sec_source_pack(ticker: str) -> Any:

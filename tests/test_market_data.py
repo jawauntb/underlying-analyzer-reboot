@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from threading import Event, Lock
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
+from pytest import MonkeyPatch
 
+import app.market_data as market_data_module
 from app.charts import (
     calculate_auction_levels,
     calculate_flow_compass_indicator,
@@ -11,11 +17,158 @@ from app.charts import (
 )
 from app.market_data import (
     HistoryResult,
+    MarketDataBusyError,
     MarketDataClient,
+    MarketDataError,
     normalize_ohlcv,
     parse_market_number,
     to_nasdaq_symbol,
 )
+
+
+def test_security_search_normalizes_filters_deduplicates_and_caches(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    quotes = [
+        {
+            "symbol": "aapl",
+            "longname": "Apple Inc.",
+            "exchDisp": "NasdaqGS",
+            "quoteType": "EQUITY",
+        },
+        {
+            "symbol": " AAPL ",
+            "shortname": "Duplicate Apple",
+            "exchange": "NMS",
+            "quoteType": "EQUITY",
+        },
+        {"symbol": "SPY", "shortname": "SPDR S&P 500 ETF", "quoteType": "ETF"},
+        {
+            "symbol": "VTSAX",
+            "shortname": "Vanguard Total Stock Market Index Fund",
+            "quoteType": "MUTUALFUND",
+        },
+        {"symbol": "^GSPC", "shortname": "S&P 500", "quoteType": "INDEX"},
+        {
+            "symbol": "BTC-USD",
+            "shortname": "Bitcoin USD",
+            "quoteType": "CRYPTOCURRENCY",
+        },
+        {
+            "symbol": "BABYPEPE29650-USD",
+            "shortname": "Baby Pepe USD",
+            "quoteType": "CRYPTOCURRENCY",
+        },
+        {"symbol": "BAD/SYMBOL", "quoteType": "EQUITY"},
+        {"symbol": "A" * 33, "quoteType": "EQUITY"},
+        {"symbol": "AAPL260821C00200000", "quoteType": "OPTION"},
+        {"shortname": "Missing symbol", "quoteType": "EQUITY"},
+    ]
+
+    def fake_search(query: str, **kwargs: object) -> SimpleNamespace:
+        calls.append({"query": query, **kwargs})
+        return SimpleNamespace(quotes=quotes)
+
+    monkeypatch.setattr(market_data_module.yf, "Search", fake_search)
+    client = MarketDataClient()
+
+    first = client.search_securities("  Apple  ", limit=6)
+    second = client.search_securities("apple", limit=6)
+
+    assert first == [
+        {
+            "symbol": "AAPL",
+            "name": "Apple Inc.",
+            "exchange": "NasdaqGS",
+            "asset_type": "equity",
+        },
+        {
+            "symbol": "SPY",
+            "name": "SPDR S&P 500 ETF",
+            "exchange": "",
+            "asset_type": "etf",
+        },
+        {
+            "symbol": "VTSAX",
+            "name": "Vanguard Total Stock Market Index Fund",
+            "exchange": "",
+            "asset_type": "mutual_fund",
+        },
+        {
+            "symbol": "^GSPC",
+            "name": "S&P 500",
+            "exchange": "",
+            "asset_type": "index",
+        },
+        {
+            "symbol": "BTC-USD",
+            "name": "Bitcoin USD",
+            "exchange": "",
+            "asset_type": "crypto",
+        },
+        {
+            "symbol": "BABYPEPE29650-USD",
+            "name": "Baby Pepe USD",
+            "exchange": "",
+            "asset_type": "crypto",
+        },
+    ]
+    assert second is first
+    assert calls == [
+        {
+            "query": "Apple",
+            "max_results": 6,
+            "news_count": 0,
+            "lists_count": 0,
+            "include_cb": False,
+            "include_nav_links": False,
+            "include_research": False,
+            "include_cultural_assets": False,
+            "enable_fuzzy_query": True,
+            "timeout": 10,
+        }
+    ]
+
+
+def test_security_search_maps_provider_failures(monkeypatch: MonkeyPatch) -> None:
+    def failing_search(*_: object, **__: object) -> None:
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(market_data_module.yf, "Search", failing_search)
+
+    with pytest.raises(MarketDataError, match="Security search failed.*provider unavailable"):
+        MarketDataClient().search_securities("Apple")
+
+
+def test_security_search_fails_fast_when_provider_capacity_is_full(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    entered = Event()
+    release = Event()
+    lock = Lock()
+    active = 0
+
+    def blocking_search(*_: object, **__: object) -> SimpleNamespace:
+        nonlocal active
+        with lock:
+            active += 1
+            if active == 2:
+                entered.set()
+        release.wait(timeout=2)
+        return SimpleNamespace(quotes=[])
+
+    monkeypatch.setattr(market_data_module.yf, "Search", blocking_search)
+    client = MarketDataClient()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(client.search_securities, "Apple")
+        second = pool.submit(client.search_securities, "Microsoft")
+        assert entered.wait(timeout=1)
+        with pytest.raises(MarketDataBusyError, match="busy"):
+            client.search_securities("Nvidia")
+        release.set()
+        assert first.result() == []
+        assert second.result() == []
 
 
 def test_normalize_ohlcv_flattens_yfinance_multiindex() -> None:

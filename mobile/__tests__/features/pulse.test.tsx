@@ -23,7 +23,50 @@ jest.mock('react-native-safe-area-context', () => {
 
 const response = (overrides: Partial<WatchlistAlertsResponse> = {}): WatchlistAlertsResponse => ({
   status: 'fresh',
-  rows: [{ ticker: 'AAPL', rank: 1, lane: 'Priority', name: 'Apple', sector: null, industry: null, price: 220, changePercent: 1.25, annualVolatility: null, scannerScore: 91, score: 88, setup: 'Breakout', provider: 'Yahoo', providerNote: null, ridge: {}, flow: {}, auction: {}, raw: {} }],
+  rows: [{
+    ticker: 'AAPL',
+    rank: 1,
+    lane: 'Priority',
+    name: 'Apple',
+    sector: null,
+    industry: null,
+    price: 220,
+    changePercent: 1.25,
+    annualVolatility: null,
+    trend50d: null,
+    distanceFrom52WeekHigh: null,
+    distanceFrom52WeekLow: null,
+    scannerScore: 91,
+    score: 88,
+    setup: 'Breakout',
+    provider: 'Yahoo',
+    providerNote: null,
+    fundamentals: {
+      businessSummary: null,
+      country: null,
+      website: null,
+      employees: null,
+      marketCap: null,
+      trailingPe: null,
+      forwardPe: null,
+      priceToSales: null,
+      priceToBook: null,
+      revenueGrowth: null,
+      profitMargins: null,
+      returnOnEquity: null,
+      debtToEquity: null,
+      recommendation: null,
+      targetMeanPrice: null,
+      analystCount: null,
+      beta: null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+    },
+    ridge: {},
+    flow: {},
+    auction: {},
+    raw: {},
+  }],
   alerts: [],
   digest: { generatedAt: '2026-08-19T12:00:00Z', headline: 'Ready', summary: 'One setup', severityCounts: {}, categoryCounts: {}, laneCounts: {}, priorityTickers: ['AAPL'], riskTickers: [], flowShiftTickers: [], nextSteps: [] },
   provider: 'Yahoo',
@@ -115,7 +158,59 @@ describe('PulseScreen', () => {
     const deps = dependencies({ cached: record(response(), 99_999) });
     render(<PulseScreen {...deps.props} />);
     expect(await screen.findByText('AAPL')).toBeTruthy();
+    expect(screen.getByText('Ready')).toBeTruthy();
+    expect(screen.getByText('One setup')).toBeTruthy();
     expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
+  });
+
+  it('turns the backend digest into an actionable briefing for the active list', async () => {
+    const data = response({
+      digest: {
+        ...response().digest,
+        headline: 'Risk is concentrated',
+        summary: 'One priority setup and one flow shift need review.',
+        priorityTickers: ['AAPL'],
+        flowShiftTickers: ['MSFT'],
+        nextSteps: ['Review AAPL support before the open.'],
+      },
+    });
+    const deps = dependencies({ cached: record(data, 99_999) });
+    render(
+      <PulseScreen
+        {...deps.props}
+        listsState={{
+          hydrated: true,
+          lists: [{ id: 'active', name: 'Core holdings', symbols: ['AAPL'], source: { kind: 'manual' }, createdAt: 1, updatedAt: 1 }],
+        }}
+      />,
+    );
+
+    expect(await screen.findByText('Risk is concentrated')).toBeTruthy();
+    expect(screen.getByText('Priority · AAPL')).toBeTruthy();
+    expect(screen.getByText('Flow shift · MSFT')).toBeTruthy();
+    expect(screen.getByText('Review AAPL support before the open.')).toBeTruthy();
+    expect(screen.getByText(/Core holdings/)).toBeTruthy();
+    expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
+  });
+
+  it('keeps the prior list label attached to prior rows while a new list loads', async () => {
+    const nextCache = deferred<CacheRecord<WatchlistAlertsResponse> | null>();
+    const deps = dependencies({ cached: record(response(), 99_999) });
+    const firstList = [{ id: 'first', name: 'First list', symbols: ['AAPL'], source: { kind: 'manual' as const }, createdAt: 1, updatedAt: 1 }];
+    const nextList = [{ id: 'next', name: 'Next list', symbols: ['MSFT'], source: { kind: 'manual' as const }, createdAt: 2, updatedAt: 2 }];
+    const view = render(<PulseScreen {...deps.props} listsState={{ hydrated: true, lists: firstList }} />);
+    expect(await screen.findByText(/First list/)).toBeTruthy();
+
+    deps.cache.read.mockImplementationOnce(() => nextCache.promise);
+    view.rerender(<PulseScreen {...deps.props} focused={false} listsState={{ hydrated: true, lists: nextList }} />);
+    view.rerender(<PulseScreen {...deps.props} focused listsState={{ hydrated: true, lists: nextList }} />);
+    await act(async () => undefined);
+    expect(screen.getByText(/First list/)).toBeTruthy();
+    expect(screen.queryByText(/Next list/)).toBeNull();
+
+    await act(async () => nextCache.resolve(record(response({ rows: [{ ...response().rows[0], ticker: 'MSFT' }] }), 99_999)));
+    expect(await screen.findByText(/Next list/)).toBeTruthy();
+    expect(screen.getByText('MSFT')).toBeTruthy();
   });
 
   it('keeps partial rows visible with a per-ticker notice', async () => {
@@ -123,6 +218,25 @@ describe('PulseScreen', () => {
     render(<PulseScreen {...deps.props} />);
     expect(await screen.findByText('AAPL')).toBeTruthy();
     expect(screen.getByText(/MSFT.*Quote unavailable/i)).toBeTruthy();
+  });
+
+  it('keeps a named list attached to a successful retry after an empty error', async () => {
+    const deps = dependencies();
+    deps.client.watchlistAlerts
+      .mockRejectedValueOnce(new Error('provider down'))
+      .mockResolvedValueOnce(response());
+    render(
+      <PulseScreen
+        {...deps.props}
+        listsState={{
+          hydrated: true,
+          lists: [{ id: 'core', name: 'Core holdings', symbols: ['AAPL'], source: { kind: 'manual' }, createdAt: 1, updatedAt: 1 }],
+        }}
+      />,
+    );
+
+    fireEvent.press(await screen.findByRole('button', { name: /retry pulse/i }));
+    expect(await screen.findByText(/Core holdings/)).toBeTruthy();
   });
 
   it('ignores a late result from an older explicit generation', async () => {

@@ -5,6 +5,7 @@ import TabLayout from '@/app/(tabs)/_layout';
 import PulseScreen from '@/app/(tabs)/index';
 import LibraryScreen from '@/app/(tabs)/library';
 import ListsScreen from '@/app/(tabs)/lists';
+import SearchScreen from '@/app/(tabs)/search';
 import RootLayout, { stackAnimationFor, tickerScreenOptions } from '@/app/_layout';
 import ResearchScreen from '@/app/research';
 import TickerScreen from '@/app/ticker/[symbol]';
@@ -61,6 +62,7 @@ jest.mock('expo-router', () => {
 describe('Undercurrent app shell', () => {
   it.each([
     ['Pulse', PulseScreen],
+    ['Search', SearchScreen],
     ['Lists', ListsScreen],
     ['Library', LibraryScreen],
   ])('renders the %s tab without starting a network request', (name, ScreenComponent) => {
@@ -82,6 +84,7 @@ describe('Undercurrent app shell', () => {
 
     expect(tabs.getAllByLabelText(/tab route/).map((route) => route.props.accessibilityLabel)).toEqual([
       'tab route index',
+      'tab route search',
       'tab route lists',
       'tab route library',
     ]);

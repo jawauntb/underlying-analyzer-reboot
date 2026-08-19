@@ -14,6 +14,7 @@ import { type NetworkReachability, useNetworkReachability } from '@/src/state/ne
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
 import PulseCard from './PulseCard';
+import PulseDigestCard from './PulseDigestCard';
 
 const DEFAULT_SYMBOLS = ['AAPL', 'MSFT', 'NVDA'] as const;
 const defaultClient = new ApiClient();
@@ -24,10 +25,10 @@ type PulseCache = Pick<AsyncCache, 'read' | 'write'>;
 type PulseRouter = { push(href: Href): void };
 
 type PulseViewState =
-  | { status: 'waiting' | 'loading' | 'empty-offline'; data: null; fetchedAt: null; error?: string }
-  | { status: 'fresh' | 'stale-refreshing' | 'offline-stale' | 'partial'; data: WatchlistAlertsResponse; fetchedAt: number; error?: string }
-  | { status: 'empty-online'; data: WatchlistAlertsResponse; fetchedAt: number; error?: string }
-  | { status: 'error'; data: WatchlistAlertsResponse | null; fetchedAt: number | null; error: string };
+  | { status: 'waiting' | 'loading' | 'empty-offline'; data: null; fetchedAt: null; sourceLabel: string; error?: string }
+  | { status: 'fresh' | 'stale-refreshing' | 'offline-stale' | 'partial'; data: WatchlistAlertsResponse; fetchedAt: number; sourceLabel: string; error?: string }
+  | { status: 'empty-online'; data: WatchlistAlertsResponse; fetchedAt: number; sourceLabel: string; error?: string }
+  | { status: 'error'; data: WatchlistAlertsResponse | null; fetchedAt: number | null; sourceLabel: string; error: string };
 
 export type PulseScreenProps = {
   client?: PulseClient;
@@ -98,7 +99,7 @@ function PulseController({
   const symbolSnapshot = useRef<readonly string[]>(DEFAULT_SYMBOLS);
   const [focusEpoch, setFocusEpoch] = useState(0);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
-  const [state, setState] = useState<PulseViewState>({ status: 'waiting', data: null, fetchedAt: null });
+  const [state, setState] = useState<PulseViewState>({ status: 'waiting', data: null, fetchedAt: null, sourceLabel: 'Default focus list' });
 
   useEffect(() => {
     if (!focused) {
@@ -117,8 +118,9 @@ function PulseController({
     if (!focusEpoch) return;
     const newest = newestSavedList(listsState.lists);
     symbolSnapshot.current = newest?.symbols.length ? [...newest.symbols] : DEFAULT_SYMBOLS;
+    const sourceLabel = newest?.name ?? 'Default focus list';
     setBootstrapComplete(false);
-    void bootstrap(symbolSnapshot.current);
+    void bootstrap(symbolSnapshot.current, sourceLabel);
     // A focus epoch deliberately snapshots lists and reachability; reconnecting or saving while focused does not retry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusEpoch]);
@@ -131,12 +133,12 @@ function PulseController({
     coordinatorRef.current.cancel();
     setState((current) =>
       current.data
-        ? { status: 'offline-stale', data: current.data, fetchedAt: current.fetchedAt ?? now() }
-        : { status: 'empty-offline', data: null, fetchedAt: null },
+        ? { status: 'offline-stale', data: current.data, fetchedAt: current.fetchedAt ?? now(), sourceLabel: current.sourceLabel }
+        : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel: current.sourceLabel },
     );
   }, [bootstrapComplete, now, reachability]);
 
-  async function bootstrap(symbols: readonly string[]) {
+  async function bootstrap(symbols: readonly string[], sourceLabel: string) {
     const request = { tickers: [...symbols] };
     const descriptor = cacheDescriptor(client, request);
     const generation = ++requestGeneration.current;
@@ -151,30 +153,31 @@ function PulseController({
     if (reachability === 'offline') {
       setState(
         cached
-          ? { status: 'offline-stale', data: cached.data, fetchedAt: cached.fetchedAt }
-          : { status: 'empty-offline', data: null, fetchedAt: null },
+          ? { status: 'offline-stale', data: cached.data, fetchedAt: cached.fetchedAt, sourceLabel }
+          : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel },
       );
       setBootstrapComplete(true);
       return;
     }
 
     if (cached && now() - cached.fetchedAt <= TTL_MS.pulse) {
-      setState({ status: 'fresh', data: cached.data, fetchedAt: cached.fetchedAt });
+      setState({ status: 'fresh', data: cached.data, fetchedAt: cached.fetchedAt, sourceLabel });
       setBootstrapComplete(true);
       return;
     }
     setState(
       cached
-        ? { status: 'stale-refreshing', data: cached.data, fetchedAt: cached.fetchedAt }
-        : { status: 'loading', data: null, fetchedAt: null },
+        ? { status: 'stale-refreshing', data: cached.data, fetchedAt: cached.fetchedAt, sourceLabel }
+        : { status: 'loading', data: null, fetchedAt: null, sourceLabel },
     );
-    await requestLive(request, cached?.data ?? null, cached?.fetchedAt ?? null, generation, true);
+    await requestLive(request, cached?.data ?? null, cached?.fetchedAt ?? null, sourceLabel, generation, true);
   }
 
   async function requestLive(
     request: WatchlistAlertsRequest,
     priorData: WatchlistAlertsResponse | null,
     priorFetchedAt: number | null,
+    sourceLabel: string,
     generation = ++requestGeneration.current,
     bootstrap = false,
   ) {
@@ -185,17 +188,17 @@ function PulseController({
       const data = result.value;
       setState(
         data.rows.length === 0
-          ? { status: 'empty-online', data, fetchedAt }
+          ? { status: 'empty-online', data, fetchedAt, sourceLabel }
           : data.status === 'partial'
-            ? { status: 'partial', data, fetchedAt }
-            : { status: 'fresh', data, fetchedAt },
+            ? { status: 'partial', data, fetchedAt, sourceLabel }
+            : { status: 'fresh', data, fetchedAt, sourceLabel },
       );
       if (data.status === 'fresh' || data.status === 'partial') {
         void cache.write(cacheDescriptor(client, request), data, fetchedAt).catch(() => undefined);
       }
     } catch (error) {
       if (generation !== requestGeneration.current) return;
-      setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, error: message(error) });
+      setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, sourceLabel, error: message(error) });
     } finally {
       if (bootstrap && generation === requestGeneration.current) setBootstrapComplete(true);
     }
@@ -207,10 +210,11 @@ function PulseController({
     const fetchedAt = state.fetchedAt;
     setState(
       prior
-        ? { status: 'stale-refreshing', data: prior, fetchedAt: fetchedAt ?? now() }
-        : { status: 'loading', data: null, fetchedAt: null },
+        ? { status: 'stale-refreshing', data: prior, fetchedAt: fetchedAt ?? now(), sourceLabel: state.sourceLabel ?? 'Default focus list' }
+        : { status: 'loading', data: null, fetchedAt: null, sourceLabel: state.sourceLabel },
     );
-    void requestLive({ tickers: [...symbolSnapshot.current] }, prior, fetchedAt);
+    const sourceLabel = state.sourceLabel;
+    void requestLive({ tickers: [...symbolSnapshot.current] }, prior, fetchedAt, sourceLabel);
   }
 
   const rows = state.data?.rows ?? [];
@@ -276,6 +280,14 @@ function PulseController({
         ) : null}
         {state.status === 'partial' && state.data.errors.length ? (
           <AsyncState title="Some symbols need attention" message={state.data.errors.map((error) => `${error.ticker}: ${error.error}`).join('\n')} tone="warning" />
+        ) : null}
+
+        {state.data && rows.length ? (
+          <PulseDigestCard
+            digest={state.data.digest}
+            freshness={label}
+            sourceLabel={state.sourceLabel}
+          />
         ) : null}
 
         {rows.length ? (

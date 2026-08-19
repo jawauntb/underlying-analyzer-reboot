@@ -14,11 +14,27 @@ tags:
 - takeScreenshot: 01-pulse
 
 - tapOn:
-    text: 'Open AAPL Lens'
+    text: 'Search tab'
+    retryTapIfNoChange: true
+- assertVisible: 'Search companies and tickers'
+- takeScreenshot: 02-search-discovery
+- tapOn: 'Search companies and tickers'
+- inputText: 'Apple'
+- extendedWaitUntil:
+    visible: 'Open AAPL Apple Inc. Lens'
+    timeout: 15000
+- takeScreenshot: 03-search-results
+
+- tapOn:
+    text: 'Open AAPL Apple Inc. Lens'
     retryTapIfNoChange: true
 - assertVisible: 'AAPL'
 - assertVisible:
     text: '^Back$'
+- extendedWaitUntil:
+    visible: 'Apple'
+    timeout: 15000
+- takeScreenshot: 04-lens-overview
 - scrollUntilVisible:
     element: 'Open Glance'
     direction: DOWN
@@ -33,7 +49,7 @@ tags:
     timeout: 10000
     visibilityPercentage: 60
 - assertVisible: 'Undercurrent deterministic fixture'
-- takeScreenshot: 02-glance
+- takeScreenshot: 05-glance
 
 - scrollUntilVisible:
     element: 'Select Diagnose'
@@ -55,7 +71,7 @@ tags:
     timeout: 20000
     visibilityPercentage: 60
 - assertVisible: 'AAPL Moneyline chart'
-- takeScreenshot: 03-diagnose
+- takeScreenshot: 06-diagnose
 
 - scrollUntilVisible:
     element: 'Select Deep Dive'
@@ -88,7 +104,7 @@ tags:
 - assertVisible:
     text: 'Start AAPL Research Run'
     enabled: true
-- takeScreenshot: 04-research-preview
+- takeScreenshot: 07-research-preview
 
 - tapOn:
     text: 'Start AAPL Research Run'
@@ -111,7 +127,7 @@ tags:
     visibilityPercentage: 100
 - assertVisible: 'Research cancelled.'
 - assertNotVisible: 'Save AAPL research on this device'
-- takeScreenshot: 05-cancelled
+- takeScreenshot: 08-cancelled
 
 - scrollUntilVisible:
     element: 'Retry AAPL Research Run'
@@ -137,7 +153,7 @@ tags:
     direction: DOWN
     timeout: 20000
     visibilityPercentage: 100
-- takeScreenshot: 06-saved
+- takeScreenshot: 09-saved
 
 - scrollUntilVisible:
     element: 'Close Research Run preview'
@@ -157,8 +173,8 @@ tags:
     timeout: 10000
 - assertVisible:
     id: e2e-fixture-badge
-- takeScreenshot: 07-library
+- takeScreenshot: 10-library
 - tapOn: 'Open saved AAPL research'
 - assertVisible: 'On this device'
 - assertVisible: 'AAPL remains above its deterministic support band.*'
-- takeScreenshot: 08-library-reopen
+- takeScreenshot: 11-library-reopen

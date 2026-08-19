@@ -54,6 +54,26 @@ export type ResolveWatchlistResponse = {
   maxResults: number;
 };
 
+export type SecuritySearchRequest = {
+  query: string;
+  limit?: number;
+};
+
+export type SecurityAssetType = 'equity' | 'etf' | 'mutual_fund' | 'index' | 'crypto';
+
+export type SecuritySearchResult = {
+  symbol: string;
+  name: string;
+  exchange: string;
+  assetType: SecurityAssetType;
+};
+
+export type SecuritySearchResponse = {
+  query: string;
+  results: SecuritySearchResult[];
+  provider: string;
+};
+
 export type WatchlistAlertsRequest = {
   ticker?: string;
   tickers?: string[];
@@ -69,6 +89,28 @@ export type PerTickerError = {
   error: string;
 };
 
+export type AlertFundamentals = {
+  businessSummary: string | null;
+  country: string | null;
+  website: string | null;
+  employees: number | null;
+  marketCap: string | null;
+  trailingPe: number | null;
+  forwardPe: number | null;
+  priceToSales: number | null;
+  priceToBook: number | null;
+  revenueGrowth: number | null;
+  profitMargins: number | null;
+  returnOnEquity: number | null;
+  debtToEquity: number | null;
+  recommendation: string | null;
+  targetMeanPrice: number | null;
+  analystCount: number | null;
+  beta: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+};
+
 export type AlertRow = {
   ticker: string;
   rank?: number;
@@ -79,11 +121,15 @@ export type AlertRow = {
   price: number | null;
   changePercent: number | null;
   annualVolatility: number | null;
+  trend50d: number | null;
+  distanceFrom52WeekHigh: number | null;
+  distanceFrom52WeekLow: number | null;
   scannerScore?: number | null;
   score: number | null;
   setup: string | null;
   provider: string | null;
   providerNote: string | null;
+  fundamentals: AlertFundamentals;
   ridge: Record<string, unknown>;
   flow: Record<string, unknown>;
   auction: Record<string, unknown>;

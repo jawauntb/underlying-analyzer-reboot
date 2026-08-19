@@ -13,8 +13,11 @@ import { MoneylineChart } from '@/src/components/charts/MoneylineChart';
 import { TorqueChart } from '@/src/components/charts/TorqueChart';
 import AsyncState from '@/src/components/ui/AsyncState';
 import MetricCard from '@/src/components/ui/MetricCard';
+import type { NetworkReachability } from '@/src/state/network';
+import { useNetworkReachability } from '@/src/state/network';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
+import LensOverview, { type LensOverviewCache, type LensOverviewClient } from './LensOverview';
 import {
   normalizeLensSymbol,
   RESEARCH_DEPTH_DESCRIPTIONS,
@@ -26,7 +29,7 @@ import ResearchDepthDial from './ResearchDepthDial';
 const LENS_PERIOD = '5d';
 const defaultClient = new ApiClient();
 
-type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'>;
+type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & LensOverviewClient;
 type LensRouter = { push(href: Href): void };
 type HapticsLike = Pick<typeof Haptics, 'selectionAsync'>;
 
@@ -40,6 +43,8 @@ const idlePanel = <T,>(): PanelState<T> => ({ status: 'idle', data: null, source
 export type LensScreenProps = {
   symbol: string;
   client?: LensClient;
+  cache?: LensOverviewCache;
+  reachability?: NetworkReachability;
   router?: LensRouter;
   haptics?: HapticsLike;
   width?: number;
@@ -76,7 +81,8 @@ function formatTimestamp(value: number): string {
 
 function ConnectedLensScreen(props: LensScreenProps) {
   const router = useRouter();
-  return <LensController {...props} router={router} />;
+  const reachability = useNetworkReachability();
+  return <LensController {...props} reachability={reachability} router={router} />;
 }
 
 export default function LensScreen(props: LensScreenProps) {
@@ -86,6 +92,8 @@ export default function LensScreen(props: LensScreenProps) {
 function LensController({
   symbol: rawSymbol,
   client = defaultClient,
+  cache,
+  reachability = 'unknown',
   router = { push: () => undefined },
   haptics = Haptics,
   width: requestedWidth,
@@ -277,6 +285,8 @@ function LensController({
           </View>
           <Ionicons color={colors.mint} name="aperture-outline" size={30} />
         </View>
+
+        <LensOverview cache={cache} client={client} key={symbol} now={now} reachability={reachability} symbol={symbol} />
 
         <View style={styles.stateReadout}>
           <MetricCard label="SELECTED DEPTH" value={RESEARCH_DEPTH_LABELS[selectedDepth]} detail={`Selected depth: ${RESEARCH_DEPTH_LABELS[selectedDepth]}`} />

@@ -6,6 +6,8 @@ import type {
   HealthResponse,
   MoneylineResponse,
   ResolveWatchlistResponse,
+  SecurityAssetType,
+  SecuritySearchResponse,
   ToolCatalogResponse,
   TorqueResponse,
   Watchlist,
@@ -42,6 +44,12 @@ function optionalNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function optionalText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized && normalized.toUpperCase() !== 'N/A' ? normalized : null;
+}
+
 function stringArray(value: unknown): string[] {
   return array(value).flatMap((item) => (typeof item === 'string' ? [item] : []));
 }
@@ -62,6 +70,22 @@ function safeSymbol(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function safeSearchSymbol(value: unknown): string | null {
+  return safeSymbol(value);
+}
+
+const SECURITY_ASSET_TYPES = new Set<SecurityAssetType>([
+  'equity',
+  'etf',
+  'mutual_fund',
+  'index',
+  'crypto',
+]);
+
+export function isSecurityAssetType(value: unknown): value is SecurityAssetType {
+  return typeof value === 'string' && SECURITY_ASSET_TYPES.has(value as SecurityAssetType);
 }
 
 function normalizeWatchlist(value: unknown): Watchlist | null {
@@ -139,6 +163,33 @@ export function normalizeResolvedWatchlist(value: unknown): ResolveWatchlistResp
   };
 }
 
+export function normalizeSecuritySearch(value: unknown): SecuritySearchResponse {
+  const payload = record(value, 'Security search response');
+  const query = string(payload.query).trim();
+  const provider = string(payload.provider).trim();
+  if (!query || !provider) {
+    throw new ContractError('Security search response is missing query/provider.');
+  }
+  const results = array(payload.results).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const symbol = safeSearchSymbol(item.symbol);
+    const assetType = string(item.asset_type) as SecurityAssetType;
+    if (
+      !symbol
+      || typeof item.name !== 'string'
+      || typeof item.exchange !== 'string'
+      || !isSecurityAssetType(assetType)
+    ) return [];
+    return [{
+      symbol,
+      name: item.name.trim(),
+      exchange: item.exchange.trim(),
+      assetType,
+    }];
+  });
+  return { query, results, provider };
+}
+
 function normalizeErrors(meta: Record<string, unknown>): { ticker: string; error: string }[] {
   return array(meta.errors).flatMap((item) => {
     if (!isRecord(item)) return [];
@@ -167,11 +218,38 @@ export function normalizeWatchlistAlerts(value: unknown): WatchlistAlertsRespons
         price: optionalNumber(item.price),
         changePercent: optionalNumber(item.change_percent),
         annualVolatility: optionalNumber(item.annual_volatility),
+        trend50d: optionalNumber(item.trend_50d),
+        distanceFrom52WeekHigh: optionalNumber(item.distance_from_52w_high),
+        distanceFrom52WeekLow: optionalNumber(item.distance_from_52w_low),
         scannerScore: optionalNumber(item.scanner_score),
         score: optionalNumber(item.score),
         setup: string(item.setup) || null,
         provider: string(item.provider) || null,
         providerNote: string(item.provider_note) || null,
+        fundamentals: (() => {
+          const summary = isRecord(item.summary) ? item.summary : {};
+          return {
+            businessSummary: optionalText(summary.business_summary),
+            country: optionalText(summary.country),
+            website: optionalText(summary.website),
+            employees: optionalNumber(summary.employees),
+            marketCap: optionalText(summary.market_cap),
+            trailingPe: optionalNumber(summary.trailing_pe),
+            forwardPe: optionalNumber(summary.forward_pe),
+            priceToSales: optionalNumber(summary.price_to_sales),
+            priceToBook: optionalNumber(summary.price_to_book),
+            revenueGrowth: optionalNumber(summary.revenue_growth),
+            profitMargins: optionalNumber(summary.profit_margins),
+            returnOnEquity: optionalNumber(summary.return_on_equity),
+            debtToEquity: optionalNumber(summary.debt_to_equity),
+            recommendation: optionalText(summary.recommendation),
+            targetMeanPrice: optionalNumber(summary.target_mean_price),
+            analystCount: optionalNumber(summary.analyst_count),
+            beta: optionalNumber(summary.beta),
+            fiftyTwoWeekHigh: optionalNumber(summary.fifty_two_week_high),
+            fiftyTwoWeekLow: optionalNumber(summary.fifty_two_week_low),
+          };
+        })(),
         ridge: isRecord(item.ridge) ? item.ridge : {},
         flow: isRecord(item.flow) ? item.flow : {},
         auction: isRecord(item.auction) ? item.auction : {},

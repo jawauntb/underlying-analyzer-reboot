@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market_data import (
+    MAX_SEARCH_QUERY_LENGTH,
+    MAX_SECURITY_SYMBOL_LENGTH,
+    SEARCH_PROVIDER,
+    SECURITY_SYMBOL_PATTERN,
+)
 from app.tool_registry import GROUPS, TOOLS, ToolSpec
 
 API_TITLE = "The Underlying Analyzer API"
@@ -38,6 +44,71 @@ AGENT_REQUEST_SCHEMA: dict[str, Any] = {
 
 # Routes that exist for humans and infrastructure rather than as agent tools.
 SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
+    {
+        "method": "GET",
+        "path": "/api/data/search",
+        "tag": "data",
+        "summary": "Look up securities by ticker or company name",
+        "parameters": [
+            {
+                "name": "q",
+                "in": "query",
+                "required": True,
+                "schema": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_SEARCH_QUERY_LENGTH,
+                },
+                "description": "Ticker symbol or company name",
+            },
+            {
+                "name": "limit",
+                "in": "query",
+                "required": False,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 8,
+                },
+                "description": "Maximum number of results",
+            },
+        ],
+        "success_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "maxLength": MAX_SECURITY_SYMBOL_LENGTH,
+                                "pattern": SECURITY_SYMBOL_PATTERN,
+                            },
+                            "name": {"type": "string"},
+                            "exchange": {"type": "string"},
+                            "asset_type": {
+                                "type": "string",
+                                "enum": ["equity", "etf", "mutual_fund", "index", "crypto"],
+                            },
+                        },
+                        "required": ["symbol", "name", "exchange", "asset_type"],
+                        "additionalProperties": False,
+                    },
+                },
+                "provider": {"type": "string", "const": SEARCH_PROVIDER},
+            },
+            "required": ["query", "results", "provider"],
+            "additionalProperties": False,
+        },
+        "error_responses": {
+            "502": "Market data provider unavailable",
+            "503": "Security search capacity is busy",
+        },
+    },
     {
         "method": "GET",
         "path": "/api/config",
@@ -147,6 +218,23 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
             "tags": [route["tag"]],
             "responses": responses,
         }
+        parameters = route.get("parameters")
+        if isinstance(parameters, list):
+            supporting_operation["parameters"] = parameters
+        success_schema = route.get("success_schema")
+        if isinstance(success_schema, dict):
+            responses["200"]["content"]["application/json"]["schema"] = success_schema
+        error_responses = route.get("error_responses")
+        if isinstance(error_responses, dict):
+            for status, description in error_responses.items():
+                responses[str(status)] = {
+                    "description": str(description),
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}
+                        }
+                    },
+                }
         request_schema = route.get("request_schema")
         if isinstance(request_schema, dict):
             supporting_operation["requestBody"] = {

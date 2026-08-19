@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market_data import MAX_SEARCH_QUERY_LENGTH
 from app.mcp_http import PROTOCOL_VERSION, SERVER_VERSION
 from app.tool_registry import TOOLS, tool_catalog_payload
 
@@ -45,6 +46,17 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "group": "meta",
         "summary": "Market data provider notes",
         "auth": "none",
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/search",
+        "group": "data",
+        "summary": "Look up securities by ticker or company name",
+        "auth": "none",
+        "query": {
+            "q": f"string (required, max {MAX_SEARCH_QUERY_LENGTH})",
+            "limit": "int (default 8, 1-10)",
+        },
     },
     {
         "method": "GET",
