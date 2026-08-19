@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { StyleSheet } from 'react-native';
 
 import { generateStaticParams } from '@/app/ticker/[symbol]';
-import type { WatchlistAlertsResponse } from '@/src/api/contracts';
+import type { AuctionResponse, WatchlistAlertsResponse } from '@/src/api/contracts';
+import { API_ENDPOINTS } from '@/src/api/endpoints';
 import LensScreen from '@/src/features/lens/LensScreen';
 import { CACHE_SCHEMA_VERSION, type CacheRecord } from '@/src/state/cache';
 
@@ -139,7 +140,7 @@ const overview = (overrides: Partial<WatchlistAlertsResponse> = {}): WatchlistAl
   ...overrides,
 });
 
-const cachedOverview = (data: WatchlistAlertsResponse, fetchedAt: number): CacheRecord<WatchlistAlertsResponse> => ({
+const cachedRecord = <T,>(data: T, fetchedAt: number): CacheRecord<T> => ({
   schemaVersion: CACHE_SCHEMA_VERSION,
   data,
   fetchedAt,
@@ -155,14 +156,16 @@ const deferred = <T,>() => {
 
 function dependencies(options: {
   cached?: CacheRecord<WatchlistAlertsResponse> | null;
+  chartCached?: CacheRecord<AuctionResponse> | null;
   live?: Promise<WatchlistAlertsResponse>;
   liveError?: Error;
   reachability?: 'online' | 'offline' | 'unknown';
   now?: number;
 } = {}) {
   const cache = {
-    read: jest.fn(async () => options.cached ?? null),
-    write: jest.fn(async () => undefined),
+    read: jest.fn(async (descriptor: { route?: string }) =>
+      descriptor.route === API_ENDPOINTS.auction ? options.chartCached ?? null : options.cached ?? null),
+    write: jest.fn(async (_descriptor?: { route?: string }) => undefined),
   };
   const client = {
     baseUrl: 'https://api.test',
@@ -193,7 +196,7 @@ function dependencies(options: {
 }
 
 describe('LensScreen', () => {
-  it('auto-loads a lightweight overview while chart research stays explicit', async () => {
+  it('auto-loads the overview and a visible 3-month price chart while deeper research stays explicit', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
 
@@ -219,19 +222,42 @@ describe('LensScreen', () => {
     expect(screen.getByText('42 analysts · Buy')).toBeTruthy();
     expect(screen.getByText(/Fixture provider · Updated/)).toBeTruthy();
     expect(deps.client.watchlistAlerts).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything());
+    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything());
+    expect(await screen.findByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
     expect(screen.getByText(/Selected depth: Glance/)).toBeTruthy();
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
     fireEvent.press(screen.getByRole('button', { name: 'Select Diagnose' }));
     expect(screen.getByText(/Selected depth: Diagnose/)).toBeTruthy();
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
     expect(deps.client.torque).not.toHaveBeenCalled();
-    expect(deps.client.auction).not.toHaveBeenCalled();
     expect(deps.client.moneyline).not.toHaveBeenCalled();
+  });
+
+  it('switches visible chart ranges and ignores a late response from the replaced range', async () => {
+    const initial = deferred<typeof auction>();
+    const replacement = deferred<typeof auction>();
+    const deps = dependencies();
+    deps.client.auction
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => replacement.promise);
+    render(<LensScreen {...deps.props} />);
+
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything()));
+    fireEvent.press(screen.getByRole('tab', { name: 'Show 1 year chart' }));
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '1y' }, expect.anything()));
+    await act(async () => replacement.resolve({
+      ...auction,
+      datasets: [{ ...auction.datasets[0], period: '1y', series: { ohlcv: [{ date: '2026-08-19', open: 230, high: 236, low: 229, close: 235, volume: 12 }] } }],
+    }));
+    expect(await screen.findByRole('button', { name: 'View AAPL 1Y Price & value data' })).toBeTruthy();
+    await act(async () => initial.resolve(auction));
+    expect(screen.queryByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeNull();
   });
 
   it('keeps cached evidence visible offline and disables retry until connectivity returns', async () => {
     const deps = dependencies({
-      cached: cachedOverview(overview(), 20_000),
+      cached: cachedRecord(overview(), 20_000),
+      chartCached: cachedRecord({ ...auction, datasets: [{ ...auction.datasets[0], period: '3mo' }] }, 20_000),
       reachability: 'offline',
       now: 100_000,
     });
@@ -240,8 +266,49 @@ describe('LensScreen', () => {
     expect(await screen.findByText('Offline · saved overview')).toBeTruthy();
     expect(screen.getByText('Apple Inc.')).toBeTruthy();
     expect(screen.getByText(/Fixture provider · Updated/)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry overview' }).props.accessibilityState.disabled).toBe(true);
     expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
+    expect(deps.client.auction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a stale chart visible when refresh fails and recovers on Retry', async () => {
+    const cachedChart = { ...auction, datasets: [{ ...auction.datasets[0], period: '3mo' }] };
+    const deps = dependencies({ chartCached: cachedRecord(cachedChart, 20_000), now: 400_000 });
+    deps.client.auction
+      .mockRejectedValueOnce(new Error('Price provider unavailable'))
+      .mockResolvedValueOnce(cachedChart);
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Price provider unavailable')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'Retry price chart' }));
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Price provider unavailable')).toBeNull());
+  });
+
+  it('keeps live chart data visible when offline persistence fails', async () => {
+    const deps = dependencies();
+    deps.cache.write.mockImplementation(async (descriptor?: { route?: string }) => {
+      if (descriptor?.route === API_ENDPOINTS.auction) throw new Error('Storage unavailable');
+    });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
+    expect(await screen.findByText('Chart loaded, but it could not be saved for offline use.')).toBeTruthy();
+  });
+
+  it('distinguishes unreadable chart storage from a first-time offline cache miss', async () => {
+    const deps = dependencies({ reachability: 'offline' });
+    deps.cache.read.mockImplementation(async (descriptor: { route?: string }) => {
+      if (descriptor.route === API_ENDPOINTS.auction) throw new Error('Storage unavailable');
+      return null;
+    });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Saved chart storage could not be read. Reconnect to load this chart.')).toBeTruthy();
+    expect(deps.client.auction).not.toHaveBeenCalled();
   });
 
   it('cancels an active overview and switches to offline truth when connectivity drops', async () => {
@@ -267,7 +334,7 @@ describe('LensScreen', () => {
     const stale = overview({
       rows: [{ ...overview().rows[0], price: 220, setup: 'Cached setup.' }],
     });
-    const deps = dependencies({ cached: cachedOverview(stale, 20_000), live: live.promise, now: 100_000 });
+    const deps = dependencies({ cached: cachedRecord(stale, 20_000), live: live.promise, now: 100_000 });
     render(<LensScreen {...deps.props} />);
 
     expect(await screen.findByText('Saved overview · refreshing')).toBeTruthy();
@@ -326,7 +393,7 @@ describe('LensScreen', () => {
     expect(screen.getByText('Analyst count unavailable')).toBeTruthy();
   });
 
-  it('opens Glance with only Torque and 5d Auction, then Diagnose adds Moneyline', async () => {
+  it('opens Glance with Torque and a separate 5d Auction, then Diagnose adds Moneyline', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
     await screen.findByText('Apple Inc.');
@@ -337,17 +404,18 @@ describe('LensScreen', () => {
     expect(deps.client.moneyline).not.toHaveBeenCalled();
     expect(await screen.findByText(/Opened depth: Glance/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'View AAPL Torque data' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'View AAPL 5d Auction data' })).toBeTruthy();
 
     fireEvent.press(screen.getByRole('button', { name: 'Select Diagnose' }));
     fireEvent.press(screen.getByRole('button', { name: 'Open Diagnose' }));
     await waitFor(() => expect(deps.client.moneyline).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything()));
     expect(deps.client.torque).toHaveBeenCalledTimes(1);
-    expect(deps.client.auction).toHaveBeenCalledTimes(1);
+    expect(deps.client.auction).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole('button', { name: 'View AAPL Moneyline data' })).toBeTruthy();
   });
 
-  it('deep dive navigates with normalized params and never invokes agent or chart APIs', async () => {
+  it('deep dive navigates with normalized params without auto-running specialist charts', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
     await screen.findByText('Apple Inc.');
@@ -359,14 +427,17 @@ describe('LensScreen', () => {
       params: { symbol: 'AAPL', period: '1y', depth: 'deep-dive' },
     });
     expect(deps.client.torque).not.toHaveBeenCalled();
-    expect(deps.client.auction).not.toHaveBeenCalled();
+    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything());
     expect(deps.client.moneyline).not.toHaveBeenCalled();
     expect(deps.client).not.toHaveProperty('agentChat');
   });
 
   it('keeps panels independent, uses honest provenance, and exposes manual Retry', async () => {
     const deps = dependencies();
-    deps.client.auction.mockRejectedValueOnce(new Error('Auction provider unavailable')).mockResolvedValueOnce(auction);
+    deps.client.auction
+      .mockResolvedValueOnce(auction)
+      .mockRejectedValueOnce(new Error('Auction provider unavailable'))
+      .mockResolvedValueOnce(auction);
     deps.client.moneyline.mockResolvedValue({ ...moneyline, rows: [] });
     render(<LensScreen {...deps.props} />);
     await screen.findByText('Apple Inc.');

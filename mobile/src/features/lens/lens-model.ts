@@ -3,6 +3,9 @@ import { normalizeSymbol } from '@/src/api/endpoints';
 export const RESEARCH_DEPTHS = ['glance', 'diagnose', 'deep-dive'] as const;
 export type ResearchDepth = (typeof RESEARCH_DEPTHS)[number];
 
+export const LENS_AUCTION_PERIODS = ['5d', '1mo', '3mo', '6mo', '1y'] as const;
+export type LensAuctionPeriod = (typeof LENS_AUCTION_PERIODS)[number];
+
 export const RESEARCH_DEPTH_LABELS: Record<ResearchDepth, string> = {
   glance: 'Glance',
   diagnose: 'Diagnose',

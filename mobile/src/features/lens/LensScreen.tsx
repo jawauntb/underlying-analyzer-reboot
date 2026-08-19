@@ -18,15 +18,18 @@ import { useNetworkReachability } from '@/src/state/network';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
 import LensOverview, { type LensOverviewCache, type LensOverviewClient } from './LensOverview';
+import PriceValuePanel from './PriceValuePanel';
 import {
+  LENS_AUCTION_PERIODS,
   normalizeLensSymbol,
   RESEARCH_DEPTH_DESCRIPTIONS,
   RESEARCH_DEPTH_LABELS,
   type ResearchDepth,
 } from './lens-model';
+import { errorMessage, explicitProvider, formatTimestamp } from './lens-utils';
 import ResearchDepthDial from './ResearchDepthDial';
 
-const LENS_PERIOD = '5d';
+const LENS_PERIOD = LENS_AUCTION_PERIODS[0];
 const defaultClient = new ApiClient();
 
 type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & LensOverviewClient;
@@ -52,17 +55,6 @@ export type LensScreenProps = {
   now?: () => number;
 };
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function explicitProvider(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return 'Source not reported';
-}
-
 function torqueSource(data: TorqueResponse): string {
   return explicitProvider(isRecord(data.raw) ? data.raw.provider : undefined, data.meta.provider);
 }
@@ -73,10 +65,6 @@ function auctionSource(data: AuctionResponse): string {
 
 function moneylineSource(data: MoneylineResponse): string {
   return explicitProvider(data.meta.provider);
-}
-
-function formatTimestamp(value: number): string {
-  return `Updated ${new Date(value).toLocaleString()}`;
 }
 
 function ConnectedLensScreen(props: LensScreenProps) {
@@ -279,12 +267,22 @@ function LensController({
         testID="lens-content">
         <View style={styles.masthead}>
           <View style={styles.symbolBlock}>
-            <Text style={styles.eyebrow}>TICKER LENS / {LENS_PERIOD.toUpperCase()}</Text>
+            <Text style={styles.eyebrow}>TICKER LENS</Text>
             <Text accessibilityRole="header" style={styles.symbol}>{symbol}</Text>
-            <Text style={styles.title}>Research depth, opened deliberately</Text>
+            <Text style={styles.title}>Price first. Deeper research on demand.</Text>
           </View>
           <Ionicons color={colors.mint} name="aperture-outline" size={30} />
         </View>
+
+        <PriceValuePanel
+          cache={cache}
+          client={client}
+          fontScale={fontScale}
+          now={now}
+          reachability={reachability}
+          symbol={symbol}
+          width={chartWidth}
+        />
 
         <LensOverview cache={cache} client={client} key={symbol} now={now} reachability={reachability} symbol={symbol} />
 

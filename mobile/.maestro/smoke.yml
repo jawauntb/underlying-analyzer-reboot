@@ -34,6 +34,12 @@ tags:
 - extendedWaitUntil:
     visible: 'Apple'
     timeout: 15000
+- scrollUntilVisible:
+    element: 'AAPL 3M Price & value chart'
+    direction: DOWN
+    timeout: 15000
+    visibilityPercentage: 60
+- assertVisible: 'Show 3 months chart'
 - takeScreenshot: 04-lens-overview
 - scrollUntilVisible:
     element: 'Open Glance'

@@ -87,6 +87,14 @@ describe('deterministic E2E fixture transport', () => {
       })],
     });
 
+    const visibleChart = await request(API_ENDPOINTS.auction, {
+      method: 'POST',
+      body: JSON.stringify({ ticker: 'AAPL', period: '3mo' }),
+    });
+    expect(await body(visibleChart)).toMatchObject({
+      datasets: [expect.objectContaining({ ticker: 'AAPL', period: '3mo' })],
+    });
+
     const moneyline = await request(API_ENDPOINTS.moneyline, {
       method: 'POST',
       body: JSON.stringify({ ticker: 'AAPL' }),
