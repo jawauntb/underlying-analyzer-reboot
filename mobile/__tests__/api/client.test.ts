@@ -66,7 +66,9 @@ describe('endpoint and configuration safety', () => {
   it('defines the exact backend routes', () => {
     expect(API_ENDPOINTS).toMatchObject({
       health: '/api/health',
+      providers: '/api/providers',
       tools: '/api/agent/tools',
+      optionsChain: '/api/data/options/{ticker}/chain',
       search: '/api/data/search',
       resolveWatchlist: '/api/watchlists/resolve',
       alerts: '/api/watchlists/alerts',
@@ -119,6 +121,76 @@ describe('ApiClient', () => {
     });
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://api.test/api/data/market/snapshot?ticker=AAPL',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('normalizes provider freshness and stream readiness without exposing secrets', async () => {
+    const fetchImpl = jest.fn(async () => response({
+      body: {
+        primary: 'massive',
+        fallback: 'yfinance + nasdaq',
+        massive_configured: true,
+        fallback_enabled: true,
+        freshness: { stocks: 'realtime', options: 'plan-dependent' },
+        streaming: {
+          enabled: true,
+          configured: true,
+          transport: 'SSE backed by Massive WebSocket',
+          freshness: 'realtime',
+          endpoint: '/api/data/market/stream',
+        },
+        notes: ['safe note'],
+      },
+    }));
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+
+    await expect(client.providers()).resolves.toMatchObject({
+      primary: 'massive',
+      massiveConfigured: true,
+      freshness: { stocks: 'realtime' },
+      streaming: { enabled: true, configured: true, freshness: 'realtime' },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith('https://api.test/api/providers', expect.objectContaining({ method: 'GET' }));
+  });
+
+  it('normalizes the additive Massive options chain fields and expiry query', async () => {
+    const fetchImpl = jest.fn(async () => response({
+      body: {
+        ticker: 'AAPL',
+        expiry: '2026-09-18',
+        current_price: 231.42,
+        expirations: ['2026-09-18'],
+        rows: [{
+          strike: 230,
+          call_open_interest: 100,
+          put_open_interest: 80,
+          call_last: 5.2,
+          put_last: 4.8,
+          call_implied_volatility: 0.31,
+          put_implied_volatility: 0.29,
+          call_delta: 0.58,
+          put_delta: -0.42,
+          call_bid: 5,
+          call_ask: 5.4,
+          put_bid: 4.6,
+          put_ask: 5,
+          call_volume: 120,
+          put_volume: 90,
+        }],
+        provider: 'massive',
+        provider_note: 'Options Developer',
+      },
+    }));
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+
+    await expect(client.optionsChain(' aapl ', '2026-09-18')).resolves.toEqual(expect.objectContaining({
+      ticker: 'AAPL',
+      currentPrice: 231.42,
+      rows: [expect.objectContaining({ callImpliedVolatility: 0.31, putDelta: -0.42, callBid: 5, putAsk: 5 })],
+    }));
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.test/api/data/options/AAPL/chain?expiry=2026-09-18',
       expect.objectContaining({ method: 'GET' }),
     );
   });

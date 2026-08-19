@@ -7,6 +7,8 @@ import type {
   MarketSnapshotResponse,
   MoneylineRequest,
   MoneylineResponse,
+  OptionsChainResponse,
+  ProviderStatusResponse,
   ResolveWatchlistRequest,
   ResolveWatchlistResponse,
   SecuritySearchRequest,
@@ -27,6 +29,8 @@ import {
   normalizeHealth,
   normalizeMarketSnapshot,
   normalizeMoneyline,
+  normalizeOptionsChain,
+  normalizeProviderStatus,
   normalizeResolvedWatchlist,
   normalizeSecuritySearch,
   normalizeToolCatalog,
@@ -174,9 +178,24 @@ export class ApiClient {
     });
   }
 
+  providers(options: { signal?: AbortSignal } = {}): Promise<ProviderStatusResponse> {
+    return this.getJson(API_ENDPOINTS.providers, normalizeProviderStatus, {
+      timeoutMs: TIMEOUT_MS.capability,
+      signal: options.signal,
+    });
+  }
+
   marketSnapshot(ticker: string, options: { signal?: AbortSignal } = {}): Promise<MarketSnapshotResponse> {
     return this.getJson(API_ENDPOINTS.marketSnapshot, normalizeMarketSnapshot, {
       query: { ticker: normalizeSymbol(ticker) },
+      signal: options.signal,
+    });
+  }
+
+  optionsChain(ticker: string, expiry?: string, options: { signal?: AbortSignal } = {}): Promise<OptionsChainResponse> {
+    const symbol = normalizeSymbol(ticker);
+    return this.getJson(API_ENDPOINTS.optionsChain.replace('{ticker}', encodeURIComponent(symbol)), normalizeOptionsChain, {
+      query: expiry?.trim() ? { expiry: expiry.trim() } : undefined,
       signal: options.signal,
     });
   }

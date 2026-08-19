@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { StyleSheet } from 'react-native';
 
 import { generateStaticParams } from '@/app/ticker/[symbol]';
-import type { AuctionResponse, WatchlistAlertsResponse } from '@/src/api/contracts';
+import type { AuctionResponse, OptionsChainResponse, ProviderStatusResponse, WatchlistAlertsResponse } from '@/src/api/contracts';
 import { API_ENDPOINTS } from '@/src/api/endpoints';
 import LensScreen from '@/src/features/lens/LensScreen';
 import { CACHE_SCHEMA_VERSION, type CacheRecord } from '@/src/state/cache';
@@ -161,6 +161,8 @@ function dependencies(options: {
   liveError?: Error;
   reachability?: 'online' | 'offline' | 'unknown';
   now?: number;
+  providers?: ProviderStatusResponse;
+  optionsChain?: OptionsChainResponse;
 } = {}) {
   const cache = {
     read: jest.fn(async (descriptor: { route?: string }) =>
@@ -173,6 +175,8 @@ function dependencies(options: {
     torque: jest.fn(async () => torque),
     auction: jest.fn(async () => auction),
     moneyline: jest.fn(async () => moneyline),
+    ...(options.providers ? { providers: jest.fn(async () => options.providers) } : {}),
+    ...(options.optionsChain ? { optionsChain: jest.fn(async () => options.optionsChain) } : {}),
   };
   const router = { push: jest.fn() };
   const haptics = { selectionAsync: jest.fn(async () => undefined) };
@@ -196,6 +200,61 @@ function dependencies(options: {
 }
 
 describe('LensScreen', () => {
+  it('shows Massive freshness status and the richer options pulse only when Diagnose is opened', async () => {
+    const deps = dependencies({
+      providers: {
+        primary: 'massive',
+        fallback: 'yfinance + nasdaq',
+        massiveConfigured: true,
+        fallbackEnabled: true,
+        freshness: { stocks: 'realtime', options: 'plan-dependent' },
+        streaming: {
+          enabled: true,
+          configured: true,
+          transport: 'SSE backed by Massive WebSocket',
+          freshness: 'realtime',
+          endpoint: '/api/data/market/stream',
+        },
+        notes: [],
+      },
+      optionsChain: {
+        ticker: 'AAPL',
+        expiry: '2026-09-18',
+        currentPrice: 231.42,
+        expirations: ['2026-09-18'],
+        provider: 'massive',
+        providerNote: 'Options Developer',
+        rows: [{
+          strike: 230,
+          callOpenInterest: 100,
+          putOpenInterest: 80,
+          callLast: 5.2,
+          putLast: 4.8,
+          callImpliedVolatility: 0.31,
+          putImpliedVolatility: 0.29,
+          callDelta: 0.58,
+          putDelta: -0.42,
+          callBid: 5,
+          callAsk: 5.4,
+          putBid: 4.6,
+          putAsk: 5,
+          callVolume: 120,
+          putVolume: 90,
+        }],
+      },
+    });
+    render(<LensScreen {...deps.props} />);
+
+    expect((await screen.findAllByText('realtime')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('OPTIONS PULSE')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'Select Diagnose' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Open Diagnose' }));
+    expect(await screen.findByText('OPTIONS PULSE')).toBeTruthy();
+    expect(screen.getByText('31.0%')).toBeTruthy();
+    expect(screen.getByText('0.58')).toBeTruthy();
+    expect(screen.getByText('$5.00 / $5.40')).toBeTruthy();
+  });
+
   it('auto-loads the overview and a visible 3-month price chart while deeper research stays explicit', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);

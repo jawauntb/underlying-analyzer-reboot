@@ -6,7 +6,7 @@ import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiClient, RequestCoordinator } from '@/src/api/client';
-import type { AuctionResponse, ChartDataset, MoneylineResponse, TorqueResponse } from '@/src/api/contracts';
+import type { AuctionResponse, ChartDataset, MoneylineResponse, OptionsChainResponse, TorqueResponse } from '@/src/api/contracts';
 import { isRecord } from '@/src/api/guards';
 import { AuctionChart } from '@/src/components/charts/AuctionChart';
 import { MoneylineChart } from '@/src/components/charts/MoneylineChart';
@@ -20,6 +20,8 @@ import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 import LensOverview, { type LensOverviewCache, type LensOverviewClient } from './LensOverview';
 import PriceValuePanel from './PriceValuePanel';
 import LiveQuoteCard from './LiveQuoteCard';
+import MarketDataStatusCard from './MarketDataStatusCard';
+import OptionsPulseCard from './OptionsPulseCard';
 import {
   LENS_AUCTION_PERIODS,
   normalizeLensSymbol,
@@ -33,7 +35,7 @@ import ResearchDepthDial from './ResearchDepthDial';
 const LENS_PERIOD = LENS_AUCTION_PERIODS[0];
 const defaultClient = new ApiClient();
 
-type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & Partial<Pick<ApiClient, 'marketSnapshot'>> & LensOverviewClient;
+type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & Partial<Pick<ApiClient, 'marketSnapshot' | 'providers' | 'optionsChain'>> & LensOverviewClient;
 type LensRouter = { push(href: Href): void };
 type HapticsLike = Pick<typeof Haptics, 'selectionAsync'>;
 
@@ -101,20 +103,25 @@ function LensController({
   const [torqueState, setTorqueState] = useState<PanelState<TorqueResponse>>(idlePanel);
   const [auctionState, setAuctionState] = useState<PanelState<ChartDataset>>(idlePanel);
   const [moneylineState, setMoneylineState] = useState<PanelState<MoneylineResponse>>(idlePanel);
+  const [optionsState, setOptionsState] = useState<PanelState<OptionsChainResponse>>(idlePanel);
   const torqueCoordinator = useRef(new RequestCoordinator<TorqueResponse>());
   const auctionCoordinator = useRef(new RequestCoordinator<AuctionResponse>());
   const moneylineCoordinator = useRef(new RequestCoordinator<MoneylineResponse>());
+  const optionsCoordinator = useRef(new RequestCoordinator<OptionsChainResponse>());
   const torqueGeneration = useRef(0);
   const auctionGeneration = useRef(0);
   const moneylineGeneration = useRef(0);
+  const optionsGeneration = useRef(0);
 
   useEffect(() => () => {
     torqueGeneration.current += 1;
     auctionGeneration.current += 1;
     moneylineGeneration.current += 1;
+    optionsGeneration.current += 1;
     torqueCoordinator.current.cancel();
     auctionCoordinator.current.cancel();
     moneylineCoordinator.current.cancel();
+    optionsCoordinator.current.cancel();
   }, []);
 
   async function loadTorque(force = false) {
@@ -229,6 +236,41 @@ function LensController({
     }
   }
 
+  async function loadOptions(force = false) {
+    if (!symbol || !client.optionsChain || (!force && ['loading', 'ready'].includes(optionsState.status))) return;
+    const generation = ++optionsGeneration.current;
+    setOptionsState({ status: 'loading', data: null, source: null, fetchedAt: null });
+    try {
+      const result = await optionsCoordinator.current.run((signal) => client.optionsChain!(symbol, undefined, { signal }));
+      if (!result.accepted || generation !== optionsGeneration.current) return;
+      if (result.value.ticker !== symbol) {
+        setOptionsState({
+          status: 'unavailable',
+          data: null,
+          source: result.value.provider,
+          fetchedAt: now(),
+          message: `Options response did not match ${symbol}.`,
+        });
+        return;
+      }
+      setOptionsState({
+        status: 'ready',
+        data: result.value,
+        source: result.value.provider,
+        fetchedAt: now(),
+      });
+    } catch (error) {
+      if (generation !== optionsGeneration.current) return;
+      setOptionsState({
+        status: 'error',
+        data: null,
+        source: null,
+        fetchedAt: null,
+        message: errorMessage(error, 'Options pulse could not be loaded.'),
+      });
+    }
+  }
+
   function openSelectedDepth() {
     if (!symbol) return;
     setOpenedDepth(selectedDepth);
@@ -242,11 +284,22 @@ function LensController({
     const force = openedDepth === selectedDepth;
     void loadTorque(force);
     void loadAuction(force);
-    if (selectedDepth === 'diagnose') void loadMoneyline(force);
+    if (selectedDepth === 'diagnose') {
+      void loadMoneyline(force);
+      void loadOptions(force);
+    }
   }
 
   const liveQuoteClient = useMemo(
     () => (client.marketSnapshot ? { marketSnapshot: client.marketSnapshot.bind(client) } : null),
+    [client],
+  );
+  const providerStatusClient = useMemo(
+    () => (client.providers ? { providers: client.providers.bind(client) } : null),
+    [client],
+  );
+  const optionsChainClient = useMemo(
+    () => (client.optionsChain ? { optionsChain: client.optionsChain.bind(client) } : null),
     [client],
   );
 
@@ -292,6 +345,8 @@ function LensController({
 
         {liveQuoteClient ? <LiveQuoteCard client={liveQuoteClient} symbol={symbol} /> : null}
 
+        {providerStatusClient ? <MarketDataStatusCard client={providerStatusClient} /> : null}
+
         <LensOverview cache={cache} client={client} key={symbol} now={now} reachability={reachability} symbol={symbol} />
 
         <View style={styles.stateReadout}>
@@ -332,6 +387,11 @@ function LensController({
             {openedDepth === 'diagnose' ? (
               <LensPanel title={`${symbol} Moneyline`} state={moneylineState} onRetry={() => void loadMoneyline(true)}>
                 {moneylineState.status === 'ready' ? <MoneylineChart dataset={moneylineState.data} fontScale={fontScale} title={`${symbol} Moneyline`} width={chartWidth} /> : null}
+              </LensPanel>
+            ) : null}
+            {openedDepth === 'diagnose' && optionsChainClient ? (
+              <LensPanel title={`${symbol} Options Pulse`} state={optionsState} onRetry={() => void loadOptions(true)}>
+                {optionsState.status === 'ready' ? <OptionsPulseCard data={optionsState.data} symbol={symbol} /> : null}
               </LensPanel>
             ) : null}
           </View>
