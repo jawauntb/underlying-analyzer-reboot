@@ -4,6 +4,7 @@ import type {
   AuctionResponse,
   ChartDataset,
   HealthResponse,
+  MarketSnapshotResponse,
   MoneylineResponse,
   ResolveWatchlistResponse,
   SecurityAssetType,
@@ -110,6 +111,21 @@ export function normalizeHealth(value: unknown): HealthResponse {
     throw new ContractError('Health response is missing ok/service.');
   }
   return { ok: true, service: string(payload.service) };
+}
+
+export function normalizeMarketSnapshot(value: unknown): MarketSnapshotResponse {
+  const payload = record(value, 'Market snapshot response');
+  const ticker = safeSymbol(payload.ticker);
+  const provider = string(payload.provider).trim();
+  if (!ticker || !provider || !isRecord(payload.data)) {
+    throw new ContractError('Market snapshot response is missing ticker/provider/data.');
+  }
+  return {
+    ticker,
+    provider,
+    providerNote: string(payload.provider_note).trim() || null,
+    data: payload.data,
+  };
 }
 
 export function normalizeToolCatalog(value: unknown): ToolCatalogResponse {

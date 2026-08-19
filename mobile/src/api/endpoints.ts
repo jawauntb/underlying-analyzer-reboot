@@ -2,6 +2,7 @@ export const DEFAULT_API_BASE_URL = 'https://underlying-terminal-production.up.r
 
 export const API_ENDPOINTS = {
   health: '/api/health',
+  marketSnapshot: '/api/data/market/snapshot',
   tools: '/api/agent/tools',
   search: '/api/data/search',
   resolveWatchlist: '/api/watchlists/resolve',

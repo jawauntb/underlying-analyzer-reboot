@@ -37,7 +37,9 @@ families needed by this app: aggregates, snapshots, trades and quotes, reference
 corporate actions, and technical indicators. The current implementation covers daily aggregate
 bars, snapshots, ticker reference/search data, options chains/contracts/expirations, trades,
 quotes, ticker events, dividends, splits, selected financial statements/ratios, and market
-status. Technical indicators, IPOs, flat files, and partner datasets remain documented gaps.
+status. Technical indicators and flat files remain documented gaps. IPOs, conditions, news,
+full-market snapshots, and TMX corporate events are now additive adapter routes; the latter is
+a separately licensed partner dataset.
 
 The [Stocks WebSocket overview](https://massive.com/docs/websocket/stocks/overview) documents
 trades, NBBO quotes, minute/second aggregates, LULD, and FMV feeds. The app exposes the first
@@ -99,6 +101,22 @@ datasets with dedicated subscription requirements. For example, [TMX Corporate E
 and Benzinga endpoints are not implied by a core Stocks or Options plan. Partner adapters must
 be opt-in, capability-gated, and clearly labeled with their partner dataset; core-market
 fallbacks cannot claim semantic equivalence.
+
+### Newly surfaced additive datasets
+
+| Dataset | Public route | Ownership / freshness |
+| --- | --- | --- |
+| Stock news | `/api/data/market/news/<ticker>` | Massive reference news; provider timestamps are authoritative |
+| TMX corporate events | `/api/data/market/corporate-events` | TMX partner subscription; event-specific coverage |
+| IPO reference | `/api/data/market/ipos` | Massive reference dataset; coverage is provider/plan dependent |
+| Ticker conditions | `/api/data/market/conditions` | Massive reference metadata, not a price feed |
+| All-stock snapshot | `/api/data/market/snapshot/all` | Stocks Advanced can provide realtime snapshots; lower tiers may be delayed/unavailable |
+| Option contract snapshot | `/api/data/options/<ticker>/snapshot/<contract>` | Options plan dependent; Developer supports real-time Greeks/IV but quote entitlement must be verified |
+
+The current subscription evidence is Stocks Advanced, Options Developer, Financials & Ratios,
+and TMX Corporate Events. The runtime does not invent `MASSIVE_*_PLAN` values, so the capability
+matrix remains unverified until those optional declarations are supplied. The five canonical
+secrets remain in the shared personal Doppler configs only.
 
 ## Adapter and contract choice
 

@@ -119,7 +119,8 @@ and the additive `data` payload. A stream entitlement failure is an `error` even
 `not_entitled`; it is never silently served by yfinance.
 
 The additive raw-data routes are cataloged by `GET /api/docs` and `GET /api/openapi`: market
-snapshot, aggregates, trades, quotes, status, options chain/expirations/contracts, ticker
+snapshot, all-stock snapshot, aggregates, trades, quotes, status, news, IPOs, conditions,
+TMX corporate events, options chain/expirations/contracts, single-contract snapshots, ticker
 events, dividends, splits, and selected financial statements/ratios. They use a stable
 `{ticker, provider, provider_note, data}` envelope (market status omits `ticker`) and never
 replace an existing endpoint.

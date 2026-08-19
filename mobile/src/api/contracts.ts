@@ -6,6 +6,13 @@ export type HealthResponse = {
   service: string;
 };
 
+export type MarketSnapshotResponse = {
+  ticker: string;
+  provider: string;
+  providerNote: string | null;
+  data: Record<string, unknown>;
+};
+
 export type ApiCatalogEndpoint = {
   method: string;
   path: string;

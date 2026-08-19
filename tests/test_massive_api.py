@@ -58,6 +58,24 @@ class AdditiveClient:
     def get_market_status(self) -> dict[str, Any]:
         raise MarketDataCapabilityError("market status unavailable")
 
+    def get_news(self, ticker: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"ticker": ticker, "params": params, "results": [{"title": "fixture"}]}
+
+    def get_corporate_events(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"params": params, "results": [{"event_type": "earnings"}]}
+
+    def get_ipos(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"params": params, "results": [{"ticker": "NEW"}]}
+
+    def get_conditions(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"params": params, "results": [{"code": "T"}]}
+
+    def get_all_snapshot(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"params": params, "tickers": [{"ticker": "AAPL"}]}
+
+    def get_option_snapshot(self, underlying: str, contract: str) -> dict[str, Any]:
+        return {"underlying": underlying, "contract": contract, "details": {"strike_price": 100}}
+
 
 def test_additive_massive_routes_preserve_envelopes_and_query_shapes() -> None:
     app = create_app()
@@ -109,6 +127,29 @@ def test_additive_massive_routes_preserve_envelopes_and_query_shapes() -> None:
     quotes = client.get("/api/data/market/quotes/AAPL")
     assert quotes.status_code == 200
     assert quotes.get_json()["data"]["params"] == {}
+
+    news = client.get("/api/data/market/news/AAPL", query_string={"limit": "5"})
+    assert news.status_code == 200
+    assert news.get_json()["data"]["ticker"] == "AAPL"
+    assert news.get_json()["data"]["params"] == {"limit": "5"}
+
+    events = client.get(
+        "/api/data/market/corporate-events", query_string={"event_type": "earnings"}
+    )
+    assert events.status_code == 200
+    assert events.get_json()["data"]["params"] == {"event_type": "earnings"}
+
+    assert client.get("/api/data/market/ipos").get_json()["data"]["results"] == [{"ticker": "NEW"}]
+    assert client.get("/api/data/market/conditions").get_json()["data"]["results"] == [
+        {"code": "T"}
+    ]
+    assert client.get("/api/data/market/snapshot/all").get_json()["data"]["tickers"] == [
+        {"ticker": "AAPL"}
+    ]
+
+    option_snapshot = client.get("/api/data/options/AAPL/snapshot/O:AAPL260821C00100000")
+    assert option_snapshot.status_code == 200
+    assert option_snapshot.get_json()["data"]["contract"] == "O:AAPL260821C00100000"
 
     dividends = client.get("/api/data/market/dividends/AAPL")
     assert dividends.status_code == 200

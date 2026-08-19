@@ -263,6 +263,13 @@ textarea:focus-visible {
   font-weight: 900;
 }
 
+.live-quote {
+  border-left: 1px solid var(--cyan-line);
+  color: var(--mint);
+  padding-left: 9px;
+  white-space: nowrap;
+}
+
 .account-control {
   position: relative;
   z-index: 4;

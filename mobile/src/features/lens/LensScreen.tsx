@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { useRouter, type Href } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -19,6 +19,7 @@ import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
 import LensOverview, { type LensOverviewCache, type LensOverviewClient } from './LensOverview';
 import PriceValuePanel from './PriceValuePanel';
+import LiveQuoteCard from './LiveQuoteCard';
 import {
   LENS_AUCTION_PERIODS,
   normalizeLensSymbol,
@@ -32,7 +33,7 @@ import ResearchDepthDial from './ResearchDepthDial';
 const LENS_PERIOD = LENS_AUCTION_PERIODS[0];
 const defaultClient = new ApiClient();
 
-type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & LensOverviewClient;
+type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & Partial<Pick<ApiClient, 'marketSnapshot'>> & LensOverviewClient;
 type LensRouter = { push(href: Href): void };
 type HapticsLike = Pick<typeof Haptics, 'selectionAsync'>;
 
@@ -244,6 +245,11 @@ function LensController({
     if (selectedDepth === 'diagnose') void loadMoneyline(force);
   }
 
+  const liveQuoteClient = useMemo(
+    () => (client.marketSnapshot ? { marketSnapshot: client.marketSnapshot.bind(client) } : null),
+    [client],
+  );
+
   if (!symbol) {
     return (
       <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.safeArea}>
@@ -283,6 +289,8 @@ function LensController({
           symbol={symbol}
           width={chartWidth}
         />
+
+        {liveQuoteClient ? <LiveQuoteCard client={liveQuoteClient} symbol={symbol} /> : null}
 
         <LensOverview cache={cache} client={client} key={symbol} now={now} reachability={reachability} symbol={symbol} />
 
