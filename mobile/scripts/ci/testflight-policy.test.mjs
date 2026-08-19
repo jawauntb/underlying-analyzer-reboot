@@ -20,5 +20,5 @@ test('production release configuration remains eligible for TestFlight', async (
     autoIncrement: true,
     distribution: 'store',
   });
-  assert.deepEqual(eas.submit.production, {});
+  assert.equal(eas.submit.production.ios.ascAppId, '6803122192');
 });
