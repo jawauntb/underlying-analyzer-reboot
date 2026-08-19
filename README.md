@@ -5,6 +5,7 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - Flask API for chart generation and stock summaries
 - Static frontend with the original retro terminal styling
 - A Massive-first market-data adapter with yfinance and Nasdaq fallbacks
+- Additive Massive stock/options streaming through `/api/data/market/stream`
 - Nasdaq public historical fallback for daily US equity OHLCV when keyed providers fail
 - Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
 - SEC EDGAR source packs for filings, XBRL company facts, and Vision memo citations
@@ -43,7 +44,11 @@ successful provider is normalized to the same OHLCV, options, metadata, and erro
 Massive credentials belong in Doppler. Documentation names the variables but never includes
 their values: `MASSIVE_API_KEY`, `MASSIVE_REST_BASE_URL`, `MASSIVE_TIMEOUT_SECONDS`,
 `MASSIVE_MAX_RETRIES`, `MASSIVE_MAX_PAGES`, and the routing flag
-`MARKET_DATA_FALLBACK_ENABLED`. Capability reporting may additionally use
+`MARKET_DATA_FALLBACK_ENABLED`. Streaming additionally uses
+`MASSIVE_STREAM_ENABLED`, `MASSIVE_WS_BASE_URL`, `MASSIVE_STREAM_TIMEOUT_SECONDS`, and
+`MASSIVE_STREAM_MAX_RECONNECTS`; it is a Server-Sent Events endpoint backed by Massive's
+WebSocket connection so the current WSGI/Gunicorn deployment remains compatible. Capability
+reporting may additionally use
 `MASSIVE_STOCKS_PLAN` and `MASSIVE_OPTIONS_PLAN`. Do not return `MASSIVE_API_KEY` from
 `/api/config`, `/api/providers`, or any capability catalog. See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)
 for the adapter boundary, stable metadata envelope, entitlement rules, and rollout sequence.
@@ -69,6 +74,17 @@ not be implied by a Stocks or Options subscription. See the [Options overview](h
 Additive Massive routes also expose stock market status, dividends, splits, and selected
 financial statements/ratios. Financials use a separate `MASSIVE_FINANCIALS_PLAN` declaration;
 the capability endpoint reports them as unavailable until that entitlement is explicitly known.
+
+### Realtime stream
+
+`GET /api/data/market/stream?ticker=AAPL&feed=trades` returns `text/event-stream` events. The
+server connects to Massive's `wss://socket.massive.com/stocks` feed, authenticates with the
+server-side key, and forwards sanitized `ready`, `market_data`, and `error` events. Use
+`asset_class=options` with a Massive option contract ticker (for example,
+`O:SPY241220P00720000`) for the options feed. `quotes`, `aggregates_minute`, and
+`aggregates_second` are also supported. An Advanced Stocks entitlement is required for
+real-time stock delivery. Massive may still reject a key with an entitlement error, which is
+reported as a sanitized stream error and never silently replaced with yfinance.
 
 Free keyed options worth considering later:
 

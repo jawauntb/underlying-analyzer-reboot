@@ -287,6 +287,47 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "method": "GET",
+        "path": "/api/data/market/stream",
+        "tag": "data",
+        "summary": "Massive WebSocket market events as Server-Sent Events",
+        "parameters": [
+            {
+                "name": "ticker",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string"},
+            },
+            {
+                "name": "asset_class",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "enum": ["stocks", "options"], "default": "stocks"},
+            },
+            {
+                "name": "feed",
+                "in": "query",
+                "required": False,
+                "schema": {
+                    "type": "string",
+                    "enum": ["trades", "quotes", "aggregates_minute", "aggregates_second"],
+                    "default": "trades",
+                },
+            },
+            {
+                "name": "max_events",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "integer", "minimum": 1, "maximum": 1000},
+            },
+        ],
+        "responses": {
+            "200": {"description": "Server-Sent Events stream from Massive"},
+            "400": {"description": "Invalid stream request"},
+            "501": {"description": "Massive streaming is not configured or enabled"},
+        },
+    },
+    {
+        "method": "GET",
         "path": "/api/openapi",
         "tag": "meta",
         "summary": "This document",

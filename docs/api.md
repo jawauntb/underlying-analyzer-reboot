@@ -102,6 +102,22 @@ curl -s http://127.0.0.1:5050/api/providers
 or empty Massive result may route to the next provider only when fallback is enabled. An
 invalid request is not retried as an upstream outage.
 
+### `GET /api/data/market/stream` (additive)
+
+Streams Massive stock or option events as `text/event-stream`. The deployed Flask service keeps
+the public transport as SSE while the server maintains the upstream Massive WebSocket.
+
+```bash
+curl -N 'http://127.0.0.1:5050/api/data/market/stream?ticker=AAPL&feed=trades'
+```
+
+Query parameters: `ticker` (required), `asset_class` (`stocks` or `options`, default `stocks`),
+`feed` (`trades`, `quotes`, `aggregates_minute`, or `aggregates_second`, default `trades`), and
+optional `max_events` (1–1000, useful for smoke tests). Events are named `ready`, `market_data`,
+and `error`; each data event includes `provider`, `feed`, `ticker`, `timestamp`, `timestamp_ms`,
+and the additive `data` payload. A stream entitlement failure is an `error` event with code
+`not_entitled`; it is never silently served by yfinance.
+
 The additive raw-data routes are cataloged by `GET /api/docs` and `GET /api/openapi`: market
 snapshot, aggregates, trades, quotes, status, options chain/expirations/contracts, ticker
 events, dividends, splits, and selected financial statements/ratios. They use a stable
@@ -711,6 +727,10 @@ or capability responses.
 | `MASSIVE_MAX_RETRIES` | Bounded retry count for transient failures |
 | `MASSIVE_MAX_PAGES` | Maximum pagination pages to collect from one request |
 | `MARKET_DATA_FALLBACK_ENABLED` | Permit routing to yfinance/Nasdaq after a Massive failure or entitlement miss |
+| `MASSIVE_STREAM_ENABLED` | Enable the additive Massive WebSocket/SSE stream |
+| `MASSIVE_WS_BASE_URL` | WebSocket base URL; default `wss://socket.massive.com` |
+| `MASSIVE_STREAM_TIMEOUT_SECONDS` | WebSocket connect/read timeout |
+| `MASSIVE_STREAM_MAX_RECONNECTS` | Maximum bounded reconnect attempts |
 | `MASSIVE_STOCKS_PLAN` | Sanitized plan declaration used for capability reporting: `basic`, `starter`, `developer`, or `advanced` |
 | `MASSIVE_OPTIONS_PLAN` | Sanitized Options plan declaration: `basic`, `starter`, `developer`, or `advanced` |
 | `MASSIVE_FINANCIALS_PLAN` | Sanitized financials/ratios entitlement declaration, including any expansion plan |

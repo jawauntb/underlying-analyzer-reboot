@@ -93,6 +93,12 @@ from app.market_data import (
     MarketDataError,
     clean_ticker,
 )
+from app.massive_stream import (
+    MassiveStreamEntitlementError,
+    MassiveStreamError,
+    MassiveStreamProvider,
+    clean_stream_ticker,
+)
 from app.mcp_http import (
     handle_mcp_payload,
     parse_error_response,
@@ -170,6 +176,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
     CORS(app)
     app.config["MARKET_DATA_CLIENT"] = MarketDataClient()
+    app.config["MASSIVE_STREAM_PROVIDER"] = MassiveStreamProvider.from_env()
     app.config["WATCHLIST_CLIENT"] = TradingViewWatchlistClient()
     app.config["SEC_CLIENT"] = SecClient(user_agent=os.getenv("SEC_USER_AGENT"))
     app.config["EXA_API_KEY"] = os.getenv("EXA_API_KEY")
@@ -248,6 +255,7 @@ def create_app() -> Flask:
     def providers() -> Any:
         client = get_market_client()
         configured = bool(getattr(getattr(client, "provider", None), "api_key", ""))
+        stream_provider = get_massive_stream_provider()
         fallback_enabled = bool(getattr(client, "fallback_enabled", True))
         return jsonify(
             {
@@ -258,6 +266,13 @@ def create_app() -> Flask:
                 "freshness": {
                     "stocks": "Plan-dependent: end-of-day, 15-minute delayed, or real-time",
                     "options": "Plan-dependent: unavailable, 15-minute delayed, or real-time",
+                },
+                "streaming": {
+                    "enabled": stream_provider.enabled,
+                    "configured": stream_provider.configured,
+                    "transport": "SSE backed by Massive WebSocket",
+                    "freshness": stream_provider.freshness,
+                    "endpoint": "/api/data/market/stream",
                 },
                 "notes": [
                     "Massive is the primary provider when MASSIVE_API_KEY is configured.",
@@ -474,6 +489,87 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 501
         except MarketDataError as exc:
             return jsonify({"error": str(exc)}), 502
+
+    @app.get("/api/data/market/stream")
+    def market_stream() -> Any:
+        """Stream Massive market events as additive Server-Sent Events.
+
+        The upstream connection is a Massive WebSocket. SSE keeps this
+        public transport compatible with the deployed WSGI/Gunicorn service
+        and with browser EventSource clients.
+        """
+        ticker = request.args.get("ticker", "")
+        asset_class = request.args.get("asset_class", "stocks").strip().lower()
+        feed = request.args.get("feed", "trades").strip().lower()
+        try:
+            max_events = _optional_positive_int(request.args.get("max_events"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        provider = get_massive_stream_provider()
+        if not provider.enabled:
+            return jsonify({"error": "Massive streaming is disabled by configuration"}), 501
+        if not provider.configured:
+            return jsonify({"error": "MASSIVE_API_KEY is not configured"}), 501
+        try:
+            clean_stream_ticker(ticker, asset_class=asset_class)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if asset_class not in {"stocks", "options"}:
+            return jsonify({"error": "asset_class must be stocks or options"}), 400
+        if feed not in {"trades", "quotes", "aggregates_minute", "aggregates_second"}:
+            return jsonify(
+                {
+                    "error": (
+                        "feed must be trades, quotes, aggregates_minute, or "
+                        "aggregates_second"
+                    )
+                }
+            ), 400
+
+        def event_stream() -> Any:
+            yield _sse_event(
+                "ready",
+                {
+                    "provider": "massive",
+                    "ticker": ticker.strip().upper(),
+                    "asset_class": asset_class,
+                    "feed": feed,
+                    "freshness": provider.freshness,
+                },
+            )
+            try:
+                for event in provider.stream_events(
+                    ticker,
+                    asset_class=asset_class,
+                    feed=feed,
+                    max_events=max_events,
+                ):
+                    yield _sse_event("market_data", _stream_payload(event, provider, feed))
+            except MassiveStreamEntitlementError:
+                yield _sse_event(
+                    "error",
+                    {
+                        "error": "Massive authentication or subscription rejected the stream",
+                        "code": "not_entitled",
+                        "provider": "massive",
+                    },
+                )
+            except MassiveStreamError:
+                yield _sse_event(
+                    "error",
+                    {
+                        "error": "Massive stream unavailable",
+                        "code": "provider_error",
+                        "provider": "massive",
+                    },
+                )
+
+        return Response(
+            stream_with_context(event_stream()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/sec/<ticker>")
     def sec_source_pack(ticker: str) -> Any:
@@ -1080,6 +1176,43 @@ def get_market_client() -> MarketDataClient:
     return current_app.config["MARKET_DATA_CLIENT"]
 
 
+def get_massive_stream_provider() -> MassiveStreamProvider:
+    return current_app.config["MASSIVE_STREAM_PROVIDER"]
+
+
+def _optional_positive_int(value: str | None) -> int | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError("max_events must be a positive integer") from exc
+    if parsed < 1 or parsed > 1000:
+        raise ValueError("max_events must be between 1 and 1000")
+    return parsed
+
+
+def _sse_event(event_name: str, payload: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
+def _stream_payload(
+    event: dict[str, Any], provider: MassiveStreamProvider, feed: str
+) -> dict[str, Any]:
+    timestamp_ms = event.get("t")
+    timestamp = None
+    if isinstance(timestamp_ms, int | float):
+        timestamp = datetime.fromtimestamp(timestamp_ms / 1000, tz=UTC).isoformat()
+    return {
+        "provider": provider.name,
+        "feed": feed,
+        "ticker": event.get("sym"),
+        "timestamp": timestamp,
+        "timestamp_ms": timestamp_ms,
+        "data": event,
+    }
+
+
 def market_data_envelope(
     client: MarketDataClient,
     method: str,
@@ -1178,6 +1311,7 @@ def build_capabilities_payload(client: MarketDataClient) -> dict[str, Any]:
         capability("stocks.snapshot", stocks_plan, minimum="starter", freshness="plan_dependent"),
         capability("stocks.trades", stocks_plan, minimum="developer", freshness="plan_dependent"),
         capability("stocks.quotes", stocks_plan, minimum="advanced", freshness="realtime"),
+        capability("stocks.websocket", stocks_plan, minimum="starter", freshness="plan_dependent"),
         capability(
             "stocks.ticker_events",
             stocks_plan,
@@ -1203,6 +1337,9 @@ def build_capabilities_payload(client: MarketDataClient) -> dict[str, Any]:
         ),
         capability("options.trades", options_plan, minimum="developer", freshness="plan_dependent"),
         capability("options.quotes", options_plan, minimum="advanced", freshness="realtime"),
+        capability(
+            "options.websocket", options_plan, minimum="starter", freshness="plan_dependent"
+        ),
         capability(
             "partners.tmx_corporate_events", "", partner=True, freshness="subscription-dependent"
         ),
