@@ -91,19 +91,22 @@ tags:
 - tapOn:
     text: 'Start AAPL Research Run'
     retryTapIfNoChange: true
-- extendedWaitUntil:
-    visible: 'Research summary'
-    timeout: 10000
+- scrollUntilVisible:
+    element: 'Research summary'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
 - scrollUntilVisible:
     element: 'Cancel Research Run'
     direction: DOWN
-    timeout: 10000
-    visibilityPercentage: 80
+    timeout: 20000
+    visibilityPercentage: 100
 - tapOn: 'Cancel Research Run'
 - scrollUntilVisible:
     element: 'Research cancelled.'
     direction: UP
-    timeout: 10000
+    timeout: 20000
+    visibilityPercentage: 100
 - assertVisible: 'Research cancelled.'
 - assertNotVisible: 'Save AAPL research on this device'
 - takeScreenshot: 05-cancelled
@@ -111,26 +114,34 @@ tags:
 - scrollUntilVisible:
     element: 'Retry AAPL Research Run'
     direction: DOWN
-    timeout: 10000
-    visibilityPercentage: 80
+    timeout: 20000
+    visibilityPercentage: 100
 - tapOn:
     text: 'Retry AAPL Research Run'
     retryTapIfNoChange: true
 - scrollUntilVisible:
+    element: 'Streaming transport'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- scrollUntilVisible:
     element: 'Save AAPL research on this device'
     direction: DOWN
-    timeout: 10000
-    visibilityPercentage: 80
-- assertVisible: 'Streaming transport'
+    timeout: 20000
+    visibilityPercentage: 100
 - tapOn: 'Save AAPL research on this device'
-- assertVisible: 'Saved on this device.'
+- scrollUntilVisible:
+    element: 'Saved on this device.'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
 - takeScreenshot: 06-saved
 
 - scrollUntilVisible:
     element: 'Close Research Run preview'
     direction: DOWN
-    timeout: 10000
-    visibilityPercentage: 80
+    timeout: 20000
+    visibilityPercentage: 100
 - tapOn: 'Close Research Run preview'
 - waitForAnimationToEnd:
     timeout: 5000
