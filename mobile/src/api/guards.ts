@@ -5,6 +5,9 @@ import type {
   ChartDataset,
   HealthResponse,
   MarketSnapshotResponse,
+  OptionsChainResponse,
+  OptionChainRow,
+  ProviderStatusResponse,
   MoneylineResponse,
   ResolveWatchlistResponse,
   SecurityAssetType,
@@ -125,6 +128,79 @@ export function normalizeMarketSnapshot(value: unknown): MarketSnapshotResponse 
     provider,
     providerNote: string(payload.provider_note).trim() || null,
     data: payload.data,
+  };
+}
+
+export function normalizeProviderStatus(value: unknown): ProviderStatusResponse {
+  const payload = record(value, 'Provider status');
+  const freshness = record(payload.freshness, 'Provider freshness');
+  const streaming = record(payload.streaming, 'Provider streaming');
+  const primary = string(payload.primary).trim();
+  if (!primary) throw new ContractError('Provider status is missing primary provider.');
+  return {
+    primary,
+    fallback: string(payload.fallback).trim() || null,
+    massiveConfigured: payload.massive_configured === true,
+    fallbackEnabled: payload.fallback_enabled === true,
+    freshness: {
+      stocks: string(freshness.stocks, 'unknown'),
+      options: string(freshness.options, 'unknown'),
+    },
+    streaming: {
+      enabled: streaming.enabled === true,
+      configured: streaming.configured === true,
+      transport: string(streaming.transport, 'unavailable'),
+      freshness: string(streaming.freshness, 'unknown'),
+      endpoint: string(streaming.endpoint),
+    },
+    notes: stringArray(payload.notes),
+  };
+}
+
+function optionRow(value: unknown): OptionChainRow | null {
+  if (!isRecord(value)) return null;
+  const strike = optionalNumber(value.strike);
+  if (strike === null) return null;
+  return {
+    strike,
+    callOpenInterest: optionalNumber(value.call_open_interest) ?? 0,
+    putOpenInterest: optionalNumber(value.put_open_interest) ?? 0,
+    callLast: optionalNumber(value.call_last) ?? 0,
+    putLast: optionalNumber(value.put_last) ?? 0,
+    callImpliedVolatility: optionalNumber(value.call_implied_volatility),
+    putImpliedVolatility: optionalNumber(value.put_implied_volatility),
+    callDelta: optionalNumber(value.call_delta),
+    putDelta: optionalNumber(value.put_delta),
+    callBid: optionalNumber(value.call_bid),
+    callAsk: optionalNumber(value.call_ask),
+    putBid: optionalNumber(value.put_bid),
+    putAsk: optionalNumber(value.put_ask),
+    callVolume: optionalNumber(value.call_volume),
+    putVolume: optionalNumber(value.put_volume),
+  };
+}
+
+export function normalizeOptionsChain(value: unknown): OptionsChainResponse {
+  const payload = record(value, 'Options chain response');
+  const ticker = safeSymbol(payload.ticker);
+  const expiry = string(payload.expiry).trim();
+  const provider = string(payload.provider).trim();
+  if (!ticker || !expiry || !provider) {
+    throw new ContractError('Options chain response is missing ticker/expiry/provider.');
+  }
+  const expirations = stringArray(payload.expirations);
+  const rows = array(payload.rows).flatMap((item) => {
+    const row = optionRow(item);
+    return row ? [row] : [];
+  });
+  return {
+    ticker,
+    expiry,
+    currentPrice: optionalNumber(payload.current_price),
+    expirations,
+    rows,
+    provider,
+    providerNote: string(payload.provider_note).trim() || null,
   };
 }
 

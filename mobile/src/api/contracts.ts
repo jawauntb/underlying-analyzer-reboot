@@ -13,6 +13,50 @@ export type MarketSnapshotResponse = {
   data: Record<string, unknown>;
 };
 
+export type ProviderStatusResponse = {
+  primary: string;
+  fallback: string | null;
+  massiveConfigured: boolean;
+  fallbackEnabled: boolean;
+  freshness: { stocks: string; options: string };
+  streaming: {
+    enabled: boolean;
+    configured: boolean;
+    transport: string;
+    freshness: string;
+    endpoint: string;
+  };
+  notes: string[];
+};
+
+export type OptionChainRow = {
+  strike: number;
+  callOpenInterest: number;
+  putOpenInterest: number;
+  callLast: number;
+  putLast: number;
+  callImpliedVolatility: number | null;
+  putImpliedVolatility: number | null;
+  callDelta: number | null;
+  putDelta: number | null;
+  callBid: number | null;
+  callAsk: number | null;
+  putBid: number | null;
+  putAsk: number | null;
+  callVolume: number | null;
+  putVolume: number | null;
+};
+
+export type OptionsChainResponse = {
+  ticker: string;
+  expiry: string;
+  currentPrice: number | null;
+  expirations: string[];
+  rows: OptionChainRow[];
+  provider: string;
+  providerNote: string | null;
+};
+
 export type ApiCatalogEndpoint = {
   method: string;
   path: string;

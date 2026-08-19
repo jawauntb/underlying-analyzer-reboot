@@ -84,6 +84,7 @@ const outputPanel = document.querySelector(".output-panel");
 const generateButton = document.querySelector("#generate");
 const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
+const providerFreshness = document.querySelector("#provider-freshness");
 const liveQuote = document.querySelector("#live-quote");
 const healthDot = document.querySelector("#health-dot");
 const formActionsEl = document.querySelector("#chart-form .form-actions");
@@ -290,10 +291,18 @@ async function boot() {
     const providers = await fetch("/api/providers").then((response) => response.json());
     if (health.ok) {
       healthDot.classList.add("ok");
-      providerLabel.textContent = `${providers.primary} + ${providers.fallback}`;
+      providerLabel.textContent = providers.fallback
+        ? `${providers.primary} + ${providers.fallback}`
+        : `${providers.primary} primary`;
+      const stocksFreshness = providers.freshness?.stocks || "freshness unknown";
+      const streamState = providers.streaming?.enabled && providers.streaming?.configured
+        ? "stream ready"
+        : "stream unavailable";
+      providerFreshness.textContent = `${stocksFreshness} · ${streamState}`;
     }
   } catch {
     providerLabel.textContent = "provider offline";
+    providerFreshness.textContent = "freshness unavailable";
   }
 }
 
