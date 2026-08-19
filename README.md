@@ -75,6 +75,15 @@ Additive Massive routes also expose stock market status, dividends, splits, and 
 financial statements/ratios. Financials use a separate `MASSIVE_FINANCIALS_PLAN` declaration;
 the capability endpoint reports them as unavailable until that entitlement is explicitly known.
 
+The entitlement-aware raw-data surface also includes `/api/data/market/news/<ticker>`,
+`/api/data/market/corporate-events`, `/api/data/market/ipos`,
+`/api/data/market/conditions`, `/api/data/market/snapshot/all`, and
+`/api/data/options/<ticker>/snapshot/<contract>`. These are additive envelopes and do not
+change the existing chart or options-chain schemas. The current subscription evidence is
+Stocks Advanced, Options Developer, Financials & Ratios, and TMX Corporate Events; the
+runtime still reports plan hints as unverified until the corresponding optional plan variables
+are deliberately configured, and a live Massive 401/403 remains authoritative.
+
 ### Realtime stream
 
 `GET /api/data/market/stream?ticker=AAPL&feed=trades` returns `text/event-stream` events. The

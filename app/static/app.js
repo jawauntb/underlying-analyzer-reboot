@@ -84,6 +84,7 @@ const outputPanel = document.querySelector(".output-panel");
 const generateButton = document.querySelector("#generate");
 const exportButton = document.querySelector("#export-json");
 const providerLabel = document.querySelector("#provider-label");
+const liveQuote = document.querySelector("#live-quote");
 const healthDot = document.querySelector("#health-dot");
 const formActionsEl = document.querySelector("#chart-form .form-actions");
 const advancedToggle = document.querySelector("#advanced-toggle");
@@ -99,6 +100,8 @@ const formTickersInput = document.querySelector("#tickers");
 const formPeriodSelect = document.querySelector("#period");
 const formMonthSelect = document.querySelector("#month");
 const chartViewer = createChartViewer();
+let liveStream = null;
+let liveStreamTimer = null;
 mountAccountControls({ root: document.querySelector("#account-control") });
 mountSavedWatchlistCockpit({
   root: document.querySelector("#saved-watchlists"),
@@ -131,6 +134,7 @@ document.querySelectorAll(".mode-button").forEach((button) => {
 commandTickersInput.addEventListener("input", () => {
   formTickersInput.value = commandTickersInput.value;
   updateCommandPreview();
+  scheduleLiveQuote();
 });
 
 commandModeSelect.addEventListener("change", () => {
@@ -150,6 +154,40 @@ commandMonthSelect.addEventListener("change", () => {
 formTickersInput.addEventListener("input", syncCommandFromForm);
 formPeriodSelect.addEventListener("change", syncCommandFromForm);
 formMonthSelect.addEventListener("change", syncCommandFromForm);
+
+function scheduleLiveQuote() {
+  window.clearTimeout(liveStreamTimer);
+  liveStreamTimer = window.setTimeout(startLiveQuote, 250);
+}
+
+function startLiveQuote() {
+  if (!liveQuote || typeof EventSource === "undefined") return;
+  const ticker = (commandTickersInput?.value || "").split(/[ ,]+/)[0].trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9.-]{0,31}$/.test(ticker)) {
+    liveQuote.textContent = "live quote unavailable";
+    liveStream?.close();
+    liveStream = null;
+    return;
+  }
+  liveStream?.close();
+  liveQuote.textContent = `${ticker} connecting...`;
+  liveStream = new EventSource(`/api/data/market/stream?ticker=${encodeURIComponent(ticker)}&feed=trades`);
+  liveStream.addEventListener("ready", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    liveQuote.textContent = `${ticker} ${payload.freshness || "realtime"}`;
+  });
+  liveStream.addEventListener("market_data", (event) => {
+    const payload = JSON.parse(event.data || "{}");
+    const data = payload.data || payload;
+    const price = Number(data.p ?? data.price ?? data.c ?? data.close);
+    if (Number.isFinite(price)) liveQuote.textContent = `${ticker} $${price.toFixed(2)} / ${payload.freshness || "realtime"}`;
+  });
+  liveStream.addEventListener("error", () => {
+    liveQuote.textContent = `${ticker} live unavailable`;
+    liveStream?.close();
+    liveStream = null;
+  });
+}
 
 commandRunButton.addEventListener("click", () => {
   syncFormFromCommand();
@@ -246,6 +284,7 @@ async function boot() {
   syncCommandFromForm();
   syncModeCopy();
   syncFields();
+  scheduleLiveQuote();
   try {
     const health = await fetch("/api/health").then((response) => response.json());
     const providers = await fetch("/api/providers").then((response) => response.json());

@@ -4,6 +4,7 @@ import type {
   AuctionRequest,
   AuctionResponse,
   HealthResponse,
+  MarketSnapshotResponse,
   MoneylineRequest,
   MoneylineResponse,
   ResolveWatchlistRequest,
@@ -24,6 +25,7 @@ import {
   normalizeAgentChat,
   normalizeAuction,
   normalizeHealth,
+  normalizeMarketSnapshot,
   normalizeMoneyline,
   normalizeResolvedWatchlist,
   normalizeSecuritySearch,
@@ -168,6 +170,13 @@ export class ApiClient {
   health(options: { signal?: AbortSignal } = {}): Promise<HealthResponse> {
     return this.getJson(API_ENDPOINTS.health, normalizeHealth, {
       timeoutMs: TIMEOUT_MS.capability,
+      signal: options.signal,
+    });
+  }
+
+  marketSnapshot(ticker: string, options: { signal?: AbortSignal } = {}): Promise<MarketSnapshotResponse> {
+    return this.getJson(API_ENDPOINTS.marketSnapshot, normalizeMarketSnapshot, {
+      query: { ticker: normalizeSymbol(ticker) },
       signal: options.signal,
     });
   }

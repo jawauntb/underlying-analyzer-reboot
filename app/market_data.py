@@ -126,6 +126,20 @@ class MarketDataProvider(Protocol):
 
     def get_market_status(self) -> dict[str, Any]: ...
 
+    def get_news(
+        self, ticker: str, *, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+
+    def get_corporate_events(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    def get_ipos(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    def get_conditions(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    def get_all_snapshot(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
+
+    def get_option_snapshot(self, underlying: str, contract: str) -> dict[str, Any]: ...
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -384,6 +398,30 @@ class LegacyMarketDataProvider:
 
     def get_market_status(self) -> dict[str, Any]:
         self._unsupported("market status")
+        return {}
+
+    def get_news(self, _ticker: str, **_: Any) -> dict[str, Any]:
+        self._unsupported("news")
+        return {}
+
+    def get_corporate_events(self, **_: Any) -> dict[str, Any]:
+        self._unsupported("TMX corporate events")
+        return {}
+
+    def get_ipos(self, **_: Any) -> dict[str, Any]:
+        self._unsupported("IPOs")
+        return {}
+
+    def get_conditions(self, **_: Any) -> dict[str, Any]:
+        self._unsupported("market conditions")
+        return {}
+
+    def get_all_snapshot(self, **_: Any) -> dict[str, Any]:
+        self._unsupported("full-market snapshot")
+        return {}
+
+    def get_option_snapshot(self, _underlying: str, _contract: str) -> dict[str, Any]:
+        self._unsupported("option contract snapshot")
         return {}
 
 
@@ -670,6 +708,26 @@ class MarketDataClient:
 
     def get_market_status(self) -> dict[str, Any]:
         return self._call_provider("get_market_status")
+
+    def get_news(self, ticker: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call_provider("get_news", clean_ticker(ticker), params=params)
+
+    def get_corporate_events(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call_provider("get_corporate_events", params=params)
+
+    def get_ipos(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call_provider("get_ipos", params=params)
+
+    def get_conditions(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call_provider("get_conditions", params=params)
+
+    def get_all_snapshot(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._call_provider("get_all_snapshot", params=params)
+
+    def get_option_snapshot(self, underlying: str, contract: str) -> dict[str, Any]:
+        return self._call_provider(
+            "get_option_snapshot", clean_ticker(underlying), contract.strip().upper()
+        )
 
 
 def clean_ticker(ticker: str) -> str:

@@ -373,13 +373,24 @@ class MassiveProvider:
             row = by_strike.setdefault(float(strike), {"strike": float(strike)})
             prefix = "call" if contract_type == "call" else "put"
             row[f"{prefix}_open_interest"] = float(result.get("open_interest") or 0)
+            row[f"{prefix}_contract"] = details.get("ticker") or result.get("ticker")
+            row[f"{prefix}_implied_volatility"] = result.get("implied_volatility")
+            raw_greeks = result.get("greeks")
+            if isinstance(raw_greeks, dict):
+                for greek in ("delta", "gamma", "theta", "vega"):
+                    row[f"{prefix}_{greek}"] = raw_greeks.get(greek)
             raw_trade = result.get("last_trade")
             trade: dict[str, Any] = raw_trade if isinstance(raw_trade, dict) else {}
+            raw_quote = result.get("last_quote")
+            quote: dict[str, Any] = raw_quote if isinstance(raw_quote, dict) else {}
             raw_day = result.get("day")
             day: dict[str, Any] = raw_day if isinstance(raw_day, dict) else {}
             row[f"{prefix}_last"] = float(
                 trade.get("price") or trade.get("p") or day.get("close") or day.get("c") or 0
             )
+            row[f"{prefix}_bid"] = quote.get("bid_price") or quote.get("bp")
+            row[f"{prefix}_ask"] = quote.get("ask_price") or quote.get("ap")
+            row[f"{prefix}_volume"] = day.get("volume") or day.get("v") or 0
         nearby = sorted(by_strike, key=lambda strike: abs(strike - current_price))[:9]
         rows: list[dict[str, Any]] = []
         for strike in sorted(nearby):
@@ -393,6 +404,17 @@ class MassiveProvider:
                     "put_open_interest": put_oi,
                     "call_last": float(row.get("call_last", 0)),
                     "put_last": float(row.get("put_last", 0)),
+                    **{
+                        key: value
+                        for key, value in row.items()
+                        if key not in {
+                            "strike",
+                            "call_open_interest",
+                            "put_open_interest",
+                            "call_last",
+                            "put_last",
+                        }
+                    },
                     "net_open_interest": call_oi - put_oi,
                     "put_call_ratio": put_oi / call_oi if call_oi else 0.0,
                 }
@@ -478,6 +500,41 @@ class MassiveProvider:
     def get_market_status(self) -> dict[str, Any]:
         return self._request_json("/v1/marketstatus/now")
 
+    def get_news(self, ticker: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        query = {key: value for key, value in (params or {}).items() if key != "ticker"}
+        query.update({"ticker": ticker})
+        query.setdefault("order", "desc")
+        query.setdefault("sort", "published_utc")
+        query.setdefault("limit", 20)
+        return self._paginate("/v2/reference/news", params=query)
+
+    def get_corporate_events(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        query = dict(params or {})
+        query.setdefault("limit", 100)
+        return self._paginate("/tmx/v1/corporate-events", params=query)
+
+    def get_ipos(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        query = dict(params or {})
+        query.setdefault("limit", 100)
+        return self._paginate("/vX/reference/ipos", params=query)
+
+    def get_conditions(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        query = dict(params or {})
+        query.setdefault("limit", 1000)
+        return self._paginate("/v3/reference/conditions", params=query)
+
+    def get_all_snapshot(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request_json(
+            "/v2/snapshot/locale/us/markets/stocks/tickers", params=params
+        )
+
+    def get_option_snapshot(self, underlying: str, contract: str) -> dict[str, Any]:
+        underlying = underlying.strip().upper()
+        contract = contract.strip().upper()
+        if not contract.startswith("O:"):
+            contract = f"O:{contract}"
+        return self._request_json(f"/v3/snapshot/options/{underlying}/{contract}")
+
 
 class _MissingMassiveProvider:
     name = "massive"
@@ -501,6 +558,12 @@ class _MissingMassiveProvider:
     get_splits = _missing
     get_financials = _missing
     get_market_status = _missing
+    get_news = _missing
+    get_corporate_events = _missing
+    get_ipos = _missing
+    get_conditions = _missing
+    get_all_snapshot = _missing
+    get_option_snapshot = _missing
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:

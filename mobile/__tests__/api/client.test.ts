@@ -100,6 +100,29 @@ describe('ApiClient', () => {
     expect(TIMEOUT_MS).toEqual({ normal: 30_000, capability: 10_000, search: 15_000, researchIdle: 45_000 });
   });
 
+  it('reads a provider-backed market snapshot with a normalized ticker', async () => {
+    const fetchImpl = jest.fn(async () => response({
+      body: {
+        ticker: 'AAPL',
+        provider: 'massive',
+        provider_note: 'Stocks Advanced realtime snapshot',
+        data: { ticker: 'AAPL', lastTrade: { p: 231.42 } },
+      },
+    }));
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+
+    await expect(client.marketSnapshot(' aapl ')).resolves.toEqual({
+      ticker: 'AAPL',
+      provider: 'massive',
+      providerNote: 'Stocks Advanced realtime snapshot',
+      data: { ticker: 'AAPL', lastTrade: { p: 231.42 } },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.test/api/data/market/snapshot?ticker=AAPL',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   it('searches with encoded query parameters and filters hostile or partial provider results', async () => {
     const fetchImpl = jest.fn(async () =>
       response({

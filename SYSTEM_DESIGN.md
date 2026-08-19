@@ -143,6 +143,12 @@ The endpoints are:
 - `GET /api/capabilities/<capability>`: one capability object for preflight UI gating.
 - `GET /api/data/market/stream`: additive SSE transport backed by Massive stock/options WebSockets;
   it emits `ready`, `market_data`, and sanitized `error` events.
+- `GET /api/data/market/news/<ticker>` and `GET /api/data/market/corporate-events`: news and
+  TMX partner event calendars inside the additive provider envelope.
+- `GET /api/data/market/ipos`, `GET /api/data/market/conditions`, and
+  `GET /api/data/market/snapshot/all`: reference/coverage and full-market snapshot reads.
+- `GET /api/data/options/<ticker>/snapshot/<contract>`: additive single-contract snapshots
+  carrying Greeks, IV, quote, trade, and open-interest fields when returned.
 
 Capability IDs should be stable and namespaced, for example `stocks.daily_bars`,
 `stocks.intraday_bars`, `stocks.snapshot`, `stocks.ticker_events`, `stocks.dividends`,
@@ -184,6 +190,13 @@ committed documentation.
 The baseline audit found no ThetaData imports, dependencies, endpoints, or consumers. The
 remaining yfinance usage in `app/sec.py` is a separate Yahoo-hosted SEC filings mirror fallback,
 not a market-data path.
+
+The shared personal Doppler configs currently provide the five canonical Massive credentials;
+this repo intentionally does not add or guess plan variables. The capability endpoint therefore
+needs explicit `MASSIVE_STOCKS_PLAN`, `MASSIVE_OPTIONS_PLAN`, and `MASSIVE_FINANCIALS_PLAN`
+declarations before screenshot-based subscription evidence can become machine-readable hints.
+A provider response or 401/403 is always the runtime authority. TMX corporate events remain
+separately labeled partner data and are never treated as equivalent to native ticker events.
 
 ## Observability and rollout
 

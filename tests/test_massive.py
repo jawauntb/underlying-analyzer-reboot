@@ -460,3 +460,85 @@ def test_massive_corporate_actions_financials_and_market_status_paths() -> None:
     assert session.calls[2][0].endswith("/stocks/financials/v1/income-statements")
     assert session.calls[2][1]["tickers"] == "AAPL"
     assert session.calls[3][0].endswith("/v1/marketstatus/now")
+
+
+def test_massive_entitlement_dataset_paths_and_option_snapshot() -> None:
+    session = FakeSession(
+        [
+            FakeResponse({"status": "OK", "results": [{"title": "Apple news"}]}),
+            FakeResponse({"status": "OK", "results": [{"event_type": "earnings"}]}),
+            FakeResponse({"status": "OK", "results": [{"ticker": "NEW"}]}),
+            FakeResponse({"status": "OK", "results": [{"code": "T"}]}),
+            FakeResponse({"status": "OK", "tickers": [{"ticker": "AAPL"}]}),
+            FakeResponse(
+                {
+                    "status": "OK",
+                    "ticker": "O:AAPL260821C00100000",
+                    "details": {"strike_price": 100},
+                }
+            ),
+        ]
+    )
+    provider = MassiveProvider("secret-key", session=session)
+
+    assert provider.get_news("AAPL")["results"] == [{"title": "Apple news"}]
+    assert provider.get_corporate_events()["results"] == [{"event_type": "earnings"}]
+    assert provider.get_ipos()["results"] == [{"ticker": "NEW"}]
+    assert provider.get_conditions()["results"] == [{"code": "T"}]
+    assert provider.get_all_snapshot()["tickers"] == [{"ticker": "AAPL"}]
+    assert provider.get_option_snapshot("AAPL", "aapl260821c00100000")["ticker"] == (
+        "O:AAPL260821C00100000"
+    )
+
+    assert session.calls[0][0].endswith("/v2/reference/news")
+    assert session.calls[0][1] == {
+        "ticker": "AAPL",
+        "order": "desc",
+        "sort": "published_utc",
+        "limit": 20,
+        "apiKey": "secret-key",
+    }
+    assert session.calls[1][0].endswith("/tmx/v1/corporate-events")
+    assert session.calls[2][0].endswith("/vX/reference/ipos")
+    assert session.calls[3][0].endswith("/v3/reference/conditions")
+    assert session.calls[4][0].endswith("/v2/snapshot/locale/us/markets/stocks/tickers")
+    assert session.calls[5][0].endswith("/v3/snapshot/options/AAPL/O:AAPL260821C00100000")
+
+
+def test_massive_option_rows_preserve_greeks_quotes_and_contract_identity() -> None:
+    session = FakeSession(
+        [
+            FakeResponse({"status": "OK", "results": [{"expiration_date": "2026-08-21"}]}),
+            FakeResponse(
+                {
+                    "status": "OK",
+                    "results": [
+                        {
+                            "details": {
+                                "strike_price": 100,
+                                "contract_type": "call",
+                                "ticker": "O:AAPL",
+                            },
+                            "open_interest": 12,
+                            "implied_volatility": 0.25,
+                            "greeks": {"delta": 0.5, "gamma": 0.1, "theta": -0.02, "vega": 0.3},
+                            "last_quote": {"bid_price": 1.2, "ask_price": 1.4},
+                            "day": {"volume": 99},
+                            "last_trade": {"price": 1.3},
+                            "underlying_asset": {"price": 100},
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    result = MassiveProvider("secret-key", session=session).get_option_chain(
+        "AAPL", expiry="2026-08-21"
+    )
+
+    assert result.rows[0]["call_contract"] == "O:AAPL"
+    assert result.rows[0]["call_implied_volatility"] == 0.25
+    assert result.rows[0]["call_delta"] == 0.5
+    assert result.rows[0]["call_bid"] == 1.2
+    assert result.rows[0]["call_ask"] == 1.4
+    assert result.rows[0]["call_volume"] == 99

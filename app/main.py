@@ -490,6 +490,48 @@ def create_app() -> Flask:
         except MarketDataError as exc:
             return jsonify({"error": str(exc)}), 502
 
+    @app.get("/api/data/market/news/<ticker>")
+    def market_news(ticker: str) -> Any:
+        return market_data_endpoint_response(get_market_client(), "get_news", ticker)
+
+    @app.get("/api/data/market/corporate-events")
+    def market_corporate_events() -> Any:
+        return market_data_collection_endpoint_response(
+            get_market_client(), "get_corporate_events"
+        )
+
+    @app.get("/api/data/market/ipos")
+    def market_ipos() -> Any:
+        return market_data_collection_endpoint_response(get_market_client(), "get_ipos")
+
+    @app.get("/api/data/market/conditions")
+    def market_conditions() -> Any:
+        return market_data_collection_endpoint_response(get_market_client(), "get_conditions")
+
+    @app.get("/api/data/market/snapshot/all")
+    def market_snapshot_all() -> Any:
+        return market_data_collection_endpoint_response(get_market_client(), "get_all_snapshot")
+
+    @app.get("/api/data/options/<ticker>/snapshot/<path:contract>")
+    def option_contract_snapshot(ticker: str, contract: str) -> Any:
+        try:
+            symbol = clean_ticker(ticker)
+            option_contract = clean_stream_ticker(contract, asset_class="options")
+            return jsonify(
+                market_data_envelope(
+                    get_market_client(),
+                    "get_option_snapshot",
+                    symbol,
+                    contract=option_contract,
+                )
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except MarketDataCapabilityError as exc:
+            return jsonify({"error": str(exc)}), 501
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
+
     @app.get("/api/data/market/stream")
     def market_stream() -> Any:
         """Stream Massive market events as additive Server-Sent Events.
@@ -1237,6 +1279,25 @@ def market_data_endpoint_response(
         symbol = clean_ticker(ticker)
         params = request.args.to_dict(flat=True)
         return jsonify(market_data_envelope(client, method, symbol, params=params))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except MarketDataCapabilityError as exc:
+        return jsonify({"error": str(exc)}), 501
+    except MarketDataError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+def market_data_collection_endpoint_response(client: MarketDataClient, method: str) -> Any:
+    try:
+        params = request.args.to_dict(flat=True)
+        data = getattr(client, method)(params=params)
+        return jsonify(
+            {
+                "provider": client.provider_label,
+                "provider_note": client.provider_note,
+                "data": data,
+            }
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except MarketDataCapabilityError as exc:

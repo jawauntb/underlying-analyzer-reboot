@@ -287,6 +287,55 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "method": "GET",
+        "path": "/api/data/market/news/{ticker}",
+        "tag": "data",
+        "summary": "Massive ticker news",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "default": 20}},
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/corporate-events",
+        "tag": "data",
+        "summary": "TMX corporate events",
+        "parameters": [
+            {"name": "ticker", "in": "query", "required": False, "schema": {"type": "string"}},
+            {"name": "date", "in": "query", "required": False, "schema": {"type": "string", "format": "date"}},
+            {"name": "type", "in": "query", "required": False, "schema": {"type": "string"}},
+        ],
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/ipos",
+        "tag": "data",
+        "summary": "Massive IPO events",
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/conditions",
+        "tag": "data",
+        "summary": "Massive trade and quote conditions",
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/market/snapshot/all",
+        "tag": "data",
+        "summary": "Massive full-market stock snapshot",
+    },
+    {
+        "method": "GET",
+        "path": "/api/data/options/{ticker}/snapshot/{contract}",
+        "tag": "data",
+        "summary": "Massive option contract snapshot",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {"name": "contract", "in": "path", "required": True, "schema": {"type": "string"}},
+        ],
+    },
+    {
+        "method": "GET",
         "path": "/api/data/market/stream",
         "tag": "data",
         "summary": "Massive WebSocket market events as Server-Sent Events",
