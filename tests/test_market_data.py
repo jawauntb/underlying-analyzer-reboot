@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pandas as pd
@@ -15,6 +17,7 @@ from app.charts import (
 )
 from app.market_data import (
     HistoryResult,
+    MarketDataBusyError,
     MarketDataClient,
     MarketDataError,
     normalize_ohlcv,
@@ -52,6 +55,13 @@ def test_security_search_normalizes_filters_deduplicates_and_caches(
             "shortname": "Bitcoin USD",
             "quoteType": "CRYPTOCURRENCY",
         },
+        {
+            "symbol": "BABYPEPE29650-USD",
+            "shortname": "Baby Pepe USD",
+            "quoteType": "CRYPTOCURRENCY",
+        },
+        {"symbol": "BAD/SYMBOL", "quoteType": "EQUITY"},
+        {"symbol": "A" * 33, "quoteType": "EQUITY"},
         {"symbol": "AAPL260821C00200000", "quoteType": "OPTION"},
         {"shortname": "Missing symbol", "quoteType": "EQUITY"},
     ]
@@ -97,6 +107,12 @@ def test_security_search_normalizes_filters_deduplicates_and_caches(
             "exchange": "",
             "asset_type": "crypto",
         },
+        {
+            "symbol": "BABYPEPE29650-USD",
+            "name": "Baby Pepe USD",
+            "exchange": "",
+            "asset_type": "crypto",
+        },
     ]
     assert second is first
     assert calls == [
@@ -123,6 +139,36 @@ def test_security_search_maps_provider_failures(monkeypatch: MonkeyPatch) -> Non
 
     with pytest.raises(MarketDataError, match="Security search failed.*provider unavailable"):
         MarketDataClient().search_securities("Apple")
+
+
+def test_security_search_fails_fast_when_provider_capacity_is_full(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    entered = Event()
+    release = Event()
+    lock = Lock()
+    active = 0
+
+    def blocking_search(*_: object, **__: object) -> SimpleNamespace:
+        nonlocal active
+        with lock:
+            active += 1
+            if active == 2:
+                entered.set()
+        release.wait(timeout=2)
+        return SimpleNamespace(quotes=[])
+
+    monkeypatch.setattr(market_data_module.yf, "Search", blocking_search)
+    client = MarketDataClient()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(client.search_securities, "Apple")
+        second = pool.submit(client.search_securities, "Microsoft")
+        assert entered.wait(timeout=1)
+        with pytest.raises(MarketDataBusyError, match="busy"):
+            client.search_securities("Nvidia")
+        release.set()
+        assert first.result() == []
+        assert second.result() == []
 
 
 def test_normalize_ohlcv_flattens_yfinance_multiindex() -> None:

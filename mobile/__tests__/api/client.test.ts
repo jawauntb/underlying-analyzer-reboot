@@ -84,13 +84,14 @@ describe('endpoint and configuration safety', () => {
     expect(encodeSymbol('brk.b')).toBe('BRK.B');
     expect(encodeSymbol('^gspc')).toBe('%5EGSPC');
     expect(encodeSymbol('rds-a')).toBe('RDS-A');
+    expect(normalizeSymbol('babypepe29650-usd')).toBe('BABYPEPE29650-USD');
     expect(() => encodeSymbol('A B')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('A/B')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('A?B')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('G^SPC')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('^^GSPC')).toThrow(/symbol/i);
     expect(() => normalizeSymbol('^')).toThrow(/symbol/i);
-    expect(() => normalizeSymbol('A'.repeat(16))).toThrow(/symbol/i);
+    expect(() => normalizeSymbol('A'.repeat(33))).toThrow(/symbol/i);
   });
 });
 
@@ -107,7 +108,8 @@ describe('ApiClient', () => {
           results: [
             { symbol: '^GSPC', name: 'S&P 500', exchange: 'SNP', asset_type: 'index' },
             { symbol: 'btc-usd', name: 'Bitcoin USD', exchange: 'CCC', asset_type: 'crypto' },
-            { symbol: 'A'.repeat(16), name: 'Too long for Lens', exchange: 'TEST', asset_type: 'equity' },
+            { symbol: 'babypepe29650-usd', name: 'Baby Pepe USD', exchange: 'CCC', asset_type: 'crypto' },
+            { symbol: 'A'.repeat(33), name: 'Too long for Lens', exchange: 'TEST', asset_type: 'equity' },
             { symbol: '</script>', name: 'Hostile', exchange: 'Nowhere', asset_type: 'equity' },
             { symbol: 'AAPL', name: 'Apple Inc.', asset_type: 'equity' },
             { symbol: 'ES=F', name: 'E-mini S&P 500', exchange: 'CME', asset_type: 'future' },
@@ -124,6 +126,7 @@ describe('ApiClient', () => {
       results: [
         { symbol: '^GSPC', name: 'S&P 500', exchange: 'SNP', assetType: 'index' },
         { symbol: 'BTC-USD', name: 'Bitcoin USD', exchange: 'CCC', assetType: 'crypto' },
+        { symbol: 'BABYPEPE29650-USD', name: 'Baby Pepe USD', exchange: 'CCC', assetType: 'crypto' },
       ],
       provider: 'Yahoo Finance via yfinance',
     });

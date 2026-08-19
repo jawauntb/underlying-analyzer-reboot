@@ -95,6 +95,7 @@ from app.market_data import (
     SEARCH_PROVIDER,
     HistoryResult,
     MarketDataClient,
+    MarketDataBusyError,
     MarketDataError,
     clean_ticker,
 )
@@ -295,6 +296,8 @@ def create_app() -> Flask:
             )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+        except MarketDataBusyError as exc:
+            return jsonify({"error": str(exc)}), 503
         except MarketDataError as exc:
             return jsonify({"error": str(exc)}), 502
 

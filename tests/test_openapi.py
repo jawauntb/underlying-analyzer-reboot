@@ -58,6 +58,13 @@ def test_security_search_documents_query_boundaries_and_result_contract() -> Non
         "exchange",
         "asset_type",
     ]
+    assert schema["properties"]["results"]["items"]["properties"]["symbol"] == {
+        "type": "string",
+        "maxLength": 32,
+        "pattern": r"^(?:[A-Z0-9][A-Z0-9.-]{0,31}|\^[A-Z0-9][A-Z0-9.-]{0,30})$",
+    }
+    assert operation["responses"]["502"]["description"] == "Market data provider unavailable"
+    assert operation["responses"]["503"]["description"] == "Security search capacity is busy"
 
 
 def test_agent_routes_publish_the_exact_policy_request_contract() -> None:

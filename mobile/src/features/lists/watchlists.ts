@@ -80,7 +80,7 @@ export function normalizeListSymbols(input: string | readonly string[]): string[
   try {
     symbols = normalizeSymbols(values);
   } catch {
-    throw new Error('Invalid symbol. Use 1-15 letters, digits, dots, or hyphens.');
+    throw new Error('Invalid symbol. Use 1-32 letters, digits, dots, or hyphens.');
   }
   if (symbols.length > MAX_LIST_SYMBOLS) {
     throw new Error(`A list can contain at most ${MAX_LIST_SYMBOLS} symbols.`);

@@ -28,7 +28,7 @@ function validatedRecord(value: unknown): RecentSearchRecord | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Partial<RecentSearchRecord>;
   if (
-    !isBoundedText(record.symbol, 15)
+    !isBoundedText(record.symbol, 32)
     || !isBoundedText(record.name, 200, true)
     || !isBoundedText(record.exchange, 80, true)
     || !isSecurityAssetType(record.assetType)

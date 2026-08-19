@@ -456,6 +456,21 @@ def test_security_search_endpoint_uses_default_limit_and_maps_provider_error() -
     assert search_client.limit == 8
 
 
+def test_security_search_endpoint_fails_fast_when_provider_is_busy() -> None:
+    class SearchClient:
+        def search_securities(self, _query: str, *, limit: int) -> list[dict[str, str]]:
+            _ = limit
+            raise main_module.MarketDataBusyError("Security search is busy; try again shortly")
+
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = SearchClient()
+
+    response = app.test_client().get("/api/data/search", query_string={"q": "Apple"})
+
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "Security search is busy; try again shortly"}
+
+
 def test_config_endpoint_reports_disabled_supabase(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
     monkeypatch.delenv("SUPABASE_URL", raising=False)

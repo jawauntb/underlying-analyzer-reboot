@@ -220,6 +220,25 @@ describe('PulseScreen', () => {
     expect(screen.getByText(/MSFT.*Quote unavailable/i)).toBeTruthy();
   });
 
+  it('keeps a named list attached to a successful retry after an empty error', async () => {
+    const deps = dependencies();
+    deps.client.watchlistAlerts
+      .mockRejectedValueOnce(new Error('provider down'))
+      .mockResolvedValueOnce(response());
+    render(
+      <PulseScreen
+        {...deps.props}
+        listsState={{
+          hydrated: true,
+          lists: [{ id: 'core', name: 'Core holdings', symbols: ['AAPL'], source: { kind: 'manual' }, createdAt: 1, updatedAt: 1 }],
+        }}
+      />,
+    );
+
+    fireEvent.press(await screen.findByRole('button', { name: /retry pulse/i }));
+    expect(await screen.findByText(/Core holdings/)).toBeTruthy();
+  });
+
   it('ignores a late result from an older explicit generation', async () => {
     const first = deferred<WatchlistAlertsResponse>();
     const second = deferred<WatchlistAlertsResponse>();

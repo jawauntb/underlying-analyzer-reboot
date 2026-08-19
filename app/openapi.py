@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.market_data import MAX_SEARCH_QUERY_LENGTH, SEARCH_PROVIDER
+from app.market_data import (
+    MAX_SEARCH_QUERY_LENGTH,
+    MAX_SECURITY_SYMBOL_LENGTH,
+    SEARCH_PROVIDER,
+    SECURITY_SYMBOL_PATTERN,
+)
 from app.tool_registry import GROUPS, TOOLS, ToolSpec
 
 API_TITLE = "The Underlying Analyzer API"
@@ -78,7 +83,11 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
                     "items": {
                         "type": "object",
                         "properties": {
-                            "symbol": {"type": "string"},
+                            "symbol": {
+                                "type": "string",
+                                "maxLength": MAX_SECURITY_SYMBOL_LENGTH,
+                                "pattern": SECURITY_SYMBOL_PATTERN,
+                            },
                             "name": {"type": "string"},
                             "exchange": {"type": "string"},
                             "asset_type": {
@@ -94,6 +103,10 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
             },
             "required": ["query", "results", "provider"],
             "additionalProperties": False,
+        },
+        "error_responses": {
+            "502": "Market data provider unavailable",
+            "503": "Security search capacity is busy",
         },
     },
     {
@@ -211,6 +224,17 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
         success_schema = route.get("success_schema")
         if isinstance(success_schema, dict):
             responses["200"]["content"]["application/json"]["schema"] = success_schema
+        error_responses = route.get("error_responses")
+        if isinstance(error_responses, dict):
+            for status, description in error_responses.items():
+                responses[str(status)] = {
+                    "description": str(description),
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Error"}
+                        }
+                    },
+                }
         request_schema = route.get("request_schema")
         if isinstance(request_schema, dict):
             supporting_operation["requestBody"] = {

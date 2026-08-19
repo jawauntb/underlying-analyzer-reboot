@@ -25,10 +25,10 @@ type PulseCache = Pick<AsyncCache, 'read' | 'write'>;
 type PulseRouter = { push(href: Href): void };
 
 type PulseViewState =
-  | { status: 'waiting' | 'loading' | 'empty-offline'; data: null; fetchedAt: null; sourceLabel: null; error?: string }
+  | { status: 'waiting' | 'loading' | 'empty-offline'; data: null; fetchedAt: null; sourceLabel: string; error?: string }
   | { status: 'fresh' | 'stale-refreshing' | 'offline-stale' | 'partial'; data: WatchlistAlertsResponse; fetchedAt: number; sourceLabel: string; error?: string }
   | { status: 'empty-online'; data: WatchlistAlertsResponse; fetchedAt: number; sourceLabel: string; error?: string }
-  | { status: 'error'; data: WatchlistAlertsResponse | null; fetchedAt: number | null; sourceLabel: string | null; error: string };
+  | { status: 'error'; data: WatchlistAlertsResponse | null; fetchedAt: number | null; sourceLabel: string; error: string };
 
 export type PulseScreenProps = {
   client?: PulseClient;
@@ -99,7 +99,7 @@ function PulseController({
   const symbolSnapshot = useRef<readonly string[]>(DEFAULT_SYMBOLS);
   const [focusEpoch, setFocusEpoch] = useState(0);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
-  const [state, setState] = useState<PulseViewState>({ status: 'waiting', data: null, fetchedAt: null, sourceLabel: null });
+  const [state, setState] = useState<PulseViewState>({ status: 'waiting', data: null, fetchedAt: null, sourceLabel: 'Default focus list' });
 
   useEffect(() => {
     if (!focused) {
@@ -133,8 +133,8 @@ function PulseController({
     coordinatorRef.current.cancel();
     setState((current) =>
       current.data
-        ? { status: 'offline-stale', data: current.data, fetchedAt: current.fetchedAt ?? now(), sourceLabel: current.sourceLabel ?? 'Default focus list' }
-        : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel: null },
+        ? { status: 'offline-stale', data: current.data, fetchedAt: current.fetchedAt ?? now(), sourceLabel: current.sourceLabel }
+        : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel: current.sourceLabel },
     );
   }, [bootstrapComplete, now, reachability]);
 
@@ -154,7 +154,7 @@ function PulseController({
       setState(
         cached
           ? { status: 'offline-stale', data: cached.data, fetchedAt: cached.fetchedAt, sourceLabel }
-          : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel: null },
+          : { status: 'empty-offline', data: null, fetchedAt: null, sourceLabel },
       );
       setBootstrapComplete(true);
       return;
@@ -168,7 +168,7 @@ function PulseController({
     setState(
       cached
         ? { status: 'stale-refreshing', data: cached.data, fetchedAt: cached.fetchedAt, sourceLabel }
-        : { status: 'loading', data: null, fetchedAt: null, sourceLabel: null },
+        : { status: 'loading', data: null, fetchedAt: null, sourceLabel },
     );
     await requestLive(request, cached?.data ?? null, cached?.fetchedAt ?? null, sourceLabel, generation, true);
   }
@@ -198,7 +198,7 @@ function PulseController({
       }
     } catch (error) {
       if (generation !== requestGeneration.current) return;
-      setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, sourceLabel: priorData ? sourceLabel : null, error: message(error) });
+      setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, sourceLabel, error: message(error) });
     } finally {
       if (bootstrap && generation === requestGeneration.current) setBootstrapComplete(true);
     }
@@ -211,9 +211,9 @@ function PulseController({
     setState(
       prior
         ? { status: 'stale-refreshing', data: prior, fetchedAt: fetchedAt ?? now(), sourceLabel: state.sourceLabel ?? 'Default focus list' }
-        : { status: 'loading', data: null, fetchedAt: null, sourceLabel: null },
+        : { status: 'loading', data: null, fetchedAt: null, sourceLabel: state.sourceLabel },
     );
-    const sourceLabel = state.sourceLabel ?? 'Default focus list';
+    const sourceLabel = state.sourceLabel;
     void requestLive({ tickers: [...symbolSnapshot.current] }, prior, fetchedAt, sourceLabel);
   }
 
@@ -286,7 +286,7 @@ function PulseController({
           <PulseDigestCard
             digest={state.data.digest}
             freshness={label}
-            sourceLabel={state.sourceLabel ?? 'Default focus list'}
+            sourceLabel={state.sourceLabel}
           />
         ) : null}
 
