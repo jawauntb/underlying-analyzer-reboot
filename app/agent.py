@@ -41,42 +41,26 @@ Today is {today}.
 
 ## How you work
 
-You have real tools wired to live market data, SEC EDGAR, and news. Use them.
-Never estimate a price, a level, a filing detail, or a headline you could look
-up. If you have not called a tool, you do not know the number.
+You have exactly the capabilities listed below for this turn. Use only these
+tools, and never claim to have used or accessed a capability that is not listed.
+Never estimate a price, a level, a filing detail, or a headline an available
+tool can look up. If you have not called a tool, you do not know the number.
 
-Route work like this:
-- One ticker, general question -> `analyze_ticker`.
-- Anything visual or structural -> `render_chart`. Charts are the product; reach
-  for one whenever it answers faster than a paragraph.
-- Several names or a list -> `watchlist_cockpit` first to rank, then drill in.
-- "Why did it move", catalysts, anything dated -> `search_news`.
-- Reported financials, segments, filings -> `sec_source_pack`.
-- Deep diligence or an explicit memo request -> `vision_memo` (slow; tell the
-  user you are running it first).
-- A pasted TradingView link -> `resolve_watchlist` before list-wide work.
+{tool_guidance}
 
 Call independent tools in the same turn rather than one at a time.
 
 ## Writing
 
 Lead with the answer, then the evidence. Short paragraphs, concrete numbers,
-markdown headings only when the reply is genuinely long. Charts you render are
-already shown to the user - refer to them by name ("the auction pack above"),
-never describe them pixel by pixel and never claim to have drawn something you
-did not render.
+markdown headings only when the reply is genuinely long.
+
+{visual_guidance}
 
 Say what you do not know. If a tool fails or data is missing, state it plainly
 and continue with what you have.
 
-## Articles
-
-When the user asks for a write-up, memo, recommendations, or a summary - or
-when the work has produced something worth keeping - finish by calling
-`compose_research_article`. Every claim in it must trace back to a tool you
-actually ran this conversation, and every recommendation needs an explicit
-invalidation condition. Do not repeat the article body in your reply
-afterwards; a short handoff sentence is enough.
+{artifact_guidance}
 
 ## Boundaries
 
@@ -90,8 +74,56 @@ class AgentError(RuntimeError):
     """Raised when the agent turn cannot start."""
 
 
-def build_system_prompt(extra: str | None = None) -> str:
-    prompt = SYSTEM_PROMPT.format(today=datetime.now(UTC).strftime("%B %d, %Y"))
+def build_system_prompt(
+    extra: str | None = None,
+    *,
+    tool_specs: tuple[ToolSpec, ...] | None = None,
+) -> str:
+    """Build guidance that names only capabilities enabled for this turn."""
+    specs = tool_specs if tool_specs is not None else agent_tools()
+    if specs:
+        tool_lines = [
+            f"- `{spec.name}` ({spec.cost}): {spec.summary.rstrip('.')}."
+            for spec in specs
+        ]
+        tool_guidance = "## Available tools\n\n" + "\n".join(tool_lines)
+    else:
+        tool_guidance = "## Available tools\n\nNo tools are enabled for this turn."
+
+    if any(spec.produces_images for spec in specs):
+        visual_guidance = (
+            "Rendered charts are already shown to the user. Refer to them by name, "
+            "never describe them pixel by pixel, and never claim to have drawn "
+            "something you did not render."
+        )
+    else:
+        visual_guidance = (
+            "No rendered-image capability is enabled for this turn. Do not claim "
+            "to have created an image."
+        )
+
+    article_enabled = any(spec.name == "compose_research_article" for spec in specs)
+    if article_enabled:
+        artifact_guidance = """## Articles
+
+When the user asks for a write-up, recommendations, or a summary - or when the
+work has produced something worth keeping - finish by calling
+`compose_research_article`. Every claim in it must trace back to a tool you
+actually ran this conversation, and every recommendation needs an explicit
+invalidation condition. Do not repeat the article body in your reply
+afterwards; a short handoff sentence is enough."""
+    else:
+        artifact_guidance = (
+            "## Saved artifacts\n\nNo article-publishing capability is enabled for "
+            "this turn. Deliver the result in the reply."
+        )
+
+    prompt = SYSTEM_PROMPT.format(
+        today=datetime.now(UTC).strftime("%B %d, %Y"),
+        tool_guidance=tool_guidance,
+        visual_guidance=visual_guidance,
+        artifact_guidance=artifact_guidance,
+    )
     if extra and extra.strip():
         prompt = f"{prompt}\n\n## Session context\n\n{extra.strip()[:2000]}"
     return prompt
@@ -144,14 +176,28 @@ def normalize_history(messages: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def select_tools(names: Any) -> tuple[ToolSpec, ...]:
-    """Resolve an optional allowlist of tool names to specs."""
+def select_tools(names: Any, *, exact: bool = False) -> tuple[ToolSpec, ...]:
+    """Resolve tool names using either the legacy fallback or exact policy."""
     available = agent_tools()
+    if not exact:
+        if not isinstance(names, list) or not names:
+            return available
+        wanted = {str(name).strip() for name in names if str(name).strip()}
+        selected = tuple(spec for spec in available if spec.name in wanted)
+        return selected or available
+
+    error = "tools must be a non-empty list of recognized tool names"
     if not isinstance(names, list) or not names:
-        return available
-    wanted = {str(name).strip() for name in names if str(name).strip()}
+        raise AgentError(error)
+    normalized = [name.strip() for name in names if isinstance(name, str)]
+    if len(normalized) != len(names) or any(not name for name in normalized):
+        raise AgentError(error)
+    wanted = set(normalized)
+    available_names = {spec.name for spec in available}
+    if not wanted.issubset(available_names):
+        raise AgentError(error)
     selected = tuple(spec for spec in available if spec.name in wanted)
-    return selected or available
+    return selected
 
 
 def run_agent_stream(
@@ -160,6 +206,7 @@ def run_agent_stream(
     *,
     model: str | None = None,
     tool_specs: tuple[ToolSpec, ...] | None = None,
+    suppress_refused_tool_events: bool = False,
     system_extra: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> Iterator[dict[str, Any]]:
@@ -167,7 +214,7 @@ def run_agent_stream(
     specs = tool_specs if tool_specs is not None else agent_tools()
     by_name = {spec.name: spec for spec in specs}
     definitions = anthropic_tool_definitions(specs)
-    system = build_system_prompt(system_extra)
+    system = build_system_prompt(system_extra, tool_specs=specs)
 
     conversation: list[dict[str, Any]] = list(messages)
     assistant_text_parts: list[str] = []
@@ -240,13 +287,45 @@ def run_agent_stream(
                     continue
                 tool_budget -= 1
 
+                if spec is None:
+                    error = f"Tool {name} is not available for this turn."
+                    tool_trace.append(
+                        f"{name}({_trace_args(call.get('input'))}) -> error: {error}"
+                    )
+                    if not suppress_refused_tool_events:
+                        yield {
+                            "type": "tool_call",
+                            "id": call["id"],
+                            "name": name,
+                            "title": name,
+                            "group": "meta",
+                            "cost": "fast",
+                            "input": call.get("input") or {},
+                        }
+                        yield {
+                            "type": "tool_result",
+                            "id": call["id"],
+                            "name": name,
+                            "ok": False,
+                            "status": 403,
+                            "url": "",
+                            "error": error,
+                            "duration_ms": 0,
+                            "result": None,
+                            "artifacts": [],
+                        }
+                    result_blocks.append(
+                        _tool_result_block(call["id"], error, is_error=True)
+                    )
+                    continue
+
                 yield {
                     "type": "tool_call",
                     "id": call["id"],
                     "name": name,
-                    "title": spec.title if spec else name,
-                    "group": spec.group if spec else "meta",
-                    "cost": spec.cost if spec else "fast",
+                    "title": spec.title,
+                    "group": spec.group,
+                    "cost": spec.cost,
                     "input": call.get("input") or {},
                 }
 

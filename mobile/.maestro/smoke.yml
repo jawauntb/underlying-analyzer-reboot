@@ -1,0 +1,164 @@
+appId: com.theunderlying.undercurrent
+name: Undercurrent deterministic native journey
+tags:
+  - ios
+  - deterministic
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: e2e-fixture-badge
+- extendedWaitUntil:
+    visible: 'Open AAPL Lens'
+    timeout: 15000
+- takeScreenshot: 01-pulse
+
+- tapOn:
+    text: 'Open AAPL Lens'
+    retryTapIfNoChange: true
+- assertVisible: 'AAPL'
+- assertVisible:
+    text: '^Back$'
+- scrollUntilVisible:
+    element: 'Open Glance'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 80
+- tapOn:
+    text: 'Open Glance'
+    retryTapIfNoChange: true
+- scrollUntilVisible:
+    element: 'AAPL Torque chart'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 60
+- assertVisible: 'Undercurrent deterministic fixture'
+- takeScreenshot: 02-glance
+
+- scrollUntilVisible:
+    element: 'Select Diagnose'
+    direction: UP
+    timeout: 10000
+    visibilityPercentage: 80
+- tapOn: 'Select Diagnose'
+- scrollUntilVisible:
+    element: 'Open Diagnose'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 80
+- tapOn:
+    text: 'Open Diagnose'
+    retryTapIfNoChange: true
+- scrollUntilVisible:
+    element: 'AAPL Moneyline chart'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 60
+- assertVisible: 'AAPL Moneyline chart'
+- takeScreenshot: 03-diagnose
+
+- scrollUntilVisible:
+    element: 'Select Deep Dive'
+    direction: UP
+    timeout: 20000
+    visibilityPercentage: 80
+- tapOn: 'Select Deep Dive'
+- scrollUntilVisible:
+    element: 'Start Deep Dive'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 80
+- tapOn:
+    text: 'Start Deep Dive'
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible: 'agent_ready · YES'
+    timeout: 10000
+- scrollUntilVisible:
+    element: 'analyze_ticker'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 80
+- assertVisible: 'analyze_ticker'
+- scrollUntilVisible:
+    element: 'Start AAPL Research Run'
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 80
+- assertVisible:
+    text: 'Start AAPL Research Run'
+    enabled: true
+- takeScreenshot: 04-research-preview
+
+- tapOn:
+    text: 'Start AAPL Research Run'
+    retryTapIfNoChange: true
+- scrollUntilVisible:
+    element: 'Research summary'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- scrollUntilVisible:
+    element: 'Cancel Research Run'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- tapOn: 'Cancel Research Run'
+- scrollUntilVisible:
+    element: 'Research cancelled.'
+    direction: UP
+    timeout: 20000
+    visibilityPercentage: 100
+- assertVisible: 'Research cancelled.'
+- assertNotVisible: 'Save AAPL research on this device'
+- takeScreenshot: 05-cancelled
+
+- scrollUntilVisible:
+    element: 'Retry AAPL Research Run'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- tapOn:
+    text: 'Retry AAPL Research Run'
+    retryTapIfNoChange: true
+- scrollUntilVisible:
+    element: 'Streaming transport'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- scrollUntilVisible:
+    element: 'Save AAPL research on this device'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- tapOn: 'Save AAPL research on this device'
+- scrollUntilVisible:
+    element: 'Saved on this device.'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- takeScreenshot: 06-saved
+
+- scrollUntilVisible:
+    element: 'Close Research Run preview'
+    direction: DOWN
+    timeout: 20000
+    visibilityPercentage: 100
+- tapOn: 'Close Research Run preview'
+- waitForAnimationToEnd:
+    timeout: 5000
+- tapOn:
+    text: '^Back$'
+- tapOn:
+    text: 'Library tab'
+    retryTapIfNoChange: true
+- extendedWaitUntil:
+    visible: 'Open saved AAPL research'
+    timeout: 10000
+- assertVisible:
+    id: e2e-fixture-badge
+- takeScreenshot: 07-library
+- tapOn: 'Open saved AAPL research'
+- assertVisible: 'On this device'
+- assertVisible: 'AAPL remains above its deterministic support band.*'
+- takeScreenshot: 08-library-reopen

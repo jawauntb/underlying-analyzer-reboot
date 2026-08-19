@@ -62,6 +62,11 @@ curl -N -X POST http://127.0.0.1:5050/api/agent/chat/stream \
   -d '{"messages":[{"role":"user","content":"How does NVDA look this week?"}]}'
 ```
 
+Requests may send `tools` plus `"tool_policy":"exact"` to require that exact,
+non-empty set of recognized agent tools. Without the policy, tool selection
+keeps the legacy best-effort behavior and falls back to the full registry when
+none of the requested names are recognized.
+
 `POST /api/agent/chat` runs the identical turn and folds it into a single JSON
 response for non-streaming clients.
 

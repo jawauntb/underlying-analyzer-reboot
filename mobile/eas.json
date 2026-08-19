@@ -1,0 +1,19 @@
+{
+  "cli": {
+    "version": ">= 22.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "e2e-test": {
+      "withoutCredentials": true,
+      "node": "22.16.0",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_E2E_MODE": "1"
+      },
+      "ios": {
+        "simulator": true
+      }
+    }
+  }
+}

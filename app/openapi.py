@@ -14,6 +14,28 @@ API_DESCRIPTION = (
     "over MCP at POST /api/mcp and inside the product at /chat."
 )
 
+AGENT_REQUEST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string", "enum": ["user", "assistant"]},
+                    "content": {"type": "string"},
+                },
+                "required": ["role", "content"],
+            },
+        },
+        "tools": {"type": "array", "items": {"type": "string"}},
+        "tool_policy": {"type": "string", "enum": ["exact"]},
+        "context": {"type": "string"},
+    },
+    "required": ["messages"],
+}
+
 # Routes that exist for humans and infrastructure rather than as agent tools.
 SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     {
@@ -45,12 +67,15 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
         "path": "/api/agent/chat",
         "tag": "agent",
         "summary": "Run one agent turn and return the final message",
+        "request_schema": AGENT_REQUEST_SCHEMA,
     },
     {
         "method": "POST",
         "path": "/api/agent/chat/stream",
         "tag": "agent",
         "summary": "Run one agent turn as an NDJSON event stream",
+        "request_schema": AGENT_REQUEST_SCHEMA,
+        "success_media_type": "application/x-ndjson",
     },
     {
         "method": "POST",
@@ -110,12 +135,25 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
         entry = paths.setdefault(path, {})
         if method in entry:
             continue
-        entry[method] = {
+        responses = _responses()
+        success_media_type = route.get("success_media_type")
+        if isinstance(success_media_type, str):
+            responses["200"]["content"] = {
+                success_media_type: {"schema": {"type": "string"}}
+            }
+        supporting_operation: dict[str, Any] = {
             "operationId": _operation_id(str(route["method"]), path),
             "summary": route["summary"],
             "tags": [route["tag"]],
-            "responses": _responses(),
+            "responses": responses,
         }
+        request_schema = route.get("request_schema")
+        if isinstance(request_schema, dict):
+            supporting_operation["requestBody"] = {
+                "required": True,
+                "content": {"application/json": {"schema": request_schema}},
+            }
+        entry[method] = supporting_operation
 
     document: dict[str, Any] = {
         "openapi": "3.1.0",

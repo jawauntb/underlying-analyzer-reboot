@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Undercurrent",
+    "slug": "undercurrent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "undercurrent",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/images/undercurrent-icon.png",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.theunderlying.undercurrent"
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/undercurrent-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a2f9e63a-952e-413c-a09f-42d325a7aea1"
+      }
+    },
+    "owner": "jawauntb"
+  }
+}

@@ -13,6 +13,10 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - One tool registry driving the HTTP API, OpenAPI 3.1, both MCP transports, and the agent
 - JSON exports for generated ticker/watchlist data
 
+## Native iPhone app
+
+[`mobile/`](mobile/) contains Undercurrent, the Expo Go iPhone companion. Its setup, native test commands, static export checks, production contract smoke, and cloud-proof boundaries are documented in [`mobile/README.md`](mobile/README.md).
+
 ## Data Provider Notes
 
 `yfinance` still works for many people, but it is unofficial Yahoo Finance access. Recent

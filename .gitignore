@@ -12,3 +12,4 @@ stock_analysis.log
 !.env.example
 .worktrees
 .railway/
+/.artifacts/

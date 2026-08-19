@@ -1,0 +1,25 @@
+name: Deterministic iOS simulator proof
+
+jobs:
+  build_ios_for_e2e:
+    name: Build fixture-only iOS simulator app
+    type: build
+    environment: preview
+    params:
+      platform: ios
+      profile: e2e-test
+
+  maestro_test:
+    name: Prove the native Undercurrent journey
+    needs: [build_ios_for_e2e]
+    type: maestro
+    environment: preview
+    runs_on: macos-medium
+    params:
+      build_id: ${{ needs.build_ios_for_e2e.outputs.build_id }}
+      flow_path: ./.maestro/smoke.yml
+      device_identifier: 'iPhone 16'
+      retries: 1
+      retry_failed_only: true
+      record_screen: true
+      output_format: junit
