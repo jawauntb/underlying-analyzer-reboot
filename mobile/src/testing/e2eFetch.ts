@@ -1,5 +1,6 @@
 import { MOBILE_AGENT_TOOLS } from '@/src/api/agentTools';
 import { API_ENDPOINTS } from '@/src/api/endpoints';
+import { LENS_AUCTION_PERIODS } from '@/src/features/lens/lens-model';
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type JsonObject = Record<string, unknown>;
@@ -279,13 +280,13 @@ function torquePayload() {
   };
 }
 
-function auctionPayload() {
+function auctionPayload(period: string) {
   const closes = [225, 227, 226, 229, 231];
   return {
     datasets: [{
       chart_type: 'auction',
       ticker: 'AAPL',
-      period: '5d',
+      period,
       meta: { provider: FIXTURE_PROVIDER },
       levels: { vah: 230, val: 224, poc: 227 },
       series: {
@@ -368,8 +369,11 @@ function createHandler(state: FixtureState): FetchLike {
     if (method === 'POST' && route === API_ENDPOINTS.auction) {
       const body = jsonBody(init);
       expectAapl(body);
-      if (body.period !== '5d') throw new Error('[E2E fixture] AAPL Auction expects the 5d period.');
-      return jsonResponse(auctionPayload());
+      const period = typeof body.period === 'string' ? body.period : '';
+      if (!(LENS_AUCTION_PERIODS as readonly string[]).includes(period)) {
+        throw new Error('[E2E fixture] AAPL Auction expects a supported Lens chart period.');
+      }
+      return jsonResponse(auctionPayload(period));
     }
     if (method === 'POST' && route === API_ENDPOINTS.moneyline) {
       expectAapl(jsonBody(init));

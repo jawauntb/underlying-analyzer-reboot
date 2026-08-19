@@ -114,6 +114,21 @@ describe('financial chart surfaces', () => {
     expect(paths.every((path) => finiteProps(path.props))).toBe(true);
   });
 
+  it('keeps year context on multi-year auction axes', () => {
+    const multiYear = {
+      series: {
+        ohlcv: [
+          { ...auction.series.ohlcv[0], date: '2025-08-14' },
+          { ...auction.series.ohlcv[1], date: '2026-08-17' },
+        ],
+      },
+    };
+    const view = render(<AuctionChart dataset={multiYear} title="Multi-year auction" width={320} />);
+
+    expect(view.getByText('08/25', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getByText('08/26', { includeHiddenElements: true })).toBeTruthy();
+  });
+
   it('hides absent auction levels instead of showing empty legend claims', () => {
     const view = render(<AuctionChart dataset={{ series: { ohlcv: auction.series.ohlcv } }} title="Auction no levels" width={320} />);
 
