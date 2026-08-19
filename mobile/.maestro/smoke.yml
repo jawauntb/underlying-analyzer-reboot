@@ -155,10 +155,10 @@ tags:
 - extendedWaitUntil:
     visible: 'Open saved AAPL research'
     timeout: 10000
+- assertVisible:
+    id: e2e-fixture-badge
 - takeScreenshot: 07-library
 - tapOn: 'Open saved AAPL research'
 - assertVisible: 'On this device'
 - assertVisible: 'AAPL remains above its deterministic support band.*'
-- assertVisible:
-    id: e2e-fixture-badge
 - takeScreenshot: 08-library-reopen
