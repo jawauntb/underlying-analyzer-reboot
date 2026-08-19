@@ -4,8 +4,8 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 
 - Flask API for chart generation and stock summaries
 - Static frontend with the original retro terminal styling
-- `yfinance` as the primary provider, updated to the current package line
-- Nasdaq public historical fallback for daily US equity OHLCV when yfinance fails
+- A Massive-first market-data adapter with yfinance and Nasdaq fallbacks
+- Nasdaq public historical fallback for daily US equity OHLCV when keyed providers fail
 - Public TradingView watchlist links for portfolio, chart batches, volatility, and stock briefs
 - SEC EDGAR source packs for filings, XBRL company facts, and Vision memo citations
 - Supabase-backed saved research, watchlists, daily alert rules, and alert-run inbox
@@ -21,9 +21,54 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 
 `yfinance` still works for many people, but it is unofficial Yahoo Finance access. Recent
 failures have centered on unauthorized cookie/crumb responses and undocumented throttling.
-The reboot keeps yfinance for broad coverage, options, and metadata, but US equity chart
-endpoints can fall back to Nasdaq historical JSON so the app can still render daily charts
-when yfinance has a temporary issue.
+The production path makes Massive the first keyed adapter for supported stock and
+options capabilities, while preserving yfinance and the existing Nasdaq daily-US-equity
+fallback. Provider-specific response shapes must not leak into the chart or analysis APIs.
+
+### Massive-first provider path
+
+The adapter is implemented behind `MarketDataClient`:
+
+```text
+Massive (when enabled and entitled)
+  -> yfinance (if fallback is enabled and Massive is unavailable)
+    -> Nasdaq daily US-equity fallback (if yfinance also fails)
+```
+
+Massive is selected when `MASSIVE_API_KEY` is configured. `MARKET_DATA_FALLBACK_ENABLED` controls
+whether a Massive timeout, rate limit, authorization/entitlement response, empty result, or upstream error may
+continue to the existing providers. Invalid request parameters remain client errors; every
+successful provider is normalized to the same OHLCV, options, metadata, and error contracts.
+
+Massive credentials belong in Doppler. Documentation names the variables but never includes
+their values: `MASSIVE_API_KEY`, `MASSIVE_REST_BASE_URL`, `MASSIVE_TIMEOUT_SECONDS`,
+`MASSIVE_MAX_RETRIES`, `MASSIVE_MAX_PAGES`, and the routing flag
+`MARKET_DATA_FALLBACK_ENABLED`. Capability reporting may additionally use
+`MASSIVE_STOCKS_PLAN` and `MASSIVE_OPTIONS_PLAN`. Do not return `MASSIVE_API_KEY` from
+`/api/config`, `/api/providers`, or any capability catalog. See [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md)
+for the adapter boundary, stable metadata envelope, entitlement rules, and rollout sequence.
+
+Massive plan access is endpoint-specific. Its stock custom-bars docs list Basic as end-of-day
+with two years, Starter as 15-minute delayed with five years, Developer as 15-minute delayed
+with ten years, and Advanced as real-time with all history. Tick-level stock trades are not
+included on Basic or Starter, are 15-minute delayed with ten years on Developer, and real-time
+with all history on Advanced. The app exposes plan-based freshness hints through
+`/api/providers` and `/api/capabilities`; it does not synthesize realtime timestamps when the
+upstream response does not provide them. See the [Massive REST
+quickstart](https://massive.com/docs/rest/quickstart), [stock custom bars](https://massive.com/docs/rest/stocks/aggregates/custom-bars),
+and [stock trades](https://massive.com/docs/rest/stocks/trades-quotes/trades) docs.
+
+Options are a separate subscription family. Contract reference data is documented as included
+in all Options plans, while bars, snapshots, trades, and quotes are available only on select
+Options plans. Native ticker events are experimental and currently expose `ticker_change`; the
+partner API is separately subscribed data, so a TMX corporate-events or Benzinga response must
+not be implied by a Stocks or Options subscription. See the [Options overview](https://massive.com/docs/rest/options/overview),
+[ticker events](https://massive.com/docs/rest/stocks/corporate-actions/ticker-events), and
+[Partners overview](https://massive.com/docs/rest/partners/overview).
+
+Additive Massive routes also expose stock market status, dividends, splits, and selected
+financial statements/ratios. Financials use a separate `MASSIVE_FINANCIALS_PLAN` declaration;
+the capability endpoint reports them as unavailable until that entitlement is explicitly known.
 
 Free keyed options worth considering later:
 

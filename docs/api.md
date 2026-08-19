@@ -72,7 +72,8 @@ curl -s http://127.0.0.1:5050/api/config
 
 ### `GET /api/providers`
 
-Market data provider notes.
+Market data provider and routing status. The current response remains valid; additive fields
+must never contain `MASSIVE_API_KEY` or another secret.
 
 ```bash
 curl -s http://127.0.0.1:5050/api/providers
@@ -80,11 +81,72 @@ curl -s http://127.0.0.1:5050/api/providers
 
 ```json
 {
-  "primary": "yfinance",
-  "fallback": "nasdaq",
-  "notes": ["..."]
+  "primary": "massive",
+  "fallback": "yfinance + nasdaq",
+  "massive_configured": true,
+  "fallback_enabled": true,
+  "freshness": {
+    "stocks": "Plan-dependent: end-of-day, 15-minute delayed, or real-time",
+    "options": "Plan-dependent: unavailable, 15-minute delayed, or real-time"
+  },
+  "notes": [
+    "Massive is the primary provider when MASSIVE_API_KEY is configured.",
+    "Legacy yfinance and Nasdaq routing is temporary and controlled by MARKET_DATA_FALLBACK_ENABLED.",
+    "Massive coverage and freshness depend on the subscribed Stocks and Options plans."
+  ]
 }
 ```
+
+`massive_configured` is the sanitized state of whether `MASSIVE_API_KEY` is present;
+`fallback_enabled` is the sanitized state of `MARKET_DATA_FALLBACK_ENABLED`. An unavailable entitlement, timeout, 429, 5xx,
+or empty Massive result may route to the next provider only when fallback is enabled. An
+invalid request is not retried as an upstream outage.
+
+The additive raw-data routes are cataloged by `GET /api/docs` and `GET /api/openapi`: market
+snapshot, aggregates, trades, quotes, status, options chain/expirations/contracts, ticker
+events, dividends, splits, and selected financial statements/ratios. They use a stable
+`{ticker, provider, provider_note, data}` envelope (market status omits `ticker`) and never
+replace an existing endpoint.
+
+### `GET /api/capabilities` (additive)
+
+Returns the declared Massive capability matrix and freshness hints. It is an entitlement
+preflight, not a live authorization check; request-time 401/403 responses remain authoritative,
+and the explicit legacy fallback may still serve a compatible request. This endpoint is additive
+to the existing catalog and does not replace `/api/docs`, `/api/openapi`, or `/api/providers`.
+
+```json
+{
+  "provider": "massive",
+  "capabilities": [
+    {
+      "id": "stocks.daily_bars",
+      "available": true,
+      "freshness": "delayed_15m",
+      "history": "10y",
+      "plan": "developer",
+      "reason": null
+    },
+    {
+      "id": "options.chain",
+      "available": false,
+      "plan": null,
+      "reason": "Massive plan is not declared; entitlement must be verified"
+    }
+  ]
+}
+```
+
+Every item has a stable `id`, `available` boolean, `plan`, and freshness/history hints. The
+`reason` is sanitized and may explain missing credentials, undeclared entitlements, or a
+dedicated partner subscription. Capability IDs are additive: clients must ignore
+unknown future IDs and must not infer access from the provider name alone.
+
+### `GET /api/capabilities/<capability>` (additive)
+
+Returns the same capability object for one ID, or `404 {"error":"unknown capability"}` for an
+ID the server does not recognize. It is intended for a UI to gate optional controls before
+calling `/api/data/...`; it does not alter the request or response contract of those routes.
 
 ---
 
@@ -210,6 +272,27 @@ curl -s -X POST http://127.0.0.1:5050/api/data/tools/moneyline \
   -H 'Content-Type: application/json' \
   -d '{"ticker":"AAPL"}'
 ```
+
+### Stable provider metadata
+
+Existing chart routes retain their top-level `provider`, `provider_note`, `meta`, `datasets`,
+`series`, and `export` keys. The new raw-data routes return those same provider fields plus a
+`data` object containing the provider-shaped payload. `data_meta` is reserved as an optional
+future field for source timestamps and routing provenance; clients must not infer freshness from
+the provider name alone.
+
+| Field | Meaning |
+| --- | --- |
+| `provider` | Provider that produced this result: `massive`, `yfinance`, `nasdaq`, or `mixed` |
+| `freshness` | `end_of_day`, `delayed_15m`, `realtime`, `updated_daily`, or `plan_dependent` |
+| `as_of` | ISO-8601 timestamp of the newest source observation, when available |
+| `retrieved_at` | ISO-8601 timestamp when the server received the result |
+| `fallback_used` | Boolean indicating that routing left the preferred provider |
+| `fallback_reason` | Sanitized reason such as `timeout`, `rate_limited`, `not_entitled`, or `not_configured` |
+
+For batch routes, the top-level provider describes the batch (`mixed` when providers differ).
+Freshness is plan-dependent and is exposed through `/api/providers` and `/api/capabilities`; a
+missing source timestamp is not permission to guess freshness.
 
 ---
 
@@ -613,3 +696,25 @@ the route returns `ok: false` with `status: "not configured"` rather than failin
 | `SUPABASE_SERVICE_ROLE_KEY` | Scheduled alert runs |
 | `ALERT_SCHEDULER_TOKEN` | Cron/Function → scheduled run |
 | `EXA_API_KEY` | Vision v2 enrichment and `/api/news` (optional) |
+
+### Massive Doppler variables
+
+These are names only; values belong in Doppler and are intentionally omitted from this document.
+`MASSIVE_API_KEY` is server-only and must never appear in `/api/config`, `/api/providers`, logs,
+or capability responses.
+
+| Variable | Purpose |
+| --- | --- |
+| `MASSIVE_API_KEY` | Server-side Massive authentication secret |
+| `MASSIVE_REST_BASE_URL` | Massive REST base URL; default `https://api.massive.com` |
+| `MASSIVE_TIMEOUT_SECONDS` | Per-request timeout budget |
+| `MASSIVE_MAX_RETRIES` | Bounded retry count for transient failures |
+| `MASSIVE_MAX_PAGES` | Maximum pagination pages to collect from one request |
+| `MARKET_DATA_FALLBACK_ENABLED` | Permit routing to yfinance/Nasdaq after a Massive failure or entitlement miss |
+| `MASSIVE_STOCKS_PLAN` | Sanitized plan declaration used for capability reporting: `basic`, `starter`, `developer`, or `advanced` |
+| `MASSIVE_OPTIONS_PLAN` | Sanitized Options plan declaration: `basic`, `starter`, `developer`, or `advanced` |
+| `MASSIVE_FINANCIALS_PLAN` | Sanitized financials/ratios entitlement declaration, including any expansion plan |
+
+The plan variables are configuration hints, not a substitute for an authorization response from
+Massive. `/api/capabilities` reports declared-plan availability; a live 401/403 or provider error
+still wins at request time and routes to the explicit fallback when enabled.

@@ -82,6 +82,35 @@ route returns `400 {"error": "..."}`.
 - The two `/api/data/tools/...` routes return the dataset at the top level
   (plus an `export`), not wrapped in `datasets[]`.
 
+### Provider, freshness, and fallback metadata
+
+The Massive-first adapter preserves the existing dataset schemas. Do not make a chart client
+parse Massive’s raw `results` objects. Render from the
+canonical `series`, `levels`, `rows`, and `table` keys, and use metadata only for provenance and
+freshness labels.
+
+Use `/api/providers` and `/api/capabilities` for the current plan-based freshness hints. The
+server does not synthesize source timestamps when the provider response does not supply them.
+
+`freshness` is one of `end_of_day`, `delayed_15m`, `realtime`, or `updated_daily`. If a
+watchlist is served by more than one provider, the envelope may say `provider: "mixed"`; use
+the per-dataset metadata for badges and footers. If `fallback_used` is true, show the fallback
+provider in diagnostic or detail UI and do not imply that the result came from Massive.
+
+The source timestamps are authoritative. In particular, Massive’s single-ticker snapshot is
+cleared at 3:30 AM ET and can begin updating as early as 4:00 AM ET; a client must not replace
+`as_of` with the device clock. See the [Massive stock snapshot docs](https://massive.com/docs/rest/stocks/snapshots/single-ticker-snapshot)
+and [custom bars plan table](https://massive.com/docs/rest/stocks/aggregates/custom-bars).
+
+### Capability-gated UI
+
+Optional controls should consult `GET /api/capabilities` before requesting
+intraday, tick, options, event, or partner data. `available: false` with
+`reason: "subscription_required"` is different from an empty valid result. Show a plan or
+coverage explanation rather than drawing an empty chart. Core ticker events are experimental and
+currently only `ticker_change`; partner corporate-event calendars require their own partner
+subscription. See [provider-research.md](provider-research.md).
+
 ## Point shapes
 
 All time series use one of these row shapes:
@@ -415,6 +444,8 @@ In the `underlying-analyzer-reboot` repo:
   whatever sessions exist (nominally the trailing 21).
 - Ridge-growth returns 3 datasets per ticker; on mobile fetch one ticker at a
   time and lazy-load windows.
-- `provider` tells you where data came from (`yfinance`, `nasdaq`, mixed as
-  `a+b`); surface `meta.errors` so partial watchlist failures are visible.
+- `provider` tells you where data came from (`massive`, `yfinance`, `nasdaq`, or mixed as
+  `a+b`); additive raw-data routes also return `provider_note`. A universal `data_meta` field is
+  not emitted yet, so use `/api/capabilities` only for Massive entitlement hints and surface
+  `meta.errors` so partial watchlist failures are visible.
 - All routes are public JSON POST, CORS open, no API key.

@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 
 from app._perf import tune_session
 from app.analysis import (
@@ -46,7 +45,15 @@ from app.charts import (
     style_axis,
     style_legend,
 )
-from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.market_data import (
+    HistoryResult,
+    MarketDataClient,
+    MarketDataError,
+    clean_ticker,
+)
+from app.market_data import (
+    choose_expiry as choose_market_expiry,
+)
 from app.sec import SecClient, SecDataError
 
 PIXEL_STYLE = (
@@ -73,6 +80,8 @@ def _shared_openai_session() -> requests.Session:
                 session = tune_session(requests.Session())
                 _openai_session = session
     return session
+
+
 MARKET_TEXT_SYSTEM = (
     "You are The Underlying's institutional equity analyst. Produce sober, evidence-based "
     "research for a serious investor using only the provided structured data. Separate facts "
@@ -902,26 +911,38 @@ def text_report_payload(report: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in report.items() if key != "Export Rows"}
 
 
-def build_moneyline_data(ticker: str, expiry: str | None = None) -> dict[str, Any]:
+def _configured_market_client() -> MarketDataClient:
+    try:
+        from flask import current_app
+
+        configured = current_app.config.get("MARKET_DATA_CLIENT")
+        if configured is not None:
+            return configured
+    except (ImportError, RuntimeError):
+        pass
+    return MarketDataClient()
+
+
+def build_moneyline_data(
+    ticker: str,
+    expiry: str | None = None,
+    *,
+    market_client: MarketDataClient | None = None,
+) -> dict[str, Any]:
     """Gather options open-interest ladder data without rendering a chart image."""
     symbol = clean_ticker(ticker)
-    stock = yf.Ticker(symbol)
-    history = stock.history(period="5d")
-    if history.empty:
-        raise MarketDataError(f"No recent price data for {symbol}")
-
-    current_price = float(history["Close"].dropna().iloc[-1])
-    selected_expiry = choose_expiry(stock, expiry)
-    option_chain = stock.option_chain(selected_expiry)
-    rows = option_rows(option_chain.calls, option_chain.puts, current_price)
-    if not rows:
-        raise MarketDataError(f"No usable option rows for {symbol} {selected_expiry}")
+    chain = (market_client or _configured_market_client()).get_option_chain(symbol, expiry)
+    current_price = chain.current_price
+    selected_expiry = chain.expiry
+    rows = chain.rows
 
     meta = {
         "ticker": symbol,
         "expiry": selected_expiry,
         "current_price": current_price,
         "rows": rows,
+        "provider": chain.provider,
+        "provider_note": chain.note,
     }
     return {
         "chart_type": "moneyline",
@@ -946,9 +967,12 @@ def build_moneyline_data(ticker: str, expiry: str | None = None) -> dict[str, An
 
 
 def render_moneyline_chart(
-    ticker: str, expiry: str | None = None
+    ticker: str,
+    expiry: str | None = None,
+    *,
+    market_client: MarketDataClient | None = None,
 ) -> tuple[RenderedImage, dict[str, Any]]:
-    payload = build_moneyline_data(ticker, expiry=expiry)
+    payload = build_moneyline_data(ticker, expiry=expiry, market_client=market_client)
     meta = payload["meta"]
     image = moneyline_image(
         str(meta["ticker"]),
@@ -959,17 +983,8 @@ def render_moneyline_chart(
     return image, meta
 
 
-def choose_expiry(stock: yf.Ticker, expiry: str | None) -> str:
-    expiries = list(stock.options)
-    if not expiries:
-        raise MarketDataError("No listed options were returned")
-    if expiry and expiry in expiries:
-        return expiry
-
-    target = parse_expiry(expiry) if expiry else next_friday()
-    dated = [(datetime.strptime(value, "%Y-%m-%d").date(), value) for value in expiries]
-    dated.sort(key=lambda item: abs((item[0] - target).days))
-    return dated[0][1]
+def choose_expiry(expiries: list[str], expiry: str | None) -> str:
+    return choose_market_expiry(expiries, expiry)
 
 
 def parse_expiry(expiry: str | None) -> date:
