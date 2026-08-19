@@ -1,8 +1,8 @@
 # System Design: Massive-First Market Data
 
 Status: implemented baseline with documented gaps. The Massive REST adapter is present in
-`app/massive.py` and routed through `MarketDataClient`; WebSockets, flat files, and partner
-datasets remain future capability work.
+`app/massive.py` and routed through `MarketDataClient`; `app/massive_stream.py` adds an additive
+SSE bridge over Massive WebSockets. Flat files and partner datasets remain future capability work.
 
 ## Goal
 
@@ -43,11 +43,12 @@ get_ticker_events(identifier, types)
 ```
 
 Adapters return a canonical result or a typed provider error. They do not return Flask responses,
-PNG payloads, indicator objects, or provider-specific field names. The first Massive implementation
-should use REST for on-demand bars, snapshots, reference data, and options; WebSocket and flat-file
-work can be added later without changing this interface. Massive documents REST for on-demand
-queries, WebSockets for live streams, and Flat Files for bulk historical data in the [REST
-quickstart](https://massive.com/docs/rest/quickstart).
+PNG payloads, indicator objects, or provider-specific field names. The Massive implementation uses
+REST for on-demand bars, snapshots, reference data, and options. The additive
+`/api/data/market/stream` route uses `MassiveStreamProvider` to bridge the upstream WebSocket to
+SSE for the current WSGI/Gunicorn service; it does not alter the existing provider interface or
+REST contracts. Massive documents REST for on-demand queries, WebSockets for live streams, and
+Flat Files for bulk historical data in the [WebSocket quickstart](https://massive.com/docs/websocket/quickstart).
 
 ## Canonical result contract
 
@@ -140,6 +141,8 @@ The endpoints are:
   `history`, and a sanitized `reason` when unverified or unavailable. It is not a live
   authorization check; request-time 401/403 responses remain authoritative.
 - `GET /api/capabilities/<capability>`: one capability object for preflight UI gating.
+- `GET /api/data/market/stream`: additive SSE transport backed by Massive stock/options WebSockets;
+  it emits `ready`, `market_data`, and sanitized `error` events.
 
 Capability IDs should be stable and namespaced, for example `stocks.daily_bars`,
 `stocks.intraday_bars`, `stocks.snapshot`, `stocks.ticker_events`, `stocks.dividends`,
@@ -165,6 +168,10 @@ document intentionally shows no secret values.
 | `MASSIVE_MAX_RETRIES` | Maximum transient retry count |
 | `MASSIVE_MAX_PAGES` | Maximum pagination pages to collect per request |
 | `MARKET_DATA_FALLBACK_ENABLED` | Permit yfinance/Nasdaq routing after Massive failure |
+| `MASSIVE_STREAM_ENABLED` | Explicitly enable the additive Massive WebSocket/SSE bridge |
+| `MASSIVE_WS_BASE_URL` | Massive WebSocket base URL; default `wss://socket.massive.com` |
+| `MASSIVE_STREAM_TIMEOUT_SECONDS` | WebSocket connect/read timeout |
+| `MASSIVE_STREAM_MAX_RECONNECTS` | Bounded stream reconnect attempts |
 | `MASSIVE_STOCKS_PLAN` | Sanitized declared Stocks tier for capability hints |
 | `MASSIVE_OPTIONS_PLAN` | Sanitized declared Options tier for capability hints |
 | `MASSIVE_FINANCIALS_PLAN` | Sanitized financials/ratios entitlement declaration |
@@ -182,9 +189,10 @@ not a market-data path.
 
 The first rollout should be dark or explicitly flagged: expose provider and capability status,
 run Massive against a small set of daily-bar reads, compare normalized values to the existing
-provider, then enable fallback-protected traffic. Record only provider name, capability ID,
-latency, status class, freshness, fallback reason, and Massive `request_id` when supplied. Never
-record the API key or full authenticated URL.
+provider, then enable fallback-protected traffic. The stream has no yfinance fallback because a
+delayed snapshot is not semantically equivalent to a live event sequence. Record only provider
+name, capability ID, latency, status class, freshness, fallback reason, and Massive `request_id`
+when supplied. Never record the API key or full authenticated URL.
 
 Before enabling intraday, options, event, or partner controls, verify the exact subscription for
 the endpoint and surface the result through `/api/capabilities`. A successful daily-bar smoke

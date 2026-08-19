@@ -168,6 +168,19 @@ API_ENDPOINTS: list[dict[str, Any]] = [
     },
     {
         "method": "GET",
+        "path": "/api/data/market/stream",
+        "group": "data",
+        "summary": "Massive stock or options WebSocket events as Server-Sent Events",
+        "auth": "none",
+        "query": {
+            "ticker": "string",
+            "asset_class": "stocks|options (default stocks)",
+            "feed": "trades|quotes|aggregates_minute|aggregates_second (default trades)",
+            "max_events": "int (optional, 1-1000; useful for smoke tests)",
+        },
+    },
+    {
+        "method": "GET",
         "path": "/api/openapi",
         "group": "meta",
         "summary": "OpenAPI 3.1 document for the whole HTTP surface",

@@ -1,7 +1,8 @@
 # Provider Research
 
-Checked on 2026-08-19. The Massive adapter is implemented in `app/massive.py` and routed
-through `app.market_data.MarketDataClient`; this document records verified coverage and gaps.
+Checked on 2026-08-19. The Massive REST adapter is implemented in `app/massive.py`, and the
+additive WebSocket bridge is implemented in `app/massive_stream.py` and routed through the SSE
+endpoint; this document records verified coverage and gaps.
 
 ## Recommendation
 
@@ -36,8 +37,16 @@ families needed by this app: aggregates, snapshots, trades and quotes, reference
 corporate actions, and technical indicators. The current implementation covers daily aggregate
 bars, snapshots, ticker reference/search data, options chains/contracts/expirations, trades,
 quotes, ticker events, dividends, splits, selected financial statements/ratios, and market
-status. Technical indicators, IPOs, WebSockets, flat files, and partner datasets remain
-documented gaps.
+status. Technical indicators, IPOs, flat files, and partner datasets remain documented gaps.
+
+The [Stocks WebSocket overview](https://massive.com/docs/websocket/stocks/overview) documents
+trades, NBBO quotes, minute/second aggregates, LULD, and FMV feeds. The app exposes the first
+four through `GET /api/data/market/stream` as SSE backed by a server-side WebSocket connection;
+the upstream URL is `wss://socket.massive.com/stocks` by default. The [Options WebSocket
+overview](https://massive.com/docs/websocket/options/overview) similarly documents trades,
+quotes, and aggregates for option contracts, and the adapter supports those same feed families
+with `asset_class=options`. Streaming has no yfinance fallback because event sequences cannot be
+reconstructed from a delayed REST snapshot.
 
 ### Stock plan and freshness matrix
 
