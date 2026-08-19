@@ -67,6 +67,7 @@ describe('endpoint and configuration safety', () => {
     expect(API_ENDPOINTS).toMatchObject({
       health: '/api/health',
       tools: '/api/agent/tools',
+      search: '/api/data/search',
       resolveWatchlist: '/api/watchlists/resolve',
       alerts: '/api/watchlists/alerts',
       auction: '/api/data/charts/auction',
@@ -93,11 +94,107 @@ describe('ApiClient', () => {
     expect(TIMEOUT_MS).toEqual({ normal: 30_000, capability: 10_000, researchIdle: 45_000 });
   });
 
+  it('searches with encoded query parameters and filters hostile or partial provider results', async () => {
+    const fetchImpl = jest.fn(async () =>
+      response({
+        body: {
+          query: 'S&P 500',
+          results: [
+            { symbol: '^GSPC', name: 'S&P 500', exchange: 'SNP', asset_type: 'index' },
+            { symbol: 'btc-usd', name: 'Bitcoin USD', exchange: 'CCC', asset_type: 'crypto' },
+            { symbol: '</script>', name: 'Hostile', exchange: 'Nowhere', asset_type: 'equity' },
+            { symbol: 'AAPL', name: 'Apple Inc.', asset_type: 'equity' },
+            { symbol: 'ES=F', name: 'E-mini S&P 500', exchange: 'CME', asset_type: 'future' },
+            'not-an-object',
+          ],
+          provider: 'Yahoo Finance via yfinance',
+        },
+      }),
+    );
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+
+    await expect(client.searchSecurities({ query: ' S&P 500 ', limit: 3 })).resolves.toEqual({
+      query: 'S&P 500',
+      results: [
+        { symbol: '^GSPC', name: 'S&P 500', exchange: 'SNP', assetType: 'index' },
+        { symbol: 'BTC-USD', name: 'Bitcoin USD', exchange: 'CCC', assetType: 'crypto' },
+      ],
+      provider: 'Yahoo Finance via yfinance',
+    });
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.test/api/data/search?q=S%26P+500&limit=3');
+    expect(init).toMatchObject({ method: 'GET' });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('rejects invalid security searches locally without fetching', async () => {
+    const fetchImpl = jest.fn();
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+    const invalidRequests = [
+      { query: '   ' },
+      { query: 'x'.repeat(101) },
+      { query: 'Apple', limit: 0 },
+      { query: 'Apple', limit: 11 },
+      { query: 'Apple', limit: 1.5 },
+    ];
+
+    for (const request of invalidRequests) {
+      await expect(client.searchSecurities(request)).rejects.toMatchObject({ kind: 'validation' });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('supports local cancellation for security search', async () => {
+    let requestSignal: AbortSignal | undefined;
+    const fetchImpl = jest.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    });
+    const controller = new AbortController();
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+    const request = client.searchSecurities({ query: 'Apple' }, { signal: controller.signal });
+
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ kind: 'cancelled' });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it('normalizes partial alert successes instead of throwing', async () => {
     const fetchImpl = jest.fn(async () =>
       response({
         body: {
-          rows: [{ ticker: 'aapl', rank: 1, lane: 'Priority' }],
+          rows: [{
+            ticker: 'aapl',
+            rank: 1,
+            lane: 'Priority',
+            trend_50d: 0.04,
+            distance_from_52w_high: -0.08,
+            distance_from_52w_low: 0.31,
+            summary: {
+              business_summary: 'Builds consumer technology.',
+              country: 'United States',
+              website: 'https://apple.com',
+              employees: 164_000,
+              market_cap: '3.42T',
+              trailing_pe: 'N/A',
+              forward_pe: 28.4,
+              price_to_sales: 8.6,
+              price_to_book: 'N/A',
+              revenue_growth: 0.052,
+              profit_margins: 0.244,
+              return_on_equity: 1.51,
+              debt_to_equity: 145.2,
+              recommendation: 'buy',
+              target_mean_price: 245.5,
+              analyst_count: 42,
+              beta: 'N/A',
+              fifty_two_week_high: 237.49,
+              fifty_two_week_low: 164.08,
+            },
+          }],
           alerts: [{ id: 'aapl-priority', ticker: 'aapl', severity: 'High', category: 'Setup', title: 'Priority setup', message: 'Ready', action: 'Review' }],
           digest: { headline: 'One available', summary: 'AAPL is ready', generated_at: '2026-08-19T00:00:00Z', severity_counts: { High: 1 }, category_counts: { Setup: 1 }, lane_counts: { Priority: 1 }, priority_tickers: ['aapl'], risk_tickers: [], flow_shift_tickers: [], next_steps: ['Review'] },
           provider: 'fake',
@@ -111,7 +208,34 @@ describe('ApiClient', () => {
     const result = await client.watchlistAlerts({ tickers: ['aapl', 'msft'] });
     expect(result.status).toBe('partial');
     expect(result.rows[0].ticker).toBe('AAPL');
-    expect(result.rows[0]).toMatchObject({ lane: 'Priority', rank: 1 });
+    expect(result.rows[0]).toMatchObject({
+      lane: 'Priority',
+      rank: 1,
+      trend50d: 0.04,
+      distanceFrom52WeekHigh: -0.08,
+      distanceFrom52WeekLow: 0.31,
+      fundamentals: {
+        businessSummary: 'Builds consumer technology.',
+        country: 'United States',
+        website: 'https://apple.com',
+        employees: 164_000,
+        marketCap: '3.42T',
+        trailingPe: null,
+        forwardPe: 28.4,
+        priceToSales: 8.6,
+        priceToBook: null,
+        revenueGrowth: 0.052,
+        profitMargins: 0.244,
+        returnOnEquity: 1.51,
+        debtToEquity: 145.2,
+        recommendation: 'buy',
+        targetMeanPrice: 245.5,
+        analystCount: 42,
+        beta: null,
+        fiftyTwoWeekHigh: 237.49,
+        fiftyTwoWeekLow: 164.08,
+      },
+    });
     expect(result.alerts[0]).toMatchObject({ ticker: 'AAPL', severity: 'High', title: 'Priority setup' });
     expect(result.digest).toMatchObject({ headline: 'One available', priorityTickers: ['AAPL'] });
     expect(result.errors).toEqual([{ ticker: 'MSFT', error: 'unavailable' }]);

@@ -3,6 +3,7 @@ export const DEFAULT_API_BASE_URL = 'https://underlying-terminal-production.up.r
 export const API_ENDPOINTS = {
   health: '/api/health',
   tools: '/api/agent/tools',
+  search: '/api/data/search',
   resolveWatchlist: '/api/watchlists/resolve',
   alerts: '/api/watchlists/alerts',
   auction: '/api/data/charts/auction',
@@ -50,6 +51,7 @@ export function buildApiConfig(
 }
 
 const SYMBOL_PATTERN = /^[A-Z0-9.-]{1,15}$/;
+const SEARCH_SYMBOL_PATTERN = /^[A-Z0-9.^=-]{1,32}$/;
 
 export function normalizeSymbol(value: string): string {
   const symbol = value.trim().toUpperCase();
@@ -61,6 +63,14 @@ export function normalizeSymbol(value: string): string {
 
 export function encodeSymbol(value: string): string {
   return encodeURIComponent(normalizeSymbol(value));
+}
+
+export function normalizeSearchSymbol(value: string): string {
+  const symbol = value.trim().toUpperCase();
+  if (!SEARCH_SYMBOL_PATTERN.test(symbol)) {
+    throw new Error('Search result symbol contains unsupported characters.');
+  }
+  return symbol;
 }
 
 export function normalizeSymbols(values: readonly string[]): string[] {

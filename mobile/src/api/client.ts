@@ -8,6 +8,8 @@ import type {
   MoneylineResponse,
   ResolveWatchlistRequest,
   ResolveWatchlistResponse,
+  SecuritySearchRequest,
+  SecuritySearchResponse,
   ToolCatalogResponse,
   TorqueRequest,
   TorqueResponse,
@@ -24,6 +26,7 @@ import {
   normalizeHealth,
   normalizeMoneyline,
   normalizeResolvedWatchlist,
+  normalizeSecuritySearch,
   normalizeToolCatalog,
   normalizeTorque,
   normalizeWatchlistAlerts,
@@ -67,6 +70,7 @@ type ClientOptions = {
 type RequestOptions = {
   method?: 'GET' | 'POST';
   body?: unknown;
+  query?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
   controller?: AbortController;
@@ -125,6 +129,16 @@ function serializeAlertsRequest(request: WatchlistAlertsRequest): Record<string,
   return body;
 }
 
+function normalizeSearchRequest(request: SecuritySearchRequest): { query: string; limit?: number } {
+  const query = typeof request.query === 'string' ? request.query.trim() : '';
+  if (!query) throw new ApiError('validation', 'Search query is required.');
+  if (query.length > 100) throw new ApiError('validation', 'Search query must be at most 100 characters.');
+  if (request.limit !== undefined && (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 10)) {
+    throw new ApiError('validation', 'Search limit must be an integer from 1 to 10.');
+  }
+  return { query, limit: request.limit };
+}
+
 function boundedAgentRequest(request: AgentChatRequest): Record<string, unknown> {
   const messages = request.messages.slice(-40).map((message) => ({
     role: message.role,
@@ -159,6 +173,21 @@ export class ApiClient {
 
   tools(options: { signal?: AbortSignal } = {}): Promise<ToolCatalogResponse> {
     return this.getJson(API_ENDPOINTS.tools, normalizeToolCatalog, {
+      timeoutMs: TIMEOUT_MS.capability,
+      signal: options.signal,
+    });
+  }
+
+  async searchSecurities(
+    request: SecuritySearchRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SecuritySearchResponse> {
+    const normalized = normalizeSearchRequest(request);
+    return this.getJson(API_ENDPOINTS.search, normalizeSecuritySearch, {
+      query: {
+        q: normalized.query,
+        ...(normalized.limit === undefined ? {} : { limit: String(normalized.limit) }),
+      },
       timeoutMs: TIMEOUT_MS.capability,
       signal: options.signal,
     });
@@ -339,7 +368,7 @@ export class ApiClient {
       linked.controller.abort('timeout');
     }, timeoutMs);
     try {
-      const response = await this.fetchImpl(endpointUrl(this.baseUrl, endpoint), {
+      const response = await this.fetchImpl(endpointUrl(this.baseUrl, endpoint, options.query), {
         method: options.method ?? 'GET',
         headers: { Accept: 'application/json', ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
