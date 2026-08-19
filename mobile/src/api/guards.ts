@@ -88,6 +88,10 @@ const SECURITY_ASSET_TYPES = new Set<SecurityAssetType>([
   'crypto',
 ]);
 
+export function isSecurityAssetType(value: unknown): value is SecurityAssetType {
+  return typeof value === 'string' && SECURITY_ASSET_TYPES.has(value as SecurityAssetType);
+}
+
 function normalizeWatchlist(value: unknown): Watchlist | null {
   if (!isRecord(value)) return null;
   const sourceUrl = string(value.source_url ?? value.url);
@@ -178,7 +182,7 @@ export function normalizeSecuritySearch(value: unknown): SecuritySearchResponse 
       !symbol
       || typeof item.name !== 'string'
       || typeof item.exchange !== 'string'
-      || !SECURITY_ASSET_TYPES.has(assetType)
+      || !isSecurityAssetType(assetType)
     ) return [];
     return [{
       symbol,

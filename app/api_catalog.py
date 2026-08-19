@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market_data import MAX_SEARCH_QUERY_LENGTH
 from app.mcp_http import PROTOCOL_VERSION, SERVER_VERSION
 from app.tool_registry import TOOLS, tool_catalog_payload
 
@@ -53,7 +54,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "summary": "Look up securities by ticker or company name",
         "auth": "none",
         "query": {
-            "q": "string (required, max 100)",
+            "q": f"string (required, max {MAX_SEARCH_QUERY_LENGTH})",
             "limit": "int (default 8, 1-10)",
         },
     },

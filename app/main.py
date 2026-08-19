@@ -30,6 +30,20 @@ from app.agent import (
     run_agent_stream,
     select_tools,
 )
+from app.api_catalog import build_api_docs_payload
+from app.articles import (
+    ArticleError,
+    article_markdown,
+    article_summary,
+    normalize_article,
+)
+from app.mcp_http import (
+    handle_mcp_payload,
+    parse_error_response,
+    server_descriptor,
+)
+from app.openapi import build_openapi_document
+from app.tool_registry import tool_catalog_payload
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -53,23 +67,6 @@ from app.anthropic import (
     AnthropicTextClient,
     MessageStreamer,
 )
-from app.api_catalog import build_api_docs_payload
-from app.articles import (
-    ArticleError,
-    article_markdown,
-    article_summary,
-    normalize_article,
-)
-from app.chart_data import (
-    build_auction_chart_data,
-    build_flow_compass_chart_data,
-    build_performance_chart_data,
-    build_portfolio_chart_data,
-    build_regression_chart_data,
-    build_ridge_growth_chart_data,
-    build_torque_chart_data,
-    build_volatility_chart_data,
-)
 from app.charts import (
     RenderedImage,
     build_ridge_growth_memo,
@@ -81,6 +78,16 @@ from app.charts import (
     render_ridge_growth_chart,
     render_volatility_chart,
 )
+from app.chart_data import (
+    build_auction_chart_data,
+    build_flow_compass_chart_data,
+    build_performance_chart_data,
+    build_portfolio_chart_data,
+    build_regression_chart_data,
+    build_ridge_growth_chart_data,
+    build_torque_chart_data,
+    build_volatility_chart_data,
+)
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
 from app.market_data import (
@@ -91,15 +98,19 @@ from app.market_data import (
     MarketDataError,
     clean_ticker,
 )
-from app.mcp_http import (
-    handle_mcp_payload,
-    parse_error_response,
-    server_descriptor,
-)
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
-from app.openapi import build_openapi_document
 from app.sec import SecClient, SecDataError
-from app.tool_registry import tool_catalog_payload
+from app.torque import compute_torque_score, render_torque_chart
+from app.torque_scan import (
+    build_torque_scan_response,
+    stream_torque_scan_rows,
+)
+from app.vision_v2 import (
+    build_vision_v2_data,
+    build_vision_v2_memo,
+    parse_memo_sections,
+    stream_vision_v2_text,
+)
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
@@ -111,17 +122,6 @@ from app.tools import (
     generate_pixel_image,
     render_moneyline_chart,
     stream_market_memo_text,
-)
-from app.torque import compute_torque_score, render_torque_chart
-from app.torque_scan import (
-    build_torque_scan_response,
-    stream_torque_scan_rows,
-)
-from app.vision_v2 import (
-    build_vision_v2_data,
-    build_vision_v2_memo,
-    parse_memo_sections,
-    stream_vision_v2_text,
 )
 from app.watchlists import (
     TradingViewWatchlistClient,

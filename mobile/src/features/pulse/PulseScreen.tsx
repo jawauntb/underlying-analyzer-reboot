@@ -14,6 +14,7 @@ import { type NetworkReachability, useNetworkReachability } from '@/src/state/ne
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
 import PulseCard from './PulseCard';
+import PulseDigestCard from './PulseDigestCard';
 
 const DEFAULT_SYMBOLS = ['AAPL', 'MSFT', 'NVDA'] as const;
 const defaultClient = new ApiClient();
@@ -96,6 +97,7 @@ function PulseController({
   const requestGeneration = useRef(0);
   const wasFocused = useRef(false);
   const symbolSnapshot = useRef<readonly string[]>(DEFAULT_SYMBOLS);
+  const sourceLabel = useRef('Default focus list');
   const [focusEpoch, setFocusEpoch] = useState(0);
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
   const [state, setState] = useState<PulseViewState>({ status: 'waiting', data: null, fetchedAt: null });
@@ -117,6 +119,7 @@ function PulseController({
     if (!focusEpoch) return;
     const newest = newestSavedList(listsState.lists);
     symbolSnapshot.current = newest?.symbols.length ? [...newest.symbols] : DEFAULT_SYMBOLS;
+    sourceLabel.current = newest?.name ?? 'Default focus list';
     setBootstrapComplete(false);
     void bootstrap(symbolSnapshot.current);
     // A focus epoch deliberately snapshots lists and reachability; reconnecting or saving while focused does not retry.
@@ -276,6 +279,14 @@ function PulseController({
         ) : null}
         {state.status === 'partial' && state.data.errors.length ? (
           <AsyncState title="Some symbols need attention" message={state.data.errors.map((error) => `${error.ticker}: ${error.error}`).join('\n')} tone="warning" />
+        ) : null}
+
+        {state.data && rows.length ? (
+          <PulseDigestCard
+            digest={state.data.digest}
+            freshness={label}
+            sourceLabel={sourceLabel.current}
+          />
         ) : null}
 
         {rows.length ? (

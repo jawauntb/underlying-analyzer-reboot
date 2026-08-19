@@ -148,22 +148,36 @@ function toolCatalog() {
   };
 }
 
+function searchPayload(url: URL) {
+  const query = url.searchParams.get('q')?.trim() ?? '';
+  if (!query) throw new Error('[E2E fixture] Search requires a query.');
+  const matchesApple = 'apple'.includes(query.toLowerCase()) || 'aapl'.startsWith(query.toLowerCase());
+  return {
+    query,
+    results: matchesApple ? [{ symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', asset_type: 'equity' }] : [],
+    provider: FIXTURE_PROVIDER,
+  };
+}
+
 function pulsePayload(body: JsonObject) {
-  const tickers = body.tickers;
-  if (
-    !Array.isArray(tickers)
-    || tickers.length !== FIXTURE_SYMBOLS.length
-    || FIXTURE_SYMBOLS.some((ticker, index) => tickers[index] !== ticker)
-  ) {
-    throw new Error('[E2E fixture] Pulse expects AAPL, MSFT, and NVDA in order.');
+  const requestedTickers = body.ticker === 'AAPL' ? ['AAPL'] : body.tickers;
+  const exactDefault = Array.isArray(requestedTickers)
+    && requestedTickers.length === FIXTURE_SYMBOLS.length
+    && FIXTURE_SYMBOLS.every((ticker, index) => requestedTickers[index] === ticker);
+  const singleAapl = Array.isArray(requestedTickers)
+    && requestedTickers.length === 1
+    && requestedTickers[0] === 'AAPL';
+  if (!exactDefault && !singleAapl) {
+    throw new Error('[E2E fixture] Alerts support AAPL or the default AAPL, MSFT, NVDA list.');
   }
+  const supportedTickers: readonly string[] = singleAapl ? ['AAPL'] : FIXTURE_SYMBOLS;
   const setups = [
     { ticker: 'AAPL', name: 'Apple', price: 231.42, change: 1.28, score: 92, setup: 'Support reclaimed with improving participation.' },
     { ticker: 'MSFT', name: 'Microsoft', price: 518.17, change: 0.64, score: 86, setup: 'Compression is resolving above the value area.' },
     { ticker: 'NVDA', name: 'NVIDIA', price: 181.06, change: -0.31, score: 79, setup: 'Momentum cooled while the primary trend held.' },
   ];
   return {
-    rows: setups.map((item, index) => ({
+    rows: setups.filter((item) => supportedTickers.includes(item.ticker)).map((item, index) => ({
       ticker: item.ticker,
       rank: index + 1,
       lane: index === 0 ? 'Priority' : 'Review',
@@ -178,11 +192,32 @@ function pulsePayload(body: JsonObject) {
       setup: item.setup,
       provider: FIXTURE_PROVIDER,
       provider_note: 'E2E-only metadata; no market claim.',
-      ridge: {},
-      flow: {},
-      auction: {},
+      trend_50d: item.ticker === 'AAPL' ? 224.18 : null,
+      distance_from_52w_high: item.ticker === 'AAPL' ? -0.034 : null,
+      distance_from_52w_low: item.ticker === 'AAPL' ? 0.392 : null,
+      summary: item.ticker === 'AAPL' ? {
+        business_summary: 'Apple designs consumer devices, software, and services for customers worldwide.',
+        country: 'United States',
+        website: 'https://www.apple.com',
+        employees: 164000,
+        market_cap: '$3.46T',
+        trailing_pe: 35.2,
+        forward_pe: 31.4,
+        revenue_growth: 0.052,
+        profit_margins: 0.241,
+        return_on_equity: 1.71,
+        recommendation: 'buy',
+        target_mean_price: 245.75,
+        analyst_count: 42,
+        beta: 1.18,
+        fifty_two_week_high: 239.98,
+        fifty_two_week_low: 164.08,
+      } : {},
+      ridge: item.ticker === 'AAPL' ? { state: 'constructive', recommendation: 'Trend confirmed', trend_confirmed: true } : {},
+      flow: item.ticker === 'AAPL' ? { state: 'improving', score: 78, signal: 'Accumulation' } : {},
+      auction: item.ticker === 'AAPL' ? { location: 'Above value', poc: 227, vah: 230, val: 224, distance_to_poc: 0.0195 } : {},
     })),
-    alerts: setups.map((item, index) => ({
+    alerts: setups.filter((item) => supportedTickers.includes(item.ticker)).map((item, index) => ({
       id: `${item.ticker.toLowerCase()}-fixture`,
       ticker: item.ticker,
       rank: index + 1,
@@ -211,7 +246,7 @@ function pulsePayload(body: JsonObject) {
     errors: [],
     meta: { provider: FIXTURE_PROVIDER, errors: [], fixture: true },
     watchlist: null,
-    tickers: [...FIXTURE_SYMBOLS],
+    tickers: [...supportedTickers],
   };
 }
 
@@ -324,6 +359,7 @@ function createHandler(state: FixtureState): FetchLike {
       return jsonResponse({ ok: true, service: 'undercurrent-e2e-fixture' });
     }
     if (method === 'GET' && route === API_ENDPOINTS.tools) return jsonResponse(toolCatalog());
+    if (method === 'GET' && route === API_ENDPOINTS.search) return jsonResponse(searchPayload(url));
     if (method === 'POST' && route === API_ENDPOINTS.alerts) return jsonResponse(pulsePayload(jsonBody(init)));
     if (method === 'POST' && route === API_ENDPOINTS.torque) {
       expectAapl(jsonBody(init));

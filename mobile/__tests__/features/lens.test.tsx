@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { StyleSheet } from 'react-native';
 
 import { generateStaticParams } from '@/app/ticker/[symbol]';
+import type { WatchlistAlertsResponse } from '@/src/api/contracts';
 import LensScreen from '@/src/features/lens/LensScreen';
+import { CACHE_SCHEMA_VERSION, type CacheRecord } from '@/src/state/cache';
 
 jest.mock('@expo/vector-icons/Ionicons', () => {
   const React = jest.requireActual('react');
@@ -58,6 +60,92 @@ const moneyline = {
   rows: [{ strike: 220, callOpenInterest: 10, putOpenInterest: 5, callLast: null, putLast: null, netOpenInterest: 5, putCallRatio: 0.5, raw: {} }],
 };
 
+const overview = (overrides: Partial<WatchlistAlertsResponse> = {}): WatchlistAlertsResponse => ({
+  status: 'fresh',
+  rows: [{
+    ticker: 'AAPL',
+    rank: 1,
+    lane: 'Priority',
+    name: 'Apple Inc.',
+    sector: 'Technology',
+    industry: 'Consumer Electronics',
+    price: 231.42,
+    changePercent: 1.28,
+    annualVolatility: 0.24,
+    trend50d: 0.08,
+    distanceFrom52WeekHigh: -0.03,
+    distanceFrom52WeekLow: 0.41,
+    scannerScore: 89,
+    score: 92,
+    setup: 'Support reclaimed with improving participation.',
+    provider: 'Fixture provider',
+    providerNote: 'Delayed market snapshot.',
+    fundamentals: {
+      businessSummary: 'Designs consumer technology and services.',
+      country: 'United States',
+      website: 'https://apple.com',
+      employees: 164_000,
+      marketCap: '3.42T',
+      trailingPe: 34.2,
+      forwardPe: 28.4,
+      priceToSales: 8.6,
+      priceToBook: 52.1,
+      revenueGrowth: 0.052,
+      profitMargins: 0.244,
+      returnOnEquity: 1.51,
+      debtToEquity: 145.2,
+      recommendation: 'buy',
+      targetMeanPrice: 245.5,
+      analystCount: 42,
+      beta: 1.18,
+      fiftyTwoWeekHigh: 237.49,
+      fiftyTwoWeekLow: 164.08,
+    },
+    ridge: { recommendation: 'BUY', trend_confirmed: true, total_return: 0.18 },
+    flow: { state: 'LONG', score: 72, signal: 'Accumulation', fresh_long: true, volume_score: 64 },
+    auction: { location: 'above value', poc: 227, vah: 230, val: 224, distance_to_poc: 0.019 },
+    raw: {},
+  }],
+  alerts: [{
+    id: 'aapl-fresh-long',
+    ticker: 'AAPL',
+    rank: 1,
+    lane: 'Priority',
+    score: 92,
+    severity: 'Medium',
+    category: 'Flow',
+    title: 'Fresh long flow',
+    message: 'AAPL printed a fresh long Flow Compass shift.',
+    action: 'Compare entry quality against auction value and Ridge state.',
+  }],
+  digest: {
+    generatedAt: '2026-08-19T12:00:00Z',
+    headline: 'AAPL setup ready',
+    summary: 'One current setup is available.',
+    severityCounts: { Medium: 1 },
+    categoryCounts: { Flow: 1 },
+    laneCounts: { Priority: 1 },
+    priorityTickers: ['AAPL'],
+    riskTickers: [],
+    flowShiftTickers: ['AAPL'],
+    nextSteps: [],
+  },
+  provider: 'Fixture provider',
+  providerNote: 'Delayed market snapshot.',
+  errors: [],
+  meta: {},
+  watchlist: null,
+  tickers: ['AAPL'],
+  ...overrides,
+});
+
+const cachedOverview = (data: WatchlistAlertsResponse, fetchedAt: number): CacheRecord<WatchlistAlertsResponse> => ({
+  schemaVersion: CACHE_SCHEMA_VERSION,
+  data,
+  fetchedAt,
+  accessedAt: fetchedAt,
+});
+
 const deferred = <T,>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -65,24 +153,72 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-function dependencies() {
+function dependencies(options: {
+  cached?: CacheRecord<WatchlistAlertsResponse> | null;
+  live?: Promise<WatchlistAlertsResponse>;
+  liveError?: Error;
+  reachability?: 'online' | 'offline' | 'unknown';
+  now?: number;
+} = {}) {
+  const cache = {
+    read: jest.fn(async () => options.cached ?? null),
+    write: jest.fn(async () => undefined),
+  };
   const client = {
+    baseUrl: 'https://api.test',
+    watchlistAlerts: jest.fn(() => options.liveError ? Promise.reject(options.liveError) : options.live ?? Promise.resolve(overview())),
     torque: jest.fn(async () => torque),
     auction: jest.fn(async () => auction),
     moneyline: jest.fn(async () => moneyline),
   };
   const router = { push: jest.fn() };
   const haptics = { selectionAsync: jest.fn(async () => undefined) };
-  return { client, router, haptics, props: { client: client as never, router: router as never, haptics, symbol: ' aapl ', width: 375, fontScale: 1 } };
+  return {
+    cache,
+    client,
+    router,
+    haptics,
+    props: {
+      cache: cache as never,
+      client: client as never,
+      reachability: options.reachability ?? 'online',
+      router: router as never,
+      haptics,
+      symbol: ' aapl ',
+      width: 375,
+      fontScale: 1,
+      now: () => options.now ?? 100_000,
+    },
+  };
 }
 
 describe('LensScreen', () => {
-  it('normalizes the ticker, retains static AAPL, and fetches nothing on mount or depth selection', () => {
+  it('auto-loads a lightweight overview while chart research stays explicit', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
 
     expect(screen.getByRole('header', { name: 'AAPL' })).toBeTruthy();
     expect(generateStaticParams()).toEqual(expect.arrayContaining([{ symbol: 'AAPL' }]));
+    expect(await screen.findByText('Apple Inc.')).toBeTruthy();
+    expect(screen.getByText('$231.42')).toBeTruthy();
+    expect(screen.getByText('+1.28%')).toBeTruthy();
+    expect(screen.getByText('Support reclaimed with improving participation.')).toBeTruthy();
+    expect(screen.getByText('Fresh long flow')).toBeTruthy();
+    expect(screen.getByText('BUY')).toBeTruthy();
+    expect(screen.getByText('LONG · 72.0')).toBeTruthy();
+    expect(screen.getByText('Accumulation · Fresh long shift · Volume score 64.0')).toBeTruthy();
+    expect(screen.getByText('Above value')).toBeTruthy();
+    expect(screen.getByText('Designs consumer technology and services.')).toBeTruthy();
+    expect(screen.getByText('3.42T')).toBeTruthy();
+    expect(screen.getByText('34.2')).toBeTruthy();
+    expect(screen.getByText('28.4')).toBeTruthy();
+    expect(screen.getByText('+5.2%')).toBeTruthy();
+    expect(screen.getByText('+24.4%')).toBeTruthy();
+    expect(screen.getByText('$164.08–$237.49')).toBeTruthy();
+    expect(screen.getByText('$245.50')).toBeTruthy();
+    expect(screen.getByText('42 analysts · Buy')).toBeTruthy();
+    expect(screen.getByText(/Fixture provider · Updated/)).toBeTruthy();
+    expect(deps.client.watchlistAlerts).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything());
     expect(screen.getByText(/Selected depth: Glance/)).toBeTruthy();
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
     fireEvent.press(screen.getByRole('button', { name: 'Select Diagnose' }));
@@ -93,9 +229,89 @@ describe('LensScreen', () => {
     expect(deps.client.moneyline).not.toHaveBeenCalled();
   });
 
+  it('keeps cached evidence visible offline and disables retry until connectivity returns', async () => {
+    const deps = dependencies({
+      cached: cachedOverview(overview(), 20_000),
+      reachability: 'offline',
+      now: 100_000,
+    });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Offline · saved overview')).toBeTruthy();
+    expect(screen.getByText('Apple Inc.')).toBeTruthy();
+    expect(screen.getByText(/Fixture provider · Updated/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry overview' }).props.accessibilityState.disabled).toBe(true);
+    expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
+  });
+
+  it('shows stale cached evidence while refreshing and replaces it with the live snapshot', async () => {
+    const live = deferred<WatchlistAlertsResponse>();
+    const stale = overview({
+      rows: [{ ...overview().rows[0], price: 220, setup: 'Cached setup.' }],
+    });
+    const deps = dependencies({ cached: cachedOverview(stale, 20_000), live: live.promise, now: 100_000 });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Saved overview · refreshing')).toBeTruthy();
+    expect(screen.getByText('$220.00')).toBeTruthy();
+    await act(async () => live.resolve(overview()));
+    expect(await screen.findByText('$231.42')).toBeTruthy();
+    expect(screen.queryByText('$220.00')).toBeNull();
+    expect(deps.cache.write).toHaveBeenCalled();
+  });
+
+  it('shows a retryable overview error without exposing stale security data', async () => {
+    const deps = dependencies({ liveError: new Error('Overview provider unavailable') });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Overview provider unavailable')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry overview' })).toBeTruthy();
+    expect(screen.queryByText('Apple Inc.')).toBeNull();
+  });
+
+  it('rejects a cross-ticker overview instead of exposing another security', async () => {
+    const mismatched = overview({
+      rows: [{ ...overview().rows[0], ticker: 'MSFT', name: 'Microsoft' }],
+    });
+    const deps = dependencies({ live: Promise.resolve(mismatched) });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Overview response did not match AAPL.')).toBeTruthy();
+    expect(screen.queryByText('Microsoft')).toBeNull();
+  });
+
+  it('labels missing fundamentals honestly instead of inventing business evidence', async () => {
+    const missing = overview();
+    const response = overview({
+      rows: [{
+        ...missing.rows[0],
+        fundamentals: {
+          ...missing.rows[0].fundamentals,
+          businessSummary: null,
+          marketCap: null,
+          trailingPe: null,
+          forwardPe: null,
+          revenueGrowth: null,
+          profitMargins: null,
+          fiftyTwoWeekHigh: null,
+          fiftyTwoWeekLow: null,
+          targetMeanPrice: null,
+          analystCount: null,
+        },
+      }],
+    });
+    const deps = dependencies({ live: Promise.resolve(response) });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Business summary unavailable.')).toBeTruthy();
+    expect(screen.getAllByText('Unavailable')).toHaveLength(7);
+    expect(screen.getByText('Analyst count unavailable')).toBeTruthy();
+  });
+
   it('opens Glance with only Torque and 5d Auction, then Diagnose adds Moneyline', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
+    await screen.findByText('Apple Inc.');
 
     fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
     expect(deps.client.torque).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything());
@@ -113,9 +329,10 @@ describe('LensScreen', () => {
     expect(await screen.findByRole('button', { name: 'View AAPL Moneyline data' })).toBeTruthy();
   });
 
-  it('deep dive navigates with normalized params and never invokes agent or chart APIs', () => {
+  it('deep dive navigates with normalized params and never invokes agent or chart APIs', async () => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} />);
+    await screen.findByText('Apple Inc.');
     fireEvent.press(screen.getByRole('button', { name: 'Select Deep Dive' }));
     fireEvent.press(screen.getByRole('button', { name: 'Start Deep Dive' }));
 
@@ -134,6 +351,7 @@ describe('LensScreen', () => {
     deps.client.auction.mockRejectedValueOnce(new Error('Auction provider unavailable')).mockResolvedValueOnce(auction);
     deps.client.moneyline.mockResolvedValue({ ...moneyline, rows: [] });
     render(<LensScreen {...deps.props} />);
+    await screen.findByText('Apple Inc.');
     fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
 
     expect(await screen.findByRole('button', { name: 'View AAPL Torque data' })).toBeTruthy();
@@ -157,6 +375,7 @@ describe('LensScreen', () => {
     });
     deps.client.moneyline.mockResolvedValue({ ...moneyline, ticker: 'MSFT' });
     render(<LensScreen {...deps.props} />);
+    await screen.findByText('Apple Inc.');
     fireEvent.press(screen.getByRole('button', { name: 'Select Diagnose' }));
     fireEvent.press(screen.getByRole('button', { name: 'Open Diagnose' }));
 
@@ -184,6 +403,7 @@ describe('LensScreen', () => {
         return third.promise;
       });
     const view = render(<LensScreen {...deps.props} />);
+    await screen.findByText('Apple Inc.');
     fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
     fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
     await act(async () => second.resolve({ ...torque, series: { ...torque.series, price: { close: [{ date: '2026-08-18', value: 222 }] } } }));
@@ -210,9 +430,10 @@ describe('LensScreen', () => {
     [320, 1],
     [375, 1],
     [430, 1.6],
-  ])('keeps one-column reflow and 44-point controls at %ipx / %ix font', (width, fontScale) => {
+  ])('keeps one-column reflow and 44-point controls at %ipx / %ix font', async (width, fontScale) => {
     const deps = dependencies();
     render(<LensScreen {...deps.props} fontScale={fontScale} width={width} />);
+    await screen.findByText('Apple Inc.');
     const action = screen.getByRole('button', { name: 'Open Glance' });
     expect(StyleSheet.flatten(action.props.style).minHeight).toBeGreaterThanOrEqual(44);
     expect(StyleSheet.flatten(screen.getByTestId('lens-content').props.contentContainerStyle)).not.toHaveProperty('height');

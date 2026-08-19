@@ -39,6 +39,30 @@ describe('deterministic E2E fixture transport', () => {
     });
   });
 
+  it('serves deterministic discovery and the lightweight AAPL overview', async () => {
+    const search = await request(`${API_ENDPOINTS.search}?q=apple&limit=8`);
+    expect(await body(search)).toMatchObject({
+      query: 'apple',
+      provider: 'Undercurrent deterministic fixture',
+      results: [expect.objectContaining({ symbol: 'AAPL', name: 'Apple Inc.' })],
+    });
+
+    const overview = await request(API_ENDPOINTS.alerts, {
+      method: 'POST',
+      body: JSON.stringify({ ticker: 'AAPL' }),
+    });
+    expect(await body(overview)).toMatchObject({
+      tickers: ['AAPL'],
+      rows: [expect.objectContaining({
+        ticker: 'AAPL',
+        summary: expect.objectContaining({ market_cap: '$3.46T' }),
+        ridge: expect.objectContaining({ state: 'constructive' }),
+        flow: expect.objectContaining({ signal: 'Accumulation' }),
+        auction: expect.objectContaining({ location: 'Above value' }),
+      })],
+    });
+  });
+
   it('serves the exact AAPL Glance and Diagnose endpoints with chartable data', async () => {
     const torque = await request(API_ENDPOINTS.torque, {
       method: 'POST',

@@ -158,6 +158,38 @@ describe('PulseScreen', () => {
     const deps = dependencies({ cached: record(response(), 99_999) });
     render(<PulseScreen {...deps.props} />);
     expect(await screen.findByText('AAPL')).toBeTruthy();
+    expect(screen.getByText('Ready')).toBeTruthy();
+    expect(screen.getByText('One setup')).toBeTruthy();
+    expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
+  });
+
+  it('turns the backend digest into an actionable briefing for the active list', async () => {
+    const data = response({
+      digest: {
+        ...response().digest,
+        headline: 'Risk is concentrated',
+        summary: 'One priority setup and one flow shift need review.',
+        priorityTickers: ['AAPL'],
+        flowShiftTickers: ['MSFT'],
+        nextSteps: ['Review AAPL support before the open.'],
+      },
+    });
+    const deps = dependencies({ cached: record(data, 99_999) });
+    render(
+      <PulseScreen
+        {...deps.props}
+        listsState={{
+          hydrated: true,
+          lists: [{ id: 'active', name: 'Core holdings', symbols: ['AAPL'], source: { kind: 'manual' }, createdAt: 1, updatedAt: 1 }],
+        }}
+      />,
+    );
+
+    expect(await screen.findByText('Risk is concentrated')).toBeTruthy();
+    expect(screen.getByText('Priority · AAPL')).toBeTruthy();
+    expect(screen.getByText('Flow shift · MSFT')).toBeTruthy();
+    expect(screen.getByText('Review AAPL support before the open.')).toBeTruthy();
+    expect(screen.getByText(/Core holdings/)).toBeTruthy();
     expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { SecurityAssetType, SecuritySearchResult } from '@/src/api/contracts';
+import type { SecuritySearchResult } from '@/src/api/contracts';
 import { normalizeSymbol } from '@/src/api/endpoints';
+import { isSecurityAssetType } from '@/src/api/guards';
 
 export const RECENT_SEARCHES_STORAGE_KEY = '@undercurrent/recent-searches/v1';
 export const RECENT_SEARCHES_SCHEMA_VERSION = 1;
@@ -19,8 +20,6 @@ type RecentSearchEnvelope = {
 export type RecentSearchStorage = Pick<typeof AsyncStorage, 'getItem' | 'setItem' | 'removeItem'>;
 export type RecentSearchStoreApi = Pick<RecentSearchStore, 'hydrate' | 'record'>;
 
-const ASSET_TYPES = new Set<SecurityAssetType>(['equity', 'etf', 'mutual_fund', 'index', 'crypto']);
-
 function isBoundedText(value: unknown, maximum: number, allowEmpty = false): value is string {
   return typeof value === 'string' && value.length <= maximum && (allowEmpty || value.trim().length > 0);
 }
@@ -32,7 +31,7 @@ function validatedRecord(value: unknown): RecentSearchRecord | null {
     !isBoundedText(record.symbol, 15)
     || !isBoundedText(record.name, 200, true)
     || !isBoundedText(record.exchange, 80, true)
-    || !ASSET_TYPES.has(record.assetType as SecurityAssetType)
+    || !isSecurityAssetType(record.assetType)
     || typeof record.selectedAt !== 'number'
     || !Number.isFinite(record.selectedAt)
     || record.selectedAt < 0
@@ -45,7 +44,7 @@ function validatedRecord(value: unknown): RecentSearchRecord | null {
       symbol,
       name: record.name.trim(),
       exchange: record.exchange.trim(),
-      assetType: record.assetType as SecurityAssetType,
+      assetType: record.assetType,
       selectedAt: record.selectedAt,
     };
   } catch {

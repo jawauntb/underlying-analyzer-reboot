@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.market_data import MAX_SEARCH_QUERY_LENGTH, SEARCH_PROVIDER
 from app.tool_registry import GROUPS, TOOLS, ToolSpec
 
 API_TITLE = "The Underlying Analyzer API"
@@ -48,7 +49,11 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
                 "name": "q",
                 "in": "query",
                 "required": True,
-                "schema": {"type": "string", "minLength": 1, "maxLength": 100},
+                "schema": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": MAX_SEARCH_QUERY_LENGTH,
+                },
                 "description": "Ticker symbol or company name",
             },
             {
@@ -85,7 +90,7 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
                         "additionalProperties": False,
                     },
                 },
-                "provider": {"type": "string", "const": "Yahoo Finance via yfinance"},
+                "provider": {"type": "string", "const": SEARCH_PROVIDER},
             },
             "required": ["query", "results", "provider"],
             "additionalProperties": False,
