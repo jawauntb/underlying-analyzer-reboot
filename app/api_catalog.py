@@ -48,6 +48,17 @@ API_ENDPOINTS: list[dict[str, Any]] = [
     },
     {
         "method": "GET",
+        "path": "/api/data/search",
+        "group": "data",
+        "summary": "Look up securities by ticker or company name",
+        "auth": "none",
+        "query": {
+            "q": "string (required, max 100)",
+            "limit": "int (default 8, 1-10)",
+        },
+    },
+    {
+        "method": "GET",
         "path": "/api/openapi",
         "group": "meta",
         "summary": "OpenAPI 3.1 document for the whole HTTP surface",

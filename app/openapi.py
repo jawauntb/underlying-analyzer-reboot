@@ -40,6 +40,59 @@ AGENT_REQUEST_SCHEMA: dict[str, Any] = {
 SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     {
         "method": "GET",
+        "path": "/api/data/search",
+        "tag": "data",
+        "summary": "Look up securities by ticker or company name",
+        "parameters": [
+            {
+                "name": "q",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "minLength": 1, "maxLength": 100},
+                "description": "Ticker symbol or company name",
+            },
+            {
+                "name": "limit",
+                "in": "query",
+                "required": False,
+                "schema": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 8,
+                },
+                "description": "Maximum number of results",
+            },
+        ],
+        "success_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string"},
+                            "name": {"type": "string"},
+                            "exchange": {"type": "string"},
+                            "asset_type": {
+                                "type": "string",
+                                "enum": ["equity", "etf", "mutual_fund", "index", "crypto"],
+                            },
+                        },
+                        "required": ["symbol", "name", "exchange", "asset_type"],
+                        "additionalProperties": False,
+                    },
+                },
+                "provider": {"type": "string", "const": "Yahoo Finance via yfinance"},
+            },
+            "required": ["query", "results", "provider"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "method": "GET",
         "path": "/api/config",
         "tag": "meta",
         "summary": "Public Supabase client configuration",
@@ -147,6 +200,12 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
             "tags": [route["tag"]],
             "responses": responses,
         }
+        parameters = route.get("parameters")
+        if isinstance(parameters, list):
+            supporting_operation["parameters"] = parameters
+        success_schema = route.get("success_schema")
+        if isinstance(success_schema, dict):
+            responses["200"]["content"]["application/json"]["schema"] = success_schema
         request_schema = route.get("request_schema")
         if isinstance(request_schema, dict):
             supporting_operation["requestBody"] = {

@@ -14,7 +14,7 @@ from app.alert_scheduler import AlertDeliveryResult, ScheduledAlertRule, deliver
 from app.anthropic import GeneratedText
 from app.charts import RenderedImage
 from app.main import create_app
-from app.market_data import HistoryResult
+from app.market_data import HistoryResult, MarketDataError
 from app.watchlists import WatchlistResult, WatchlistSymbol
 
 
@@ -373,6 +373,89 @@ def test_health_endpoint() -> None:
     assert response.get_json()["ok"] is True
 
 
+def test_security_search_endpoint_returns_public_lookup_results() -> None:
+    class SearchClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, int]] = []
+
+        def search_securities(self, query: str, *, limit: int) -> list[dict[str, str]]:
+            self.calls.append((query, limit))
+            return [
+                {
+                    "symbol": "AAPL",
+                    "name": "Apple Inc.",
+                    "exchange": "NasdaqGS",
+                    "asset_type": "equity",
+                }
+            ]
+
+    app = create_app()
+    search_client = SearchClient()
+    app.config["MARKET_DATA_CLIENT"] = search_client
+
+    response = app.test_client().get(
+        "/api/data/search", query_string={"q": " Apple ", "limit": "1"}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "query": "Apple",
+        "results": [
+            {
+                "symbol": "AAPL",
+                "name": "Apple Inc.",
+                "exchange": "NasdaqGS",
+                "asset_type": "equity",
+            }
+        ],
+        "provider": "Yahoo Finance via yfinance",
+    }
+    assert search_client.calls == [("Apple", 1)]
+
+
+def test_security_search_endpoint_rejects_invalid_query_and_limit() -> None:
+    class SearchClient:
+        def search_securities(self, query: str, *, limit: int) -> list[dict[str, str]]:
+            raise AssertionError(f"unexpected provider call for {query!r}, {limit}")
+
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = SearchClient()
+    client = app.test_client()
+
+    for query_string in (
+        {},
+        {"q": "   "},
+        {"q": "x" * 101},
+        {"q": "Apple", "limit": ""},
+        {"q": "Apple", "limit": "zero"},
+        {"q": "Apple", "limit": "0"},
+        {"q": "Apple", "limit": "11"},
+    ):
+        response = client.get("/api/data/search", query_string=query_string)
+        assert response.status_code == 400, query_string
+        assert response.get_json()["error"]
+
+
+def test_security_search_endpoint_uses_default_limit_and_maps_provider_error() -> None:
+    class SearchClient:
+        def __init__(self) -> None:
+            self.limit: int | None = None
+
+        def search_securities(self, _query: str, *, limit: int) -> list[dict[str, str]]:
+            self.limit = limit
+            raise MarketDataError("Security search failed: provider unavailable")
+
+    app = create_app()
+    search_client = SearchClient()
+    app.config["MARKET_DATA_CLIENT"] = search_client
+
+    response = app.test_client().get("/api/data/search", query_string={"q": "Apple"})
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "Security search failed: provider unavailable"}
+    assert search_client.limit == 8
+
+
 def test_config_endpoint_reports_disabled_supabase(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("UNDERLYING_SKIP_DOTENV", "1")
     monkeypatch.delenv("SUPABASE_URL", raising=False)
@@ -466,6 +549,9 @@ def test_api_docs_catalog_is_public() -> None:
     assert "/api/tools/vision/v2" in paths
     assert "/api/charts/{chart_type}" in paths
     assert "/api/data/charts/{chart_type}" in paths
+    search = next(item for item in payload["endpoints"] if item["path"] == "/api/data/search")
+    assert search["method"] == "GET"
+    assert search["query"] == {"q": "string (required, max 100)", "limit": "int (default 8, 1-10)"}
     assert any(tool["id"] == "docs" for tool in payload["site_tools"])
 
 

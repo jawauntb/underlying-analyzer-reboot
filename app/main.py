@@ -30,20 +30,6 @@ from app.agent import (
     run_agent_stream,
     select_tools,
 )
-from app.api_catalog import build_api_docs_payload
-from app.articles import (
-    ArticleError,
-    article_markdown,
-    article_summary,
-    normalize_article,
-)
-from app.mcp_http import (
-    handle_mcp_payload,
-    parse_error_response,
-    server_descriptor,
-)
-from app.openapi import build_openapi_document
-from app.tool_registry import tool_catalog_payload
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -67,16 +53,12 @@ from app.anthropic import (
     AnthropicTextClient,
     MessageStreamer,
 )
-from app.charts import (
-    RenderedImage,
-    build_ridge_growth_memo,
-    render_auction_chart,
-    render_flow_compass_chart,
-    render_performance_chart,
-    render_portfolio_chart,
-    render_regression_chart,
-    render_ridge_growth_chart,
-    render_volatility_chart,
+from app.api_catalog import build_api_docs_payload
+from app.articles import (
+    ArticleError,
+    article_markdown,
+    article_summary,
+    normalize_article,
 )
 from app.chart_data import (
     build_auction_chart_data,
@@ -88,22 +70,36 @@ from app.chart_data import (
     build_torque_chart_data,
     build_volatility_chart_data,
 )
+from app.charts import (
+    RenderedImage,
+    build_ridge_growth_memo,
+    render_auction_chart,
+    render_flow_compass_chart,
+    render_performance_chart,
+    render_portfolio_chart,
+    render_regression_chart,
+    render_ridge_growth_chart,
+    render_volatility_chart,
+)
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
-from app.market_data import HistoryResult, MarketDataClient, MarketDataError, clean_ticker
+from app.market_data import (
+    MAX_SEARCH_QUERY_LENGTH,
+    SEARCH_PROVIDER,
+    HistoryResult,
+    MarketDataClient,
+    MarketDataError,
+    clean_ticker,
+)
+from app.mcp_http import (
+    handle_mcp_payload,
+    parse_error_response,
+    server_descriptor,
+)
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
+from app.openapi import build_openapi_document
 from app.sec import SecClient, SecDataError
-from app.torque import compute_torque_score, render_torque_chart
-from app.torque_scan import (
-    build_torque_scan_response,
-    stream_torque_scan_rows,
-)
-from app.vision_v2 import (
-    build_vision_v2_data,
-    build_vision_v2_memo,
-    parse_memo_sections,
-    stream_vision_v2_text,
-)
+from app.tool_registry import tool_catalog_payload
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
     build_market_memo,
@@ -115,6 +111,17 @@ from app.tools import (
     generate_pixel_image,
     render_moneyline_chart,
     stream_market_memo_text,
+)
+from app.torque import compute_torque_score, render_torque_chart
+from app.torque_scan import (
+    build_torque_scan_response,
+    stream_torque_scan_rows,
+)
+from app.vision_v2 import (
+    build_vision_v2_data,
+    build_vision_v2_memo,
+    parse_memo_sections,
+    stream_vision_v2_text,
 )
 from app.watchlists import (
     TradingViewWatchlistClient,
@@ -256,6 +263,38 @@ def create_app() -> Flask:
                 ],
             }
         )
+
+    @app.get("/api/data/search")
+    def security_search() -> Any:
+        try:
+            query = request.args.get("q", "").strip()
+            if not query:
+                raise ValueError("Search query is required")
+            if len(query) > MAX_SEARCH_QUERY_LENGTH:
+                raise ValueError(
+                    f"Search query must be at most {MAX_SEARCH_QUERY_LENGTH} characters"
+                )
+
+            limit_value = request.args.get("limit")
+            if limit_value is None:
+                limit = 8
+            else:
+                try:
+                    limit = int(limit_value)
+                except ValueError as exc:
+                    raise ValueError("Search limit must be an integer from 1 to 10") from exc
+                if not 1 <= limit <= 10:
+                    raise ValueError("Search limit must be an integer from 1 to 10")
+
+            return jsonify(
+                {
+                    "query": query,
+                    "results": get_market_client().search_securities(query, limit=limit),
+                    "provider": SEARCH_PROVIDER,
+                }
+            )
+        except (ValueError, MarketDataError) as exc:
+            return jsonify({"error": str(exc)}), 400
 
     @app.get("/api/sec/<ticker>")
     def sec_source_pack(ticker: str) -> Any:

@@ -36,6 +36,30 @@ def test_supporting_routes_are_documented() -> None:
     assert "get" in paths["/api/config"]
 
 
+def test_security_search_documents_query_boundaries_and_result_contract() -> None:
+    operation = build_openapi_document()["paths"]["/api/data/search"]["get"]
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+
+    assert parameters["q"]["required"] is True
+    assert parameters["q"]["schema"] == {"type": "string", "minLength": 1, "maxLength": 100}
+    assert parameters["limit"]["required"] is False
+    assert parameters["limit"]["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10,
+        "default": 8,
+    }
+
+    schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema["required"] == ["query", "results", "provider"]
+    assert schema["properties"]["results"]["items"]["required"] == [
+        "symbol",
+        "name",
+        "exchange",
+        "asset_type",
+    ]
+
+
 def test_agent_routes_publish_the_exact_policy_request_contract() -> None:
     paths = build_openapi_document()["paths"]
     for path in ("/api/agent/chat", "/api/agent/chat/stream"):
