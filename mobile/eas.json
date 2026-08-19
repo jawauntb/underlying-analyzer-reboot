@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 22.0.0",
-    "appVersionSource": "local"
+    "appVersionSource": "remote"
   },
   "build": {
     "e2e-test": {
@@ -14,6 +14,15 @@
       "ios": {
         "simulator": true
       }
+    },
+    "production": {
+      "node": "22.16.0",
+      "environment": "production",
+      "autoIncrement": true,
+      "distribution": "store"
     }
+  },
+  "submit": {
+    "production": {}
   }
 }

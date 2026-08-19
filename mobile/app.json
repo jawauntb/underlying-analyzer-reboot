@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.theunderlying.undercurrent"
+      "bundleIdentifier": "com.theunderlying.undercurrent",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "edgeToEdgeEnabled": true,
