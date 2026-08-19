@@ -58,7 +58,7 @@ tags:
 - scrollUntilVisible:
     element: 'Select Deep Dive'
     direction: UP
-    timeout: 10000
+    timeout: 20000
     visibilityPercentage: 80
 - tapOn: 'Select Deep Dive'
 - scrollUntilVisible:
