@@ -36,6 +36,22 @@ def test_supporting_routes_are_documented() -> None:
     assert "get" in paths["/api/config"]
 
 
+def test_agent_routes_publish_the_exact_policy_request_contract() -> None:
+    paths = build_openapi_document()["paths"]
+    for path in ("/api/agent/chat", "/api/agent/chat/stream"):
+        schema = paths[path]["post"]["requestBody"]["content"]["application/json"][
+            "schema"
+        ]
+        assert schema["required"] == ["messages"]
+        assert schema["properties"]["tool_policy"]["enum"] == ["exact"]
+        assert schema["properties"]["tools"]["items"]["type"] == "string"
+
+    stream_content = paths["/api/agent/chat/stream"]["post"]["responses"]["200"][
+        "content"
+    ]
+    assert "application/x-ndjson" in stream_content
+
+
 def test_served_document_includes_this_deployment() -> None:
     payload = create_app().test_client().get("/api/openapi").get_json()
     assert payload["openapi"] == "3.1.0"
@@ -50,3 +66,9 @@ def test_docs_catalog_advertises_the_new_surfaces() -> None:
     assert payload["agent"]["chat"] == "/chat"
     assert len(payload["tools"]) == len(TOOLS)
     assert any(tool["id"] == "chat" for tool in payload["site_tools"])
+    agent_chat = next(
+        endpoint
+        for endpoint in payload["endpoints"]
+        if endpoint["path"] == "/api/agent/chat"
+    )
+    assert agent_chat["body"]["tool_policy"] == "'exact'?"

@@ -522,11 +522,16 @@ Run one agent turn as an NDJSON event stream (`application/x-ndjson`).
 {
   "messages": [{ "role": "user", "content": "How does NVDA look this week?" }],
   "tools": ["render_chart", "search_news"],
+  "tool_policy": "exact",
   "context": "optional extra system context"
 }
 ```
 
-`messages` is required; `tools` is an optional allowlist and falls back to everything.
+`messages` is required. For backwards compatibility, `tools` is a best-effort
+allowlist when `tool_policy` is omitted: unrecognized entries are ignored and a
+request with no recognized names falls back to every agent tool. Set
+`tool_policy` to `"exact"` to require a non-empty allowlist made entirely of
+recognized names; invalid exact requests return `400`.
 Events: `start`, `text`, `tool_call`, `tool_result`, `article`, `error`, `done`.
 
 ```bash

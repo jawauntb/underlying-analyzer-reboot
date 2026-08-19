@@ -83,6 +83,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "body": {
             "messages": "[{role, content}]",
             "tools": "string[]?",
+            "tool_policy": "'exact'?",
             "context": "string?",
         },
     },
@@ -95,6 +96,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "body": {
             "messages": "[{role, content}]",
             "tools": "string[]?",
+            "tool_policy": "'exact'?",
             "context": "string?",
         },
     },

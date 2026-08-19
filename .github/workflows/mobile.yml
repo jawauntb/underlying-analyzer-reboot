@@ -1,0 +1,173 @@
+name: Mobile cloud proof
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile.yml'
+      - 'app/**'
+      - 'mobile/**'
+      - 'tests/test_agent.py'
+      - 'pyproject.toml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mobile.yml'
+      - 'app/**'
+      - 'mobile/**'
+      - 'tests/test_agent.py'
+      - 'pyproject.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-cloud-proof-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  EXPO_NO_TELEMETRY: '1'
+  NODE_VERSION: '22.16.0'
+
+jobs:
+  backend-agent-contract:
+    name: Backend agent contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Use Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install backend and verification tools
+        run: python -m pip install --disable-pip-version-check -e '.[dev]'
+      - name: Run backend tests
+        run: python -m pytest -q
+      - name: Lint the agent boundary
+        run: python -m ruff check app/agent.py tests/test_agent.py
+      - name: Type-check the agent boundary
+        run: python -m mypy --follow-imports=skip app/agent.py app/main.py
+
+  quality:
+    name: Lint, types, tests, and Expo health
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Use Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Scan native sources for secrets and private artifacts
+        run: npm run scan:source
+      - name: Run ESLint
+        run: npm run lint
+      - name: Run TypeScript
+        run: npm run typecheck
+      - name: Run Jest serially
+        run: npm run test:ci
+      - name: Test CI policy classifiers
+        run: npm run test:scripts
+      - name: Check Expo dependency compatibility
+        run: npm run check:expo
+      - name: Run Expo Doctor
+        run: npm run doctor
+      - name: Upload source-scan receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-source-scan-${{ github.run_id }}
+          path: mobile/.artifacts/receipts/source-scan.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  static-export:
+    name: Web and iOS static exports
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Use Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Export web bundle
+        run: npm run export:web
+      - name: Export iOS bundle
+        run: npm run export:ios
+      - name: Scan exports for secrets and private artifacts
+        run: npm run scan:exports
+      - name: Upload export-scan receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-export-scan-${{ github.run_id }}
+          path: mobile/.artifacts/receipts/export-scan.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload verified static exports
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-static-exports-${{ github.run_id }}
+          path: mobile/.artifacts/exports
+          if-no-files-found: error
+          retention-days: 7
+
+  production-contract:
+    name: Live production API contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Use Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify health, tools, alerts, Auction, and Torque once
+        shell: bash
+        run: |
+          set +e
+          npm run smoke:production
+          status=$?
+          set -e
+          if [ "$status" -eq 2 ]; then
+            echo "::warning title=Production API temporarily unavailable::The metadata receipt records the provider or network limitation."
+            echo "### Production API smoke" >> "$GITHUB_STEP_SUMMARY"
+            echo "Live contract verification encountered an external service limitation; see the uploaded metadata-only receipt." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit "$status"
+      - name: Upload metadata-only contract receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-production-contract-${{ github.run_id }}
+          path: mobile/.artifacts/receipts/live-contract-smoke.json
+          if-no-files-found: error
+          retention-days: 7

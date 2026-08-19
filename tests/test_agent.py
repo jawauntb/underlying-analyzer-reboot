@@ -8,7 +8,7 @@ import pytest
 from flask import Flask
 from flask.testing import FlaskClient
 
-from app.agent import AgentError, normalize_history, select_tools
+from app.agent import AgentError, build_system_prompt, normalize_history, select_tools
 from app.articles import ArticleError, article_markdown, normalize_article
 from app.main import create_app
 
@@ -164,7 +164,7 @@ def test_failed_tool_is_reported_without_killing_the_turn() -> None:
 
 
 def test_non_streaming_endpoint_folds_the_turn() -> None:
-    _, client = build_client(
+    app, client = build_client(
         [
             [
                 {"type": "tool_use", "id": "t1", "name": "health_check", "input": {}},
@@ -178,12 +178,22 @@ def test_non_streaming_endpoint_folds_the_turn() -> None:
     )
 
     payload = client.post(
-        "/api/agent/chat", json={"messages": [{"role": "user", "content": "status?"}]}
+        "/api/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "status?"}],
+            "tools": ["health_check"],
+            "tool_policy": "exact",
+        },
     ).get_json()
 
     assert payload["ok"] is True
+    assert payload["model"] == "stub-agent"
+    assert payload["tools"] == ["health_check"]
     assert payload["text"] == "Service is up."
     assert payload["tool_calls"][0]["name"] == "health_check"
+    system = app.config["AGENT_CLIENT"].turns[0]["system"]
+    assert "`health_check`" in system
+    assert "`render_chart`" not in system
 
 
 def test_agent_offline_without_api_key() -> None:
@@ -230,8 +240,223 @@ def test_history_requires_a_trailing_user_message() -> None:
 
 def test_select_tools_falls_back_to_everything() -> None:
     assert len(select_tools(["render_chart"])) == 1
-    assert len(select_tools(["not-a-tool"])) > 1
     assert len(select_tools(None)) > 1
+    assert select_tools([]) == select_tools(None)
+    assert select_tools("health_check") == select_tools(None)
+    assert select_tools(["not-a-tool"]) == select_tools(None)
+    assert [spec.name for spec in select_tools(["health_check", "not-a-tool"])] == [
+        "health_check"
+    ]
+
+
+def test_select_tools_rejects_a_nonempty_unknown_allowlist() -> None:
+    with pytest.raises(AgentError, match="recognized tool"):
+        select_tools(["not-a-tool"], exact=True)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        [],
+        "health_check",
+        ["health_check", "not-a-tool"],
+        ["health_check", ""],
+    ],
+)
+def test_select_tools_rejects_any_invalid_explicit_allowlist(names: Any) -> None:
+    with pytest.raises(AgentError, match="tools must be a non-empty list of recognized tool names"):
+        select_tools(names, exact=True)
+
+
+def test_exact_tool_policy_requires_a_supplied_allowlist() -> None:
+    with pytest.raises(AgentError, match="recognized tool"):
+        select_tools(None, exact=True)
+
+
+def test_system_prompt_names_only_selected_tools() -> None:
+    specs = select_tools(["health_check", "provider_status"], exact=True)
+
+    prompt = build_system_prompt(tool_specs=specs)
+
+    assert "`health_check`" in prompt
+    assert "`provider_status`" in prompt
+    assert "render_chart" not in prompt
+    assert "vision_memo" not in prompt
+    assert "compose_research_article" not in prompt
+    assert "Rendered charts" not in prompt
+
+
+def test_system_prompt_preserves_selected_chart_and_article_guidance() -> None:
+    specs = select_tools(
+        ["render_chart", "compose_research_article"], exact=True
+    )
+
+    prompt = build_system_prompt(tool_specs=specs)
+
+    assert "Rendered charts are already shown" in prompt
+    assert "finish by calling\n`compose_research_article`" in prompt
+
+
+@pytest.mark.parametrize(
+    ("tools", "expected"),
+    [
+        ("health_check", None),
+        ([], None),
+        (["not-a-tool"], None),
+        (["health_check", "not-a-tool"], ["health_check"]),
+    ],
+)
+def test_legacy_endpoint_preserves_tool_fallbacks(
+    tools: Any, expected: list[str] | None
+) -> None:
+    _, client = build_client(
+        [[{"type": "text", "text": "Ready."}, {"type": "stop", "stop_reason": "end_turn"}]]
+    )
+
+    events = stream_events(
+        client,
+        {"messages": [{"role": "user", "content": "status?"}], "tools": tools},
+    )
+
+    if expected is None:
+        assert len(events[0]["tools"]) > 1
+    else:
+        assert events[0]["tools"] == expected
+
+
+@pytest.mark.parametrize("tools", [None, [], ["not-a-tool"], ["health_check", "bad"]])
+def test_exact_endpoint_rejects_invalid_allowlists(tools: Any) -> None:
+    _, client = build_client(
+        [[{"type": "text", "text": "unused"}, {"type": "stop", "stop_reason": "end_turn"}]]
+    )
+
+    response = client.post(
+        "/api/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "status?"}],
+            "tools": tools,
+            "tool_policy": "exact",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "recognized tool names" in response.get_json()["error"]
+
+
+@pytest.mark.parametrize("endpoint", ["/api/agent/chat", "/api/agent/chat/stream"])
+@pytest.mark.parametrize("tool_policy", [None, "best_effort", "", False, ["exact"]])
+def test_endpoint_rejects_unknown_tool_policy(
+    endpoint: str, tool_policy: Any
+) -> None:
+    _, client = build_client(
+        [[{"type": "text", "text": "unused"}, {"type": "stop", "stop_reason": "end_turn"}]]
+    )
+
+    response = client.post(
+        endpoint,
+        json={
+            "messages": [{"role": "user", "content": "status?"}],
+            "tools": ["health_check"],
+            "tool_policy": tool_policy,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "tool_policy must be 'exact' when provided"
+
+
+def test_legacy_stream_reports_a_refused_unselected_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, client = build_client(
+        [
+            [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "list_capabilities",
+                    "input": {},
+                },
+                {"type": "stop", "stop_reason": "tool_use"},
+            ],
+            [
+                {"type": "text", "text": "That tool is unavailable for this turn."},
+                {"type": "stop", "stop_reason": "end_turn"},
+            ],
+        ]
+    )
+
+    def fail_if_executed(name: str, arguments: dict[str, Any]) -> Any:
+        raise AssertionError(f"unexpected tool execution: {name} {arguments}")
+
+    monkeypatch.setattr("app.agent.execute_tool", fail_if_executed)
+    events = stream_events(
+        client,
+        {
+            "messages": [{"role": "user", "content": "what can you do?"}],
+            "tools": ["health_check"],
+        },
+    )
+
+    refused = [
+        event
+        for event in events
+        if event["type"] in {"tool_call", "tool_result"}
+    ]
+    assert [event["type"] for event in refused] == ["tool_call", "tool_result"]
+    assert all(event["name"] == "list_capabilities" for event in refused)
+    assert refused[1]["status"] == 403
+
+
+def test_agent_does_not_execute_a_tool_outside_the_selected_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, client = build_client(
+        [
+            [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "list_capabilities",
+                    "input": {},
+                },
+                {"type": "stop", "stop_reason": "tool_use"},
+            ],
+            [
+                {"type": "text", "text": "That tool is unavailable for this turn."},
+                {"type": "stop", "stop_reason": "end_turn"},
+            ],
+        ]
+    )
+
+    def fail_if_executed(name: str, arguments: dict[str, Any]) -> Any:
+        raise AssertionError(f"unexpected tool execution: {name} {arguments}")
+
+    monkeypatch.setattr("app.agent.execute_tool", fail_if_executed)
+    events = stream_events(
+        client,
+        {
+            "messages": [{"role": "user", "content": "what can you do?"}],
+            "tools": ["health_check"],
+            "tool_policy": "exact",
+        },
+    )
+
+    assert events[0]["tools"] == ["health_check"]
+    assert not any(event["type"] in {"tool_call", "tool_result"} for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["tool_trace"] == [
+        "list_capabilities() -> error: Tool list_capabilities is not available for this turn."
+    ]
+
+    recovery_turn = app.config["AGENT_CLIENT"].turns[1]
+    refusal = recovery_turn["messages"][2]["content"][0]
+    assert refusal == {
+        "type": "tool_result",
+        "tool_use_id": "t1",
+        "content": "Tool list_capabilities is not available for this turn.",
+        "is_error": True,
+    }
 
 
 def test_article_normalization_cleans_input() -> None:

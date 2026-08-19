@@ -1009,17 +1009,26 @@ def agent_run_options(payload: dict[str, Any]) -> dict[str, Any]:
     client = get_agent_client()
     messages = normalize_history(payload.get("messages"))
     context = payload.get("context")
+    tool_policy = payload.get("tool_policy")
+    if "tool_policy" in payload and tool_policy != "exact":
+        raise AgentError("tool_policy must be 'exact' when provided")
+    exact_tool_policy = tool_policy == "exact"
     return {
         "client": client,
         "messages": messages,
         "model": getattr(client, "model", None),
-        "tool_specs": select_tools(payload.get("tools")),
+        "tool_specs": select_tools(
+            payload.get("tools"), exact=exact_tool_policy
+        ),
+        "suppress_refused_tool_events": exact_tool_policy,
         "system_extra": context if isinstance(context, str) else None,
     }
 
 
 def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
     """Fold the agent event stream into one non-streaming response body."""
+    model = ""
+    tools: list[str] = []
     text_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []
@@ -1030,7 +1039,12 @@ def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
 
     for event in events:
         kind = event.get("type")
-        if kind == "text":
+        if kind == "start":
+            model = str(event.get("model") or "")
+            event_tools = event.get("tools")
+            if isinstance(event_tools, list):
+                tools = [str(item) for item in event_tools]
+        elif kind == "text":
             text_parts.append(str(event.get("text") or ""))
         elif kind == "tool_result":
             tool_calls.append(
@@ -1059,6 +1073,8 @@ def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
         return {"error": error}
     return {
         "ok": True,
+        "model": model,
+        "tools": tools,
         "stop_reason": stop_reason,
         "text": "".join(text_parts).strip(),
         "tool_calls": tool_calls,
