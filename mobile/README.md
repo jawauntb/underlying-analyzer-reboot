@@ -44,4 +44,15 @@ The `Mobile cloud proof` GitHub Actions workflow runs four bounded jobs:
 
 The iOS export proves Metro can produce the iOS bundle on a Linux runner. It is not a signed native build and does not replace a real iPhone Expo Go pass.
 
-The app is linked to [`@jawauntb/undercurrent`](https://expo.dev/accounts/jawauntb/projects/undercurrent). `eas.json` provides an unsigned `e2e-test` iOS simulator profile; it proves native compilation and simulator behavior, not ordinary App Store Expo Go compatibility or physical-device accessibility and haptics.
+The app is linked to [`@jawauntb/undercurrent`](https://expo.dev/accounts/jawauntb/projects/undercurrent). `eas.json` provides an unsigned `e2e-test` iOS simulator profile for native test automation and a signed `production` profile for App Store Connect. Production builds use EAS-managed build numbers so every TestFlight upload receives a unique version.
+
+## TestFlight release
+
+Build and submit the production archive from the mobile directory:
+
+```bash
+npx eas-cli build --platform ios --profile production
+npx eas-cli submit --platform ios --profile production --latest --auto-testflight-setup
+```
+
+The first release may prompt an Apple Developer account holder to create or select the distribution certificate, provisioning profile, and App Store Connect app record. Never commit downloaded signing credentials or App Store Connect API keys.
