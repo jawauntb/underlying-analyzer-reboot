@@ -74,6 +74,7 @@ function parseEnvelope(raw: string): { records: RecentSearchRecord[]; repaired: 
 
 export class RecentSearchStore {
   private records: RecentSearchRecord[] = [];
+  private hydrationInFlight: Promise<RecentSearchRecord[]> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly now: () => number;
 
@@ -88,7 +89,16 @@ export class RecentSearchStore {
     return this.records.map((record) => ({ ...record }));
   }
 
-  async hydrate(): Promise<RecentSearchRecord[]> {
+  hydrate(): Promise<RecentSearchRecord[]> {
+    const operation = this.load();
+    this.hydrationInFlight = operation;
+    void operation.finally(() => {
+      if (this.hydrationInFlight === operation) this.hydrationInFlight = null;
+    }).catch(() => undefined);
+    return operation;
+  }
+
+  private async load(): Promise<RecentSearchRecord[]> {
     const raw = await this.storage.getItem(RECENT_SEARCHES_STORAGE_KEY);
     if (raw === null) {
       this.records = [];
@@ -105,13 +115,23 @@ export class RecentSearchStore {
     return this.snapshot();
   }
 
-  record(result: SecuritySearchResult): Promise<void> {
-    const candidate = validatedRecord({ ...result, symbol: normalizeSymbol(result.symbol), selectedAt: this.now() });
-    if (!candidate) return Promise.reject(new Error('Recent search result is invalid.'));
-    const next = [candidate, ...this.records.filter((record) => record.symbol !== candidate.symbol)]
-      .slice(0, MAX_RECENT_SEARCHES);
-    this.records = next;
-    return this.persist(next);
+  record(result: SecuritySearchResult): Promise<RecentSearchRecord[]> {
+    const hydration = this.hydrationInFlight ?? Promise.resolve(this.snapshot());
+    return hydration.catch(() => []).then(async () => {
+      let symbol: string;
+      try {
+        symbol = normalizeSymbol(result.symbol);
+      } catch {
+        throw new Error('Recent search result is invalid.');
+      }
+      const candidate = validatedRecord({ ...result, symbol, selectedAt: this.now() });
+      if (!candidate) throw new Error('Recent search result is invalid.');
+      const next = [candidate, ...this.records.filter((record) => record.symbol !== candidate.symbol)]
+        .slice(0, MAX_RECENT_SEARCHES);
+      this.records = next;
+      await this.persist(next);
+      return this.snapshot();
+    });
   }
 
   private persist(records: readonly RecentSearchRecord[]): Promise<void> {

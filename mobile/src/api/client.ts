@@ -37,6 +37,7 @@ import { runtimeFetch, type RuntimeFetch } from './runtimeFetch';
 export const TIMEOUT_MS = {
   normal: 30_000,
   capability: 10_000,
+  search: 15_000,
   researchIdle: 45_000,
 } as const;
 
@@ -188,7 +189,7 @@ export class ApiClient {
         q: normalized.query,
         ...(normalized.limit === undefined ? {} : { limit: String(normalized.limit) }),
       },
-      timeoutMs: TIMEOUT_MS.capability,
+      timeoutMs: TIMEOUT_MS.search,
       signal: options.signal,
     });
   }

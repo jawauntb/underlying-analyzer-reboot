@@ -163,7 +163,7 @@ function SearchController({
 
   function openResult(result: SecuritySearchResult) {
     router.push({ pathname: '/ticker/[symbol]', params: { symbol: result.symbol } });
-    void recentStore.record(result).catch(() => undefined);
+    void recentStore.record(result).then(setRecents).catch(() => undefined);
   }
 
   function openQuickSymbol(symbol: string) {

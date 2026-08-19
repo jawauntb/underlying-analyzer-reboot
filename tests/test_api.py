@@ -451,7 +451,7 @@ def test_security_search_endpoint_uses_default_limit_and_maps_provider_error() -
 
     response = app.test_client().get("/api/data/search", query_string={"q": "Apple"})
 
-    assert response.status_code == 400
+    assert response.status_code == 502
     assert response.get_json() == {"error": "Security search failed: provider unavailable"}
     assert search_client.limit == 8
 

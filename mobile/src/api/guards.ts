@@ -14,7 +14,7 @@ import type {
   WatchlistAlertsResponse,
 } from './contracts';
 import { exactMobileToolEcho } from './agentTools';
-import { normalizeSearchSymbol, normalizeSymbol, normalizeSymbols } from './endpoints';
+import { normalizeSymbol, normalizeSymbols } from './endpoints';
 
 export class ContractError extends Error {
   constructor(message: string) {
@@ -73,11 +73,7 @@ function safeSymbol(value: unknown): string | null {
 }
 
 function safeSearchSymbol(value: unknown): string | null {
-  try {
-    return normalizeSearchSymbol(string(value));
-  } catch {
-    return null;
-  }
+  return safeSymbol(value);
 }
 
 const SECURITY_ASSET_TYPES = new Set<SecurityAssetType>([

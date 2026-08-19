@@ -293,8 +293,10 @@ def create_app() -> Flask:
                     "provider": SEARCH_PROVIDER,
                 }
             )
-        except (ValueError, MarketDataError) as exc:
+        except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+        except MarketDataError as exc:
+            return jsonify({"error": str(exc)}), 502
 
     @app.get("/api/sec/<ticker>")
     def sec_source_pack(ticker: str) -> Any:

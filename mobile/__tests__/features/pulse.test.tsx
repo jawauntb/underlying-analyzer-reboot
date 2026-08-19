@@ -193,6 +193,26 @@ describe('PulseScreen', () => {
     expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
   });
 
+  it('keeps the prior list label attached to prior rows while a new list loads', async () => {
+    const nextCache = deferred<CacheRecord<WatchlistAlertsResponse> | null>();
+    const deps = dependencies({ cached: record(response(), 99_999) });
+    const firstList = [{ id: 'first', name: 'First list', symbols: ['AAPL'], source: { kind: 'manual' as const }, createdAt: 1, updatedAt: 1 }];
+    const nextList = [{ id: 'next', name: 'Next list', symbols: ['MSFT'], source: { kind: 'manual' as const }, createdAt: 2, updatedAt: 2 }];
+    const view = render(<PulseScreen {...deps.props} listsState={{ hydrated: true, lists: firstList }} />);
+    expect(await screen.findByText(/First list/)).toBeTruthy();
+
+    deps.cache.read.mockImplementationOnce(() => nextCache.promise);
+    view.rerender(<PulseScreen {...deps.props} focused={false} listsState={{ hydrated: true, lists: nextList }} />);
+    view.rerender(<PulseScreen {...deps.props} focused listsState={{ hydrated: true, lists: nextList }} />);
+    await act(async () => undefined);
+    expect(screen.getByText(/First list/)).toBeTruthy();
+    expect(screen.queryByText(/Next list/)).toBeNull();
+
+    await act(async () => nextCache.resolve(record(response({ rows: [{ ...response().rows[0], ticker: 'MSFT' }] }), 99_999)));
+    expect(await screen.findByText(/Next list/)).toBeTruthy();
+    expect(screen.getByText('MSFT')).toBeTruthy();
+  });
+
   it('keeps partial rows visible with a per-ticker notice', async () => {
     const deps = dependencies({ live: Promise.resolve(response({ status: 'partial', errors: [{ ticker: 'MSFT', error: 'Quote unavailable' }] })) });
     render(<PulseScreen {...deps.props} />);

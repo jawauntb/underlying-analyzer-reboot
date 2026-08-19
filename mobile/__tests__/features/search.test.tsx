@@ -57,7 +57,7 @@ function dependencies() {
   };
   const recentStore = {
     hydrate: jest.fn(async (): Promise<any[]> => []),
-    record: jest.fn(async (_result: unknown): Promise<void> => undefined),
+    record: jest.fn(async (_result: unknown): Promise<any[]> => []),
   };
   const listsState = {
     hydrated: true,
@@ -152,6 +152,7 @@ describe('SearchScreen', () => {
       { id: 'new', name: 'New', symbols: ['MSFT', 'MSFT', '^GSPC'], source: { kind: 'manual' }, createdAt: 2, updatedAt: 3 },
     ] as never;
     deps.client.searchSecurities.mockResolvedValue({ query: 'apple', results: [apple], provider: 'Yahoo Finance' });
+    deps.recentStore.record.mockResolvedValue([{ ...apple, selectedAt: 7 }]);
     render(<SearchScreen {...deps.props} />);
     await act(async () => undefined);
 
@@ -168,6 +169,9 @@ describe('SearchScreen', () => {
     expect(deps.router.push).toHaveBeenLastCalledWith({ pathname: '/ticker/[symbol]', params: { symbol: 'AAPL' } });
     expect(deps.recentStore.record).toHaveBeenCalledWith(apple);
     expect(StyleSheet.flatten(result.props.style).minHeight).toBeGreaterThanOrEqual(44);
+    await act(async () => undefined);
+    fireEvent.press(screen.getByRole('button', { name: 'Clear search' }));
+    expect(await screen.findByRole('button', { name: 'Open recent AAPL Apple Inc. Lens' })).toBeTruthy();
   });
 
   it('shows recent selections before a query and uses defaults when no saved list exists', async () => {
@@ -238,5 +242,24 @@ describe('RecentSearchStore', () => {
     );
     await expect(store.hydrate()).resolves.toEqual([]);
     expect(storage.removeItem).toHaveBeenCalledWith(RECENT_SEARCHES_STORAGE_KEY);
+  });
+
+  it('preserves a selection made while initial hydration is still in flight', async () => {
+    const initialRead = deferred<string | null>();
+    const storage = {
+      getItem: jest.fn(() => initialRead.promise),
+      setItem: jest.fn(async (_key: string, _value: string): Promise<void> => undefined),
+      removeItem: jest.fn(async (_key: string): Promise<void> => undefined),
+    };
+    const store = new RecentSearchStore(storage, { now: () => 50 });
+    const hydration = store.hydrate();
+    const selection = store.record(apple);
+
+    initialRead.resolve(JSON.stringify({ schemaVersion: 1, records: [{ ...alphabet, selectedAt: 40 }] }));
+    await expect(hydration).resolves.toEqual([{ ...alphabet, selectedAt: 40 }]);
+    await expect(selection).resolves.toEqual([
+      { ...apple, selectedAt: 50 },
+      { ...alphabet, selectedAt: 40 },
+    ]);
   });
 });

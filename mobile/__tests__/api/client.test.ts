@@ -96,7 +96,7 @@ describe('endpoint and configuration safety', () => {
 
 describe('ApiClient', () => {
   it('uses exact timeout classes', () => {
-    expect(TIMEOUT_MS).toEqual({ normal: 30_000, capability: 10_000, researchIdle: 45_000 });
+    expect(TIMEOUT_MS).toEqual({ normal: 30_000, capability: 10_000, search: 15_000, researchIdle: 45_000 });
   });
 
   it('searches with encoded query parameters and filters hostile or partial provider results', async () => {
@@ -107,6 +107,7 @@ describe('ApiClient', () => {
           results: [
             { symbol: '^GSPC', name: 'S&P 500', exchange: 'SNP', asset_type: 'index' },
             { symbol: 'btc-usd', name: 'Bitcoin USD', exchange: 'CCC', asset_type: 'crypto' },
+            { symbol: 'A'.repeat(16), name: 'Too long for Lens', exchange: 'TEST', asset_type: 'equity' },
             { symbol: '</script>', name: 'Hostile', exchange: 'Nowhere', asset_type: 'equity' },
             { symbol: 'AAPL', name: 'Apple Inc.', asset_type: 'equity' },
             { symbol: 'ES=F', name: 'E-mini S&P 500', exchange: 'CME', asset_type: 'future' },

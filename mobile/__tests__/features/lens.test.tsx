@@ -244,6 +244,24 @@ describe('LensScreen', () => {
     expect(deps.client.watchlistAlerts).not.toHaveBeenCalled();
   });
 
+  it('cancels an active overview and switches to offline truth when connectivity drops', async () => {
+    const live = deferred<WatchlistAlertsResponse>();
+    const deps = dependencies({ live: live.promise });
+    let signal: AbortSignal | undefined;
+    deps.client.watchlistAlerts.mockImplementation((_request?: unknown, options?: { signal: AbortSignal }) => {
+      signal = options?.signal;
+      return live.promise;
+    });
+    const view = render(<LensScreen {...deps.props} />);
+    expect(await screen.findByText('Loading security overview')).toBeTruthy();
+
+    view.rerender(<LensScreen {...deps.props} reachability="offline" />);
+    expect(await screen.findByText('No saved overview offline')).toBeTruthy();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => live.resolve(overview()));
+    expect(screen.queryByText('Apple Inc.')).toBeNull();
+  });
+
   it('shows stale cached evidence while refreshing and replaces it with the live snapshot', async () => {
     const live = deferred<WatchlistAlertsResponse>();
     const stale = overview({

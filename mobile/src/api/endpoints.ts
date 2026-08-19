@@ -51,7 +51,6 @@ export function buildApiConfig(
 }
 
 const SYMBOL_PATTERN = /^(?:[A-Z0-9][A-Z0-9.-]{0,14}|\^[A-Z0-9][A-Z0-9.-]{0,13})$/;
-const SEARCH_SYMBOL_PATTERN = /^[A-Z0-9.^=-]{1,32}$/;
 
 export function normalizeSymbol(value: string): string {
   const symbol = value.trim().toUpperCase();
@@ -63,14 +62,6 @@ export function normalizeSymbol(value: string): string {
 
 export function encodeSymbol(value: string): string {
   return encodeURIComponent(normalizeSymbol(value));
-}
-
-export function normalizeSearchSymbol(value: string): string {
-  const symbol = value.trim().toUpperCase();
-  if (!SEARCH_SYMBOL_PATTERN.test(symbol)) {
-    throw new Error('Search result symbol contains unsupported characters.');
-  }
-  return symbol;
 }
 
 export function normalizeSymbols(values: readonly string[]): string[] {

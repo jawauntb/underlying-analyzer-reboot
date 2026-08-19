@@ -275,6 +275,7 @@ export default function LensOverview({
 }: LensOverviewProps) {
   const coordinator = useRef(new RequestCoordinator<WatchlistAlertsResponse>());
   const generation = useRef(0);
+  const [bootstrapComplete, setBootstrapComplete] = useState(false);
   const [state, setState] = useState<OverviewState>({ status: 'loading', data: null, fetchedAt: null });
 
   useEffect(() => {
@@ -288,6 +289,15 @@ export default function LensOverview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
+  useEffect(() => {
+    if (reachability !== 'offline' || !bootstrapComplete) return;
+    generation.current += 1;
+    coordinator.current.cancel();
+    setState((current) => current.data && current.fetchedAt !== null
+      ? { status: 'offline-stale', data: current.data, fetchedAt: current.fetchedAt }
+      : { status: 'empty-offline', data: null, fetchedAt: null });
+  }, [bootstrapComplete, reachability]);
+
   async function bootstrap() {
     const descriptor = cacheDescriptor(client, symbol);
     const currentGeneration = ++generation.current;
@@ -298,6 +308,7 @@ export default function LensOverview({
       cached = null;
     }
     if (currentGeneration !== generation.current) return;
+    setBootstrapComplete(true);
     const cachedData = cached ? overviewData(cached.data, symbol) : null;
 
     if (reachability === 'offline') {
