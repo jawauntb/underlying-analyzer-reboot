@@ -5,7 +5,7 @@ import TabLayout from '@/app/(tabs)/_layout';
 import PulseScreen from '@/app/(tabs)/index';
 import LibraryScreen from '@/app/(tabs)/library';
 import ListsScreen from '@/app/(tabs)/lists';
-import RootLayout, { stackAnimationFor } from '@/app/_layout';
+import RootLayout, { stackAnimationFor, tickerScreenOptions } from '@/app/_layout';
 import ResearchScreen from '@/app/research';
 import TickerScreen from '@/app/ticker/[symbol]';
 
@@ -117,5 +117,12 @@ describe('Undercurrent app shell', () => {
   it('removes native stack animation when Reduce Motion is enabled', () => {
     expect(stackAnimationFor(true)).toBe('none');
     expect(stackAnimationFor(false)).toBe('default');
+  });
+
+  it('gives the native ticker back button a stable accessible title', () => {
+    expect(tickerScreenOptions).toEqual({
+      headerBackTitle: 'Back',
+      title: 'Ticker Lens',
+    });
   });
 });

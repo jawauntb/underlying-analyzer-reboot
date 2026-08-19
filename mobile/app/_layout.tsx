@@ -19,6 +19,11 @@ export function stackAnimationFor(reduceMotion: boolean) {
   return reduceMotion ? ('none' as const) : ('default' as const);
 }
 
+export const tickerScreenOptions = {
+  headerBackTitle: 'Back',
+  title: 'Ticker Lens',
+} as const;
+
 const navigationTheme = {
   ...DarkTheme,
   colors: {
@@ -75,9 +80,7 @@ export default function RootLayout() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="ticker/[symbol]"
-                options={{
-                  title: 'Ticker Lens',
-                }}
+                options={tickerScreenOptions}
               />
               <Stack.Screen
                 name="research"

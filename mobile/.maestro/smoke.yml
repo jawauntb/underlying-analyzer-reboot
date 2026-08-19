@@ -17,6 +17,8 @@ tags:
     text: 'Open AAPL Lens'
     retryTapIfNoChange: true
 - assertVisible: 'AAPL'
+- assertVisible:
+    text: '^Back$'
 - scrollUntilVisible:
     element: 'Open Glance'
     direction: DOWN
@@ -145,7 +147,8 @@ tags:
 - tapOn: 'Close Research Run preview'
 - waitForAnimationToEnd:
     timeout: 5000
-- tapOn: 'Back'
+- tapOn:
+    text: '^Back$'
 - tapOn:
     text: 'Library tab'
     retryTapIfNoChange: true
