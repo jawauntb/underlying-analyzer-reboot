@@ -9,7 +9,7 @@ from app.charts import (
     calculate_flow_compass_indicator,
     calculate_ridge_growth_strategy,
 )
-from app.market_data import MarketDataClient
+from app.market_data import MarketDataClient, normalize_history_interval
 
 
 def build_cockpit_row(
@@ -17,6 +17,7 @@ def build_cockpit_row(
     ticker: str,
     *,
     period: str = "1y",
+    interval: str = "1d",
     sec_client: Any | None = None,
     exa_client: Any | None = None,
     include_torque: bool = False,
@@ -24,7 +25,9 @@ def build_cockpit_row(
     summary = summarize_stock(client, ticker)
     symbol = str(summary["ticker"])
     scanner = scanner_row(summary)
-    history = client.get_history(symbol, period=period, interval="1d")
+    history = client.get_history(
+        symbol, period=period, interval=normalize_history_interval(interval)
+    )
     _ridge_frame, ridge = calculate_ridge_growth_strategy(history)
     _flow_frame, flow = calculate_flow_compass_indicator(history)
     auction = calculate_auction_observation(history)

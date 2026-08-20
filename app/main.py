@@ -91,7 +91,9 @@ from app.market_data import (
     MarketDataCapabilityError,
     MarketDataClient,
     MarketDataError,
+    chart_history_options,
     clean_ticker,
+    normalize_history_interval,
 )
 from app.massive_stream import (
     MassiveStreamEntitlementError,
@@ -950,7 +952,7 @@ def create_app() -> Flask:
             # into the route's existing handler exactly as the sequential version did.
             with ThreadPoolExecutor(max_workers=3) as executor:
                 history_future = executor.submit(
-                    client.get_history, ticker, period="2y", interval="1d"
+                    client.get_history, ticker, **chart_history_options(payload, default_period="2y")
                 )
                 profile_future = executor.submit(_load_profile)
                 sec_trend_future = executor.submit(_load_sec_trend)
@@ -1017,7 +1019,7 @@ def create_app() -> Flask:
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 history_future = executor.submit(
-                    client.get_history, ticker, period="2y", interval="1d"
+                    client.get_history, ticker, **chart_history_options(payload, default_period="2y")
                 )
                 profile_future = executor.submit(_load_profile)
                 sec_trend_future = executor.submit(_load_sec_trend)
@@ -2137,12 +2139,13 @@ def build_chart_response(
     chart_key = chart_type.replace("_", "-")
     if chart_key == "auction":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "1y")
+        history_options = chart_history_options(payload, default_period="1y")
+        period = str(history_options["period"])
         images: list[RenderedImage] = []
         histories = []
         results: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
-        history_slots = fetch_history_slots(client, selection.tickers, period=period)
+        history_slots = fetch_history_slots(client, selection.tickers, **history_options)
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2212,9 +2215,7 @@ def build_chart_response(
         history_slots = fetch_history_slots(
             client,
             selection.tickers,
-            period=str(payload.get("period") or "1y"),
-            start=payload.get("start_date"),
-            end=payload.get("end_date"),
+            **chart_history_options(payload, default_period="1y", include_range=True),
         )
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
@@ -2253,10 +2254,13 @@ def build_chart_response(
         # render sequentially (matplotlib is not thread-safe). Collapses 3xN sequential
         # network round-trips into a single parallel batch.
         jobs = [(ticker, period) for ticker in selection.tickers for period in RIDGE_GROWTH_PERIODS]
+        ridge_interval = normalize_history_interval(payload.get("interval"))
         job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
         with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
             futures = {
-                executor.submit(client.get_history, ticker, period=period, interval="1d"): index
+                executor.submit(
+                    client.get_history, ticker, period=period, interval=ridge_interval
+                ): index
                 for index, (ticker, period) in enumerate(jobs)
             }
             for future in as_completed(futures):
@@ -2329,12 +2333,13 @@ def build_chart_response(
 
     if chart_key == "flow-compass":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "1y")
+        history_options = chart_history_options(payload, default_period="1y")
+        period = str(history_options["period"])
         images = []
         histories = []
         results = []
         errors = []
-        history_slots = fetch_history_slots(client, selection.tickers, period=period, interval="1d")
+        history_slots = fetch_history_slots(client, selection.tickers, **history_options)
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2363,7 +2368,8 @@ def build_chart_response(
 
     if chart_key == "torque":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "2y")
+        history_options = chart_history_options(payload, default_period="2y")
+        period = str(history_options["period"])
         sec_client = current_app.config.get("SEC_CLIENT")
         images = []
         histories = []
@@ -2373,7 +2379,7 @@ def build_chart_response(
         def _torque_bundle(
             tk: str,
         ) -> tuple[HistoryResult, dict[str, Any], dict[str, Any] | None]:
-            history = client.get_history(tk, period=period, interval="1d")
+            history = client.get_history(tk, **history_options)
             try:
                 profile = client.get_profile(history.ticker)
             except Exception:
@@ -2434,11 +2440,9 @@ def build_chart_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        history_options = {
-            "start": payload.get("start_date"),
-            "end": payload.get("end_date"),
-            "period": "1y",
-        }
+        history_options = chart_history_options(
+            payload, default_period="1y", include_range=True
+        )
         histories, errors = collect_histories(
             client,
             selection.tickers,
@@ -2476,7 +2480,9 @@ def build_chart_response(
 
     if chart_key == "volatility":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        histories, errors = collect_histories(client, selection.tickers, period="1y")
+        histories, errors = collect_histories(
+            client, selection.tickers, **chart_history_options(payload, default_period="1y")
+        )
         require_histories(histories, errors)
         image, meta = render_volatility_chart(histories)
         results = [
@@ -2507,12 +2513,13 @@ def build_chart_data_response(
     chart_key = chart_type.replace("_", "-")
     if chart_key == "auction":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "1y")
+        history_options = chart_history_options(payload, default_period="1y")
+        period = str(history_options["period"])
         datasets: list[dict[str, Any]] = []
         histories = []
         results: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
-        history_slots = fetch_history_slots(client, selection.tickers, period=period)
+        history_slots = fetch_history_slots(client, selection.tickers, **history_options)
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2582,9 +2589,7 @@ def build_chart_data_response(
         history_slots = fetch_history_slots(
             client,
             selection.tickers,
-            period=str(payload.get("period") or "1y"),
-            start=payload.get("start_date"),
-            end=payload.get("end_date"),
+            **chart_history_options(payload, default_period="1y", include_range=True),
         )
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
@@ -2620,10 +2625,13 @@ def build_chart_data_response(
         errors = []
         windows: list[dict[str, Any]] = []
         jobs = [(ticker, period) for ticker in selection.tickers for period in RIDGE_GROWTH_PERIODS]
+        ridge_interval = normalize_history_interval(payload.get("interval"))
         job_slots: list[HistoryResult | Exception | None] = [None] * len(jobs)
         with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), 8))) as executor:
             futures = {
-                executor.submit(client.get_history, ticker, period=period, interval="1d"): index
+                executor.submit(
+                    client.get_history, ticker, period=period, interval=ridge_interval
+                ): index
                 for index, (ticker, period) in enumerate(jobs)
             }
             for future in as_completed(futures):
@@ -2698,12 +2706,13 @@ def build_chart_data_response(
 
     if chart_key == "flow-compass":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "1y")
+        history_options = chart_history_options(payload, default_period="1y")
+        period = str(history_options["period"])
         datasets = []
         histories = []
         results = []
         errors = []
-        history_slots = fetch_history_slots(client, selection.tickers, period=period, interval="1d")
+        history_slots = fetch_history_slots(client, selection.tickers, **history_options)
         for ticker, slot in zip(selection.tickers, history_slots, strict=False):
             if isinstance(slot, Exception):
                 errors.append({"ticker": ticker, "error": str(slot)})
@@ -2732,7 +2741,8 @@ def build_chart_data_response(
 
     if chart_key == "torque":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        period = str(payload.get("period") or "2y")
+        history_options = chart_history_options(payload, default_period="2y")
+        period = str(history_options["period"])
         sec_client = current_app.config.get("SEC_CLIENT")
         datasets = []
         histories = []
@@ -2742,7 +2752,7 @@ def build_chart_data_response(
         def _torque_bundle(
             tk: str,
         ) -> tuple[HistoryResult, dict[str, Any], dict[str, Any] | None]:
-            history = client.get_history(tk, period=period, interval="1d")
+            history = client.get_history(tk, **history_options)
             try:
                 profile = client.get_profile(history.ticker)
             except Exception:
@@ -2803,11 +2813,9 @@ def build_chart_data_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        history_options = {
-            "start": payload.get("start_date"),
-            "end": payload.get("end_date"),
-            "period": "1y",
-        }
+        history_options = chart_history_options(
+            payload, default_period="1y", include_range=True
+        )
         histories, errors = collect_histories(
             client,
             selection.tickers,
@@ -2845,7 +2853,9 @@ def build_chart_data_response(
 
     if chart_key == "volatility":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        histories, errors = collect_histories(client, selection.tickers, period="1y")
+        histories, errors = collect_histories(
+            client, selection.tickers, **chart_history_options(payload, default_period="1y")
+        )
         require_histories(histories, errors)
         dataset = build_volatility_chart_data(histories)
         results = [
@@ -2939,7 +2949,8 @@ def build_cockpit_response(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     selection = resolve_ticker_selection(payload, watchlist_client)
-    period = str(payload.get("period") or "1y")
+    history_options = chart_history_options(payload, default_period="1y")
+    period = str(history_options["period"])
     include_torque = bool(payload.get("include_torque"))
     sec_client = current_app.config.get("SEC_CLIENT") if include_torque else None
     exa_client = current_app.config.get("EXA_CLIENT") if include_torque else None
@@ -2947,6 +2958,7 @@ def build_cockpit_response(
         client,
         selection.tickers,
         period=period,
+        interval=str(history_options["interval"]),
         include_torque=include_torque,
         sec_client=sec_client,
         exa_client=exa_client,
@@ -3475,6 +3487,7 @@ def collect_cockpit_rows(
     tickers: list[str],
     *,
     period: str,
+    interval: str = "1d",
     include_torque: bool = False,
     sec_client: SecClient | None = None,
     exa_client: ExaClient | None = None,
@@ -3488,6 +3501,7 @@ def collect_cockpit_rows(
                 client,
                 ticker,
                 period=period,
+                interval=interval,
                 sec_client=sec_client,
                 exa_client=exa_client,
                 include_torque=include_torque,

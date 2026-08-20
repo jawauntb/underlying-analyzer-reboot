@@ -126,6 +126,15 @@ _PERIOD = {
     "default": "1y",
     "description": "History window (5d is roughly one trading week)",
 }
+_INTERVAL = {
+    "type": "string",
+    "enum": ["15m", "1d", "1w"],
+    "default": "1d",
+    "description": (
+        "Bar interval. 15m uses a short lookback (5d unless 1d/1mo is requested). "
+        "Last bar is the live Massive snapshot when entitled (exchange delay only)."
+    ),
+}
 
 
 TOOLS: tuple[ToolSpec, ...] = (
@@ -231,6 +240,7 @@ TOOLS: tuple[ToolSpec, ...] = (
                 "watchlist_url": _WATCHLIST_URL,
                 "max_results": _MAX_RESULTS,
                 "period": _PERIOD,
+                "interval": _INTERVAL,
                 "month": {
                     "type": "integer",
                     "minimum": 1,
@@ -280,6 +290,7 @@ TOOLS: tuple[ToolSpec, ...] = (
                 "watchlist_url": _WATCHLIST_URL,
                 "max_results": _MAX_RESULTS,
                 "period": _PERIOD,
+                "interval": _INTERVAL,
                 "month": {
                     "type": "integer",
                     "minimum": 1,

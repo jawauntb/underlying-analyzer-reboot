@@ -25,6 +25,8 @@ from app.market_data import (
     MarketDataError,
     OptionChainResult,
     choose_expiry,
+    massive_interval_spec,
+    normalize_history_interval,
     normalize_ohlcv,
 )
 
@@ -209,14 +211,11 @@ class MassiveProvider:
             return self._backoff(attempt)
 
     def get_history(self, ticker: str, *, start: date, end: date, interval: str) -> HistoryResult:
-        if interval != "1d":
-            raise MarketDataCapabilityError(
-                "Massive historical adapter currently maps daily data only; "
-                f"interval {interval!r} needs fallback"
-            )
+        resolved = normalize_history_interval(interval)
+        multiplier, timespan = massive_interval_spec(resolved)
         payload = self._paginate(
-            f"/v2/aggs/ticker/{ticker}/range/1/day/{start.isoformat()}/{end.isoformat()}",
-            params={"adjusted": "true", "sort": "asc", "limit": 5000},
+            f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.isoformat()}/{end.isoformat()}",
+            params={"adjusted": "true", "sort": "asc", "limit": 50000},
         )
         rows = payload.get("results")
         if not isinstance(rows, list):
@@ -236,10 +235,10 @@ class MassiveProvider:
             ]
         )
         if frame.empty:
-            return HistoryResult(ticker, frame, self.name, self.note)
+            return HistoryResult(ticker, frame, self.name, self.note, interval=resolved)
         frame = frame.set_index("Date")
         frame["Adj Close"] = frame["Close"]
-        return HistoryResult(ticker, normalize_ohlcv(frame), self.name, self.note)
+        return HistoryResult(ticker, normalize_ohlcv(frame), self.name, self.note, interval=resolved)
 
     def get_profile(self, ticker: str) -> dict[str, Any]:
         payload = self._request_json(f"/v3/reference/tickers/{ticker}")

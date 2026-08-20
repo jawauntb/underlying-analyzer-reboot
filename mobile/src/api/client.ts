@@ -133,6 +133,7 @@ function serializeAlertsRequest(request: WatchlistAlertsRequest): Record<string,
   if (request.maxAlerts !== undefined) body.max_alerts = request.maxAlerts;
   if (request.volatilityThreshold !== undefined) body.volatility_threshold = request.volatilityThreshold;
   if (request.period) body.period = request.period;
+  if (request.interval) body.interval = request.interval;
   return body;
 }
 
@@ -252,7 +253,11 @@ export class ApiClient {
   torque(request: TorqueRequest, options: { signal?: AbortSignal } = {}): Promise<TorqueResponse> {
     return this.getJson(API_ENDPOINTS.torque, normalizeTorque, {
       method: 'POST',
-      body: { ticker: normalizeSymbol(request.ticker) },
+      body: {
+        ticker: normalizeSymbol(request.ticker),
+        ...(request.period ? { period: request.period } : {}),
+        ...(request.interval ? { interval: request.interval } : {}),
+      },
       signal: options.signal,
     });
   }

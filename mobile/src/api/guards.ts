@@ -419,6 +419,7 @@ function normalizeDataset(value: unknown): ChartDataset {
     ticker: ticker ?? undefined,
     tickers: tickers.length ? tickers : undefined,
     period: string(payload.period) || undefined,
+    interval: string(payload.interval) || undefined,
     meta: isRecord(payload.meta) ? payload.meta : {},
     levels: isRecord(payload.levels) ? payload.levels : {},
     series: isRecord(payload.series) ? payload.series : {},

@@ -55,18 +55,31 @@ const modeContracts = {
 
 const sharedFields = ["watchlist-url", "max-results"];
 
+const intervalModes = [
+  "auction",
+  "regression",
+  "ridge-growth",
+  "flow-compass",
+  "torque",
+  "torque-scan",
+  "cockpit",
+  "alerts",
+  "portfolio",
+  "volatility",
+];
+
 const fieldRules = {
-  auction: [...sharedFields, "period"],
+  auction: [...sharedFields, "period", "interval"],
   performance: [...sharedFields, "month"],
-  regression: [...sharedFields, "start-date", "end-date", "period"],
-  "ridge-growth": [...sharedFields],
-  "flow-compass": [...sharedFields, "period"],
-  torque: [...sharedFields, "period"],
-  "torque-scan": [...sharedFields, "period"],
-  cockpit: [...sharedFields, "period"],
-  alerts: [...sharedFields, "period", "max-alerts", "vol-threshold"],
-  portfolio: [...sharedFields, "start-date", "end-date", "investment", "benchmark"],
-  volatility: [...sharedFields],
+  regression: [...sharedFields, "start-date", "end-date", "period", "interval"],
+  "ridge-growth": [...sharedFields, "interval"],
+  "flow-compass": [...sharedFields, "period", "interval"],
+  torque: [...sharedFields, "period", "interval"],
+  "torque-scan": [...sharedFields, "period", "interval"],
+  cockpit: [...sharedFields, "period", "interval"],
+  alerts: [...sharedFields, "period", "interval", "max-alerts", "vol-threshold"],
+  portfolio: [...sharedFields, "start-date", "end-date", "interval", "investment", "benchmark"],
+  volatility: [...sharedFields, "interval"],
   analysis: [...sharedFields],
 };
 
@@ -94,11 +107,13 @@ const mobileLayoutQuery = window.matchMedia("(max-width: 680px)");
 const commandTickersInput = document.querySelector("#command-tickers");
 const commandModeSelect = document.querySelector("#command-mode");
 const commandPeriodSelect = document.querySelector("#command-period");
+const commandIntervalSelect = document.querySelector("#command-interval");
 const commandMonthSelect = document.querySelector("#command-month");
 const commandPreview = document.querySelector("#command-preview");
 const commandRunButton = document.querySelector("#command-run");
 const formTickersInput = document.querySelector("#tickers");
 const formPeriodSelect = document.querySelector("#period");
+const formIntervalSelect = document.querySelector("#interval");
 const formMonthSelect = document.querySelector("#month");
 const chartViewer = createChartViewer();
 let liveStream = null;
@@ -147,6 +162,13 @@ commandPeriodSelect.addEventListener("change", () => {
   updateCommandPreview();
 });
 
+commandIntervalSelect?.addEventListener("change", () => {
+  if (formIntervalSelect) {
+    formIntervalSelect.value = commandIntervalSelect.value;
+  }
+  updateCommandPreview();
+});
+
 commandMonthSelect.addEventListener("change", () => {
   formMonthSelect.value = commandMonthSelect.value;
   updateCommandPreview();
@@ -154,6 +176,7 @@ commandMonthSelect.addEventListener("change", () => {
 
 formTickersInput.addEventListener("input", syncCommandFromForm);
 formPeriodSelect.addEventListener("change", syncCommandFromForm);
+formIntervalSelect?.addEventListener("change", syncCommandFromForm);
 formMonthSelect.addEventListener("change", syncCommandFromForm);
 
 function scheduleLiveQuote() {
@@ -376,6 +399,9 @@ function syncFormFromCommand() {
   if (commandPeriodSelect.closest("[data-command-field]").hidden === false) {
     formPeriodSelect.value = commandPeriodSelect.value;
   }
+  if (commandIntervalSelect && commandIntervalSelect.closest("[data-command-field]").hidden === false) {
+    formIntervalSelect.value = commandIntervalSelect.value;
+  }
   if (commandMonthSelect.closest("[data-command-field]").hidden === false) {
     formMonthSelect.value = commandMonthSelect.value;
   }
@@ -384,6 +410,9 @@ function syncFormFromCommand() {
 function syncCommandFromForm() {
   commandTickersInput.value = formTickersInput.value;
   commandPeriodSelect.value = formPeriodSelect.value;
+  if (commandIntervalSelect && formIntervalSelect) {
+    commandIntervalSelect.value = formIntervalSelect.value;
+  }
   commandMonthSelect.value = formMonthSelect.value;
   updateCommandPreview();
 }
@@ -393,6 +422,7 @@ function syncCommandFields() {
     const name = field.dataset.commandField;
     field.hidden =
       (name === "period" && !["auction", "regression", "flow-compass", "torque", "torque-scan", "cockpit", "alerts"].includes(state.mode)) ||
+      (name === "interval" && !intervalModes.includes(state.mode)) ||
       (name === "month" && state.mode !== "performance");
   });
 }
@@ -409,6 +439,11 @@ function updateCommandPreview() {
     parts.push(monthLabel(commandMonthSelect.value));
   } else if (["auction", "regression", "flow-compass", "torque", "torque-scan", "cockpit", "alerts"].includes(state.mode)) {
     parts.push(commandPeriodSelect.value.toUpperCase());
+    if (commandIntervalSelect && intervalModes.includes(state.mode)) {
+      parts.push(commandIntervalSelect.value.toUpperCase());
+    }
+  } else if (commandIntervalSelect && intervalModes.includes(state.mode)) {
+    parts.push(commandIntervalSelect.value.toUpperCase());
   }
   commandPreview.textContent = parts.join(" ");
 }
@@ -474,6 +509,7 @@ function payloadFromForm() {
     max_alerts: Number(data.get("max_alerts") || 12),
     volatility_threshold: Number(data.get("volatility_threshold") || 0.55),
     period: data.get("period"),
+    interval: data.get("interval") || "1d",
     month: Number(data.get("month")),
     start_date: data.get("start_date"),
     end_date: data.get("end_date"),

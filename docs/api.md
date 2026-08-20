@@ -175,12 +175,12 @@ Supported `chart_type` values:
 
 | Type | Purpose | Extra body fields |
 | --- | --- | --- |
-| `auction` | Auction levels | `period` (default `1y`) |
+| `auction` | Auction levels | `period` (default `1y`), `interval` (`15m`/`1d`/`1w`) |
 | `performance` | Monthly seasonality | `month` (1–12, default `1`) |
-| `regression` | Regression channel | `period`, `start_date`, `end_date` |
+| `regression` | Regression channel | `period`, `start_date`, `end_date`, `interval` |
 | `ridge-growth` | Ridge strategy pack (6mo/1y/2y) | ticker/watchlist only |
-| `flow-compass` | Flow indicator dashboard | `period` (default `1y`) |
-| `torque` | Torque inflection chart | `period` (default `2y`) |
+| `flow-compass` | Flow indicator dashboard | `period` (default `1y`), `interval` |
+| `torque` | Torque inflection chart | `period` (default `2y`), `interval` |
 | `portfolio` | Multi-ticker portfolio | `investment_per_stock`, `benchmark`, `start_date`, `end_date` |
 | `volatility` | Cross-ticker vol compare | ticker/watchlist only |
 
@@ -188,6 +188,11 @@ Underscores are accepted (`ridge_growth` → `ridge-growth`).
 
 `period` accepts `5d` (≈ one trading week), `1mo`, `3mo`, `6mo`, `1y`, `2y`,
 `5y`, `10y` wherever a chart type takes a period.
+
+`interval` accepts `15m`, `1d` (default), and `1w`. Chart history uses Massive
+aggregates at that bar size and overlays the current snapshot on the last bar
+so quotes are live minus exchange delay. `15m` clamps long lookbacks to `5d`
+unless `1d` or `1mo` is requested.
 
 **Request**
 

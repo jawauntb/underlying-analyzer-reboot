@@ -23,7 +23,9 @@ import LiveQuoteCard from './LiveQuoteCard';
 import MarketDataStatusCard from './MarketDataStatusCard';
 import OptionsPulseCard from './OptionsPulseCard';
 import {
+  CHART_INTERVAL_CHIPS,
   LENS_AUCTION_PERIODS,
+  type ChartInterval,
   normalizeLensSymbol,
   RESEARCH_DEPTH_DESCRIPTIONS,
   RESEARCH_DEPTH_LABELS,
@@ -100,6 +102,7 @@ function LensController({
   const symbol = normalized.symbol;
   const [selectedDepth, setSelectedDepth] = useState<ResearchDepth>('glance');
   const [openedDepth, setOpenedDepth] = useState<ResearchDepth | null>(null);
+  const [chartInterval, setChartInterval] = useState<ChartInterval>('1d');
   const [torqueState, setTorqueState] = useState<PanelState<TorqueResponse>>(idlePanel);
   const [auctionState, setAuctionState] = useState<PanelState<ChartDataset>>(idlePanel);
   const [moneylineState, setMoneylineState] = useState<PanelState<MoneylineResponse>>(idlePanel);
@@ -124,12 +127,14 @@ function LensController({
     optionsCoordinator.current.cancel();
   }, []);
 
-  async function loadTorque(force = false) {
+  async function loadTorque(force = false, interval: ChartInterval = chartInterval) {
     if (!symbol || (!force && ['loading', 'ready'].includes(torqueState.status))) return;
     const generation = ++torqueGeneration.current;
     setTorqueState({ status: 'loading', data: null, source: null, fetchedAt: null });
     try {
-      const result = await torqueCoordinator.current.run((signal) => client.torque({ ticker: symbol }, { signal }));
+      const result = await torqueCoordinator.current.run((signal) =>
+        client.torque({ ticker: symbol, period: '2y', interval }, { signal }),
+      );
       if (!result.accepted || generation !== torqueGeneration.current) return;
       if (result.value.ticker !== symbol) {
         setTorqueState({
@@ -159,13 +164,13 @@ function LensController({
     }
   }
 
-  async function loadAuction(force = false) {
+  async function loadAuction(force = false, interval: ChartInterval = chartInterval) {
     if (!symbol || (!force && ['loading', 'ready'].includes(auctionState.status))) return;
     const generation = ++auctionGeneration.current;
     setAuctionState({ status: 'loading', data: null, source: null, fetchedAt: null });
     try {
       const result = await auctionCoordinator.current.run((signal) =>
-        client.auction({ ticker: symbol, period: LENS_PERIOD }, { signal }),
+        client.auction({ ticker: symbol, period: LENS_PERIOD, interval }, { signal }),
       );
       if (!result.accepted || generation !== auctionGeneration.current) return;
       const dataset = result.value.datasets.find((candidate) => candidate.ticker === symbol);
@@ -378,6 +383,27 @@ function LensController({
         {openedDepth && openedDepth !== 'deep-dive' ? (
           <View style={styles.panels}>
             <Text accessibilityRole="header" style={styles.panelsTitle}>Opened intelligence</Text>
+            <View accessibilityRole="tablist" style={styles.intervalRow}>
+              {CHART_INTERVAL_CHIPS.map((candidate) => {
+                const active = candidate.value === chartInterval;
+                return (
+                  <Pressable
+                    accessibilityLabel={`Show ${candidate.spoken} interval`}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: active }}
+                    key={candidate.value}
+                    onPress={() => {
+                      if (candidate.value === chartInterval) return;
+                      setChartInterval(candidate.value);
+                      void loadTorque(true, candidate.value);
+                      void loadAuction(true, candidate.value);
+                    }}
+                    style={({ pressed }) => [styles.intervalChip, active && styles.intervalChipActive, pressed && styles.pressed]}>
+                    <Text style={[styles.intervalChipText, active && styles.intervalChipTextActive]}>{candidate.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <LensPanel title={`${symbol} Torque`} state={torqueState} onRetry={() => void loadTorque(true)}>
               {torqueState.status === 'ready' ? <TorqueChart dataset={torqueState.data} fontScale={fontScale} title={`${symbol} Torque`} width={chartWidth} /> : null}
             </LensPanel>
@@ -473,6 +499,20 @@ const styles = StyleSheet.create({
   openActionText: { ...typography.label, color: colors.graphite },
   panels: { gap: spacing.lg },
   panelsTitle: { ...typography.headline, color: colors.ink },
+  intervalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  intervalChip: {
+    alignItems: 'center',
+    borderColor: colors.mineral,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: layout.minimumTouchTarget,
+    minWidth: layout.minimumTouchTarget,
+    paddingHorizontal: spacing.sm,
+  },
+  intervalChipActive: { backgroundColor: colors.mint, borderColor: colors.mint },
+  intervalChipText: { ...typography.micro, color: colors.inkSecondary },
+  intervalChipTextActive: { color: colors.graphite },
   panel: { gap: spacing.sm },
   notice: { ...typography.caption, color: colors.coral },
   pressed: { opacity: 0.72 },

@@ -133,6 +133,7 @@ export type WatchlistAlertsRequest = {
   maxAlerts?: number;
   volatilityThreshold?: number;
   period?: string;
+  interval?: string;
 };
 
 export type PerTickerError = {
@@ -238,6 +239,7 @@ export type ChartDataset = {
   ticker?: string;
   tickers?: string[];
   period?: string;
+  interval?: string;
   meta: Record<string, unknown>;
   levels: Record<string, unknown>;
   series: Record<string, unknown>;
@@ -250,6 +252,7 @@ export type AuctionRequest = {
   tickers?: string[];
   watchlistUrl?: string;
   period?: string;
+  interval?: string;
   maxResults?: number;
 };
 
@@ -262,7 +265,7 @@ export type AuctionResponse = {
   status: 'fresh' | 'partial';
 };
 
-export type TorqueRequest = { ticker: string };
+export type TorqueRequest = { ticker: string; period?: string; interval?: string };
 
 export type TorqueResponse = ChartDataset & {
   chartType: 'torque';

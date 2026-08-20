@@ -38,14 +38,21 @@ Per-type extras:
 Supported `period` tokens: `5d` (≈ one trading week), `1mo`, `3mo`, `6mo`,
 `1y`, `2y`, `5y`, `10y`.
 
+Supported `interval` tokens: `15m`, `1d` (default), `1w`. The last bar is the
+live Massive snapshot when the Stocks plan is entitled, so charts show the
+current quote minus exchange delay rather than the last completed session.
+`15m` clamps the lookback to `1d` / `5d` / `1mo` (default `5d`) so the series
+stays plottable. Intraday `date` values are ISO datetimes
+(`2026-08-19T14:45:00`); daily and weekly stay `YYYY-MM-DD`.
+
 | Type | Extra body fields | History window used |
 | --- | --- | --- |
-| `auction` | `period` (default `1y`) | `period` |
+| `auction` | `period` (default `1y`), `interval` (`15m`/`1d`/`1w`) | `period` at `interval` |
 | `performance` | `month` 1–12 (default 1) | fixed 10y |
-| `regression` | `period` (default `1y`), `start_date`, `end_date` | `period` or explicit range |
-| `ridge-growth` | none | fixed windows: 6mo, 1y, 2y (3 datasets per ticker) |
-| `flow-compass` | `period` (default `1y`) | `period`, daily bars |
-| `torque` | `period` (default `2y`) | `period`, daily bars |
+| `regression` | `period` (default `1y`), `interval`, `start_date`, `end_date` | `period` or explicit range |
+| `ridge-growth` | `interval` | fixed windows: 6mo, 1y, 2y (3 datasets per ticker) |
+| `flow-compass` | `period` (default `1y`), `interval` | `period` at `interval` |
+| `torque` | `period` (default `2y`), `interval` | `period` at `interval` |
 | `portfolio` | `investment_per_stock` (default 100), `benchmark_ticker` (default SPY), `start_date`, `end_date` | 1y or explicit range |
 | `volatility` | none | fixed 1y |
 
@@ -121,8 +128,9 @@ All time series use one of these row shapes:
 { "date": "2026-08-14", "Close": 1.0, "buy_signal": false, "state": "NEUTRAL" }     // signal frames: typed columns, null when missing
 ```
 
-Dates are ISO `YYYY-MM-DD`, trading days only (no weekend gap-filling — plot on
-a category/time axis that skips missing days, exactly like the terminal does).
+Daily and weekly dates are ISO `YYYY-MM-DD`. `15m` points use ISO datetimes
+(`YYYY-MM-DDTHH:MM:SS`). Trading days only (no weekend gap-filling — plot on
+a category/time axis that skips missing sessions, exactly like the terminal does).
 
 ---
 

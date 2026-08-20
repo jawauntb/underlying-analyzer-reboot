@@ -67,6 +67,42 @@ def test_massive_history_maps_bars_and_follows_next_url() -> None:
     assert session.calls[0][0].endswith("/v2/aggs/ticker/AAPL/range/1/day/2026-01-01/2026-01-05")
     assert session.calls[0][1]["apiKey"] == "secret-key"
     assert session.calls[1][0] == "https://api.massive.com/v2/aggs?page=2"
+    assert result.interval == "1d"
+
+
+@pytest.mark.parametrize(
+    ("interval", "path_fragment"),
+    [
+        ("15m", "/v2/aggs/ticker/AAPL/range/15/minute/2026-01-01/2026-01-05"),
+        ("1w", "/v2/aggs/ticker/AAPL/range/1/week/2026-01-01/2026-01-05"),
+        ("1wk", "/v2/aggs/ticker/AAPL/range/1/week/2026-01-01/2026-01-05"),
+    ],
+)
+def test_massive_history_maps_intraday_and_weekly_intervals(
+    interval: str, path_fragment: str
+) -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "status": "OK",
+                    "results": [{"t": 1767358800000, "o": 10, "h": 12, "l": 9, "c": 11, "v": 100}],
+                }
+            )
+        ]
+    )
+    result = MassiveProvider("secret-key", session=session).get_history(
+        "AAPL", start=date(2026, 1, 1), end=date(2026, 1, 5), interval=interval
+    )
+
+    assert session.calls[0][0].endswith(path_fragment)
+    assert result.interval in {"15m", "1w"}
+
+
+def test_massive_history_rejects_unknown_interval() -> None:
+    provider = MassiveProvider("secret-key", session=FakeSession([]))
+    with pytest.raises(ValueError, match="15m, 1d, or 1w"):
+        provider.get_history("AAPL", start=date(2026, 1, 1), end=date(2026, 1, 5), interval="4h")
 
 
 def test_massive_retries_rate_limits_and_honors_retry_after_without_leaking_key() -> None:
