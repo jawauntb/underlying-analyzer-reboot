@@ -54,6 +54,46 @@ describe('saved watchlists', () => {
     expect(JSON.parse(storage.values.get(LISTS_STORAGE_KEY)!)).toMatchObject({ schemaVersion: 1, lists: [{ id: 'manual-1' }, { id: 'remote-2' }] });
   });
 
+  it('renames, edits symbols, and deletes saved lists through one durable queue', async () => {
+    const storage = new MemoryStorage();
+    let now = 100;
+    const store = new WatchlistStore(storage, { createId: () => 'list-1', now: () => now++ });
+    await store.hydrate();
+    const created = await store.saveManual('Mega cap', ['AAPL', 'MSFT']);
+
+    const renamed = await store.rename(created.id, '  Core names  ');
+    expect(renamed).toMatchObject({ name: 'Core names', symbols: ['AAPL', 'MSFT'] });
+    expect(renamed.updatedAt).toBeGreaterThan(created.updatedAt);
+
+    expect(await store.addSymbol(created.id, ' nvda ')).toMatchObject({ symbols: ['AAPL', 'MSFT', 'NVDA'] });
+    await expect(store.addSymbol(created.id, 'nvda')).rejects.toThrow(/already in Core names/);
+    await expect(store.addSymbol(created.id, 'bad/symbol')).rejects.toThrow(/1-32 letters/);
+    expect(await store.removeSymbol(created.id, 'msft')).toMatchObject({ symbols: ['AAPL', 'NVDA'] });
+    await expect(store.removeSymbol(created.id, 'TSLA')).rejects.toThrow(/not in Core names/);
+
+    expect(JSON.parse(storage.values.get(LISTS_STORAGE_KEY)!)).toMatchObject({
+      schemaVersion: 1,
+      lists: [{ id: 'list-1', name: 'Core names', symbols: ['AAPL', 'NVDA'] }],
+    });
+
+    await store.removeSymbol(created.id, 'NVDA');
+    await expect(store.removeSymbol(created.id, 'AAPL')).rejects.toThrow(/at least one symbol/);
+
+    await store.remove(created.id);
+    expect(store.snapshot()).toEqual([]);
+    await expect(store.remove(created.id)).rejects.toThrow(/no longer saved/);
+    await expect(store.rename('missing', 'Anything')).rejects.toThrow(/no longer saved/);
+  });
+
+  it('keeps the ten-symbol ceiling when adding to a full list', async () => {
+    const store = new WatchlistStore(new MemoryStorage(), { createId: () => 'full', now: () => 1 });
+    await store.hydrate();
+    const full = await store.saveManual('Full', ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']);
+
+    await expect(store.addSymbol(full.id, 'K')).rejects.toThrow(/at most 10 symbols/);
+    expect(store.snapshot()[0].symbols).toHaveLength(10);
+  });
+
   it('does not mutate memory when durable persistence fails', async () => {
     const storage = new MemoryStorage();
     const store = new WatchlistStore(storage, { createId: () => 'one', now: () => 1 });

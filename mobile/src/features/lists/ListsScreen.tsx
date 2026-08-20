@@ -1,4 +1,3 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter, type Href } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
@@ -9,6 +8,7 @@ import type { ResolveWatchlistResponse } from '@/src/api/contracts';
 import AsyncState from '@/src/components/ui/AsyncState';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
+import SavedListCard from './SavedListCard';
 import {
   normalizeListSymbols,
   type SavedListsContextValue,
@@ -254,28 +254,15 @@ function ListsController({
             <AsyncState title="No lists yet" message="Save a manual list or preview a public TradingView watchlist above." />
           ) : (
             listsState.lists.map((list) => (
-              <View accessibilityLabel={`Saved list ${list.name}`} key={list.id} style={styles.savedList}>
-                <View style={styles.savedHeading}>
-                  <View style={styles.savedTitleCopy}>
-                    <Text style={styles.savedName}>{list.name}</Text>
-                    <Text style={styles.savedMeta}>{list.source.kind === 'manual' ? 'MANUAL' : `TRADINGVIEW · ${list.source.remoteId}`}</Text>
-                  </View>
-                  <Ionicons color={colors.inkMuted} name="list-outline" size={20} />
-                </View>
-                <View style={styles.symbols}>
-                  {list.symbols.map((symbol) => (
-                    <Pressable
-                      accessibilityLabel={`Open ${symbol} Lens`}
-                      accessibilityRole="button"
-                      key={symbol}
-                      onPress={() => router.push({ pathname: '/ticker/[symbol]', params: { symbol } })}
-                      style={({ pressed }) => [styles.symbolAction, pressed && styles.pressed]}>
-                      <Text style={styles.symbolText}>{symbol}</Text>
-                      <Ionicons color={colors.cyan} name="arrow-forward" size={18} />
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
+              <SavedListCard
+                key={list.id}
+                list={list}
+                onAddSymbol={(symbol) => listsState.addSymbol(list.id, symbol)}
+                onDelete={() => listsState.deleteList(list.id)}
+                onOpenSymbol={(symbol) => router.push({ pathname: '/ticker/[symbol]', params: { symbol } })}
+                onRemoveSymbol={(symbol) => listsState.removeSymbol(list.id, symbol)}
+                onRename={(name) => listsState.renameList(list.id, name)}
+              />
             ))
           )}
         </View>
@@ -307,14 +294,6 @@ const styles = StyleSheet.create({
   previewSymbols: { ...typography.body, color: colors.ink },
   source: { ...typography.caption, color: colors.inkMuted },
   savedSection: { gap: spacing.sm },
-  savedList: { backgroundColor: colors.graphiteRaised, borderColor: colors.mineral, borderRadius: radii.lg, borderWidth: 1, gap: spacing.sm, padding: spacing.md },
-  savedHeading: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
-  savedTitleCopy: { flex: 1, gap: spacing.xs },
-  savedName: { ...typography.title, color: colors.ink },
-  savedMeta: { ...typography.micro, color: colors.inkMuted },
-  symbols: { gap: spacing.xs },
-  symbolAction: { alignItems: 'center', borderTopColor: colors.mineral, borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: layout.minimumTouchTarget, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
-  symbolText: { ...typography.label, color: colors.ink },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.72 },
 });

@@ -53,6 +53,10 @@ function dependencies() {
     retryHydration: jest.fn(),
     saveManual: jest.fn(async (name: string, symbols: string[]) => ({ ...saved[0], id: 'manual', name, symbols })),
     saveTradingView: jest.fn(async (input: unknown) => ({ ...saved[0], id: 'imported', ...(input as object) })),
+    renameList: jest.fn(async (_id: string, name: string) => ({ ...saved[0], name: name.trim() })),
+    addSymbol: jest.fn(async (_id: string, symbol: string) => ({ ...saved[0], symbols: ['AAPL', symbol.trim().toUpperCase()] })),
+    removeSymbol: jest.fn(async () => { throw new Error('A list needs at least one symbol. Delete the list instead.'); }),
+    deleteList: jest.fn(async () => undefined),
   };
   const client = { resolveWatchlist: jest.fn() };
   const router = { push: jest.fn() };
@@ -60,6 +64,32 @@ function dependencies() {
 }
 
 describe('ListsScreen', () => {
+  it('renames, adds symbols, and requires a second press before deleting a saved list', async () => {
+    const deps = dependencies();
+    render(<ListsScreen {...deps.props} />);
+
+    expect(screen.queryByLabelText('Rename Existing')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'Edit Existing' }));
+
+    fireEvent.changeText(screen.getByLabelText('Rename Existing'), ' Core names ');
+    fireEvent.press(screen.getByRole('button', { name: 'Save name for Existing' }));
+    await waitFor(() => expect(deps.lists.renameList).toHaveBeenCalledWith('old', ' Core names '));
+
+    fireEvent.changeText(screen.getByLabelText('New symbol for Existing'), 'nvda');
+    fireEvent.press(screen.getByRole('button', { name: 'Add NVDA to Existing' }));
+    await waitFor(() => expect(deps.lists.addSymbol).toHaveBeenCalledWith('old', 'nvda'));
+
+    // The store refuses to strand an empty list, and the refusal reaches the reader.
+    fireEvent.press(screen.getByRole('button', { name: 'Remove AAPL from Existing' }));
+    expect(await screen.findByText('A list needs at least one symbol. Delete the list instead.')).toBeTruthy();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Delete Existing' }));
+    expect(deps.lists.deleteList).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'Confirm delete Existing' }));
+    await waitFor(() => expect(deps.lists.deleteList).toHaveBeenCalledWith('old'));
+  });
+
+
   it('saves a normalized manual list and preserves existing browsing', async () => {
     const deps = dependencies();
     render(<ListsScreen {...deps.props} />);

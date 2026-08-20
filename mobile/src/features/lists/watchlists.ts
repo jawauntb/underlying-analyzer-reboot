@@ -55,6 +55,10 @@ type WatchlistStoreOptions = {
 
 type Listener = (lists: readonly SavedList[]) => void;
 
+function missingList(): Error {
+  return new Error('That list is no longer saved on this device.');
+}
+
 function defaultId(): string {
   return `list-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -247,6 +251,61 @@ export class WatchlistStore {
     });
   }
 
+  /** Rename a saved list, keeping its symbols and its import source. */
+  rename(id: string, name: string): Promise<SavedList> {
+    return this.mutate(id, (list) => ({ ...list, name: normalizedName(name) }));
+  }
+
+  /** Add one symbol to the end of a saved list. */
+  addSymbol(id: string, symbol: string): Promise<SavedList> {
+    return this.mutate(id, (list) => {
+      const next = normalizeSavedSymbol(symbol);
+      if (list.symbols.includes(next)) throw new Error(`${next} is already in ${list.name}.`);
+      if (list.symbols.length >= MAX_LIST_SYMBOLS) {
+        throw new Error(`A list can contain at most ${MAX_LIST_SYMBOLS} symbols.`);
+      }
+      return { ...list, symbols: [...list.symbols, next] };
+    });
+  }
+
+  /** Drop one symbol from a saved list. The last symbol stays: delete the list instead. */
+  removeSymbol(id: string, symbol: string): Promise<SavedList> {
+    return this.mutate(id, (list) => {
+      const target = normalizeSavedSymbol(symbol);
+      if (!list.symbols.includes(target)) throw new Error(`${target} is not in ${list.name}.`);
+      if (list.symbols.length === 1) {
+        throw new Error('A list needs at least one symbol. Delete the list instead.');
+      }
+      return { ...list, symbols: list.symbols.filter((candidate) => candidate !== target) };
+    });
+  }
+
+  /** Forget a saved list on this device. */
+  remove(id: string): Promise<void> {
+    const operation = this.writeQueue.then(async () => {
+      const next = this.lists.filter((list) => list.id !== id);
+      if (next.length === this.lists.length) throw missingList();
+      await this.persist(next);
+    });
+    this.writeQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private mutate(id: string, transform: (list: SavedList) => SavedList): Promise<SavedList> {
+    let record: SavedList | null = null;
+    const operation = this.writeQueue.then(async () => {
+      const index = this.lists.findIndex((list) => list.id === id);
+      if (index === -1) throw missingList();
+      record = { ...transform(this.lists[index]), updatedAt: this.now() };
+      const next = [...this.lists];
+      next[index] = record;
+      await this.persist(next);
+    });
+    this.writeQueue = operation.catch(() => undefined);
+    // `record` is assigned before persist() resolves, so the cast only narrows the type.
+    return operation.then(() => record as SavedList);
+  }
+
   private append(input: {
     name: string;
     symbols: string | readonly string[];
@@ -263,14 +322,15 @@ export class WatchlistStore {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    const operation = this.writeQueue.then(async () => {
-      const next = [...this.lists, record];
-      const envelope: ListsEnvelope = { schemaVersion: LISTS_SCHEMA_VERSION, lists: next };
-      await this.storage.setItem(LISTS_STORAGE_KEY, JSON.stringify(envelope));
-      this.replace(next);
-    });
+    const operation = this.writeQueue.then(() => this.persist([...this.lists, record]));
     this.writeQueue = operation.catch(() => undefined);
     return operation.then(() => record);
+  }
+
+  private async persist(lists: readonly SavedList[]): Promise<void> {
+    const envelope: ListsEnvelope = { schemaVersion: LISTS_SCHEMA_VERSION, lists: [...lists] };
+    await this.storage.setItem(LISTS_STORAGE_KEY, JSON.stringify(envelope));
+    this.replace(lists);
   }
 
   private replace(lists: readonly SavedList[]): void {
@@ -288,6 +348,10 @@ export type SavedListsContextValue = {
   retryHydration(): void;
   saveManual(name: string, symbols: string | readonly string[]): Promise<SavedList>;
   saveTradingView(input: TradingViewListInput): Promise<SavedList>;
+  renameList(id: string, name: string): Promise<SavedList>;
+  addSymbol(id: string, symbol: string): Promise<SavedList>;
+  removeSymbol(id: string, symbol: string): Promise<SavedList>;
+  deleteList(id: string): Promise<void>;
 };
 
 const unavailable = async (): Promise<never> => {
@@ -302,6 +366,10 @@ const SavedListsContext = createContext<SavedListsContextValue>({
   retryHydration: () => undefined,
   saveManual: unavailable,
   saveTradingView: unavailable,
+  renameList: unavailable,
+  addSymbol: unavailable,
+  removeSymbol: unavailable,
+  deleteList: unavailable,
 });
 
 const defaultStore = new WatchlistStore();
@@ -355,6 +423,10 @@ export function SavedListsProvider({
       retryHydration,
       saveManual: hydrated ? (name, symbols) => store.saveManual(name, symbols) : unavailable,
       saveTradingView: hydrated ? (input) => store.saveTradingView(input) : unavailable,
+      renameList: hydrated ? (id, name) => store.rename(id, name) : unavailable,
+      addSymbol: hydrated ? (id, symbol) => store.addSymbol(id, symbol) : unavailable,
+      removeSymbol: hydrated ? (id, symbol) => store.removeSymbol(id, symbol) : unavailable,
+      deleteList: hydrated ? (id) => store.remove(id) : unavailable,
     }),
     [droppedCorruptListCount, hydrated, hydrationError, lists, retryHydration, store],
   );

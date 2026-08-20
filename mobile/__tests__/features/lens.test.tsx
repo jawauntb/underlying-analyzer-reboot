@@ -54,6 +54,9 @@ const auction = {
   meta: {},
 };
 
+const auctionWithNote = (providerNote: string) =>
+  ({ ...auction, providerNote }) as unknown as typeof auction;
+
 const moneyline = {
   chartType: 'moneyline' as const,
   ticker: 'AAPL',
@@ -310,7 +313,7 @@ describe('LensScreen', () => {
 
   it('shows a real provider caveat and hides the internal pipeline label', async () => {
     const deps = dependencies();
-    deps.client.auction.mockImplementation(async () => ({ ...auction, providerNote: 'Batch auction chart data' }));
+    deps.client.auction.mockImplementation(async () => auctionWithNote('Batch auction chart data'));
     const { unmount } = render(<LensScreen {...deps.props} />);
 
     expect(await screen.findByText(/Fixture provider · Updated/)).toBeTruthy();
@@ -318,7 +321,7 @@ describe('LensScreen', () => {
     unmount();
 
     const delayed = dependencies();
-    delayed.client.auction.mockImplementation(async () => ({ ...auction, providerNote: 'Delayed 15 minutes.' }));
+    delayed.client.auction.mockImplementation(async () => auctionWithNote('Delayed 15 minutes.'));
     render(<LensScreen {...delayed.props} />);
 
     expect(await screen.findByText('Delayed 15 minutes.')).toBeTruthy();
