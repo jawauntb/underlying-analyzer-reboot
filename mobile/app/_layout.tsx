@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { colors } from '@/src/theme/tokens';
 import { SavedListsProvider } from '@/src/features/lists/watchlists';
 import { NetworkProvider } from '@/src/state/network';
+import { PreferencesProvider } from '@/src/state/preferences';
 import E2EFixtureBadge from '@/src/testing/E2EFixtureBadge';
 
 export const unstable_settings = {
@@ -65,37 +66,39 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <NetworkProvider>
-        <SavedListsProvider>
-          <ThemeProvider value={navigationTheme}>
-            <Stack
-              screenOptions={{
-                animation: stackAnimationFor(reduceMotion),
-                contentStyle: { backgroundColor: colors.graphite },
-                headerBackButtonDisplayMode: 'minimal',
-                headerShadowVisible: false,
-                headerStyle: { backgroundColor: colors.graphiteRaised },
-                headerTintColor: colors.ink,
-                headerTitleStyle: { fontWeight: '700' },
-              }}>
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="ticker/[symbol]"
-                options={tickerScreenOptions}
-              />
-              <Stack.Screen
-                name="research"
-                options={{
-                  presentation: 'formSheet',
-                  sheetAllowedDetents: [0.62, 0.92],
-                  sheetGrabberVisible: true,
-                  title: 'Research Run',
-                }}
-              />
-            </Stack>
-            <StatusBar animated={!reduceMotion} style="light" />
-            <E2EFixtureBadge />
-          </ThemeProvider>
-        </SavedListsProvider>
+        <PreferencesProvider>
+          <SavedListsProvider>
+            <ThemeProvider value={navigationTheme}>
+              <Stack
+                screenOptions={{
+                  animation: stackAnimationFor(reduceMotion),
+                  contentStyle: { backgroundColor: colors.graphite },
+                  headerBackButtonDisplayMode: 'minimal',
+                  headerShadowVisible: false,
+                  headerStyle: { backgroundColor: colors.graphiteRaised },
+                  headerTintColor: colors.ink,
+                  headerTitleStyle: { fontWeight: '700' },
+                }}>
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen
+                  name="ticker/[symbol]"
+                  options={tickerScreenOptions}
+                />
+                <Stack.Screen
+                  name="research"
+                  options={{
+                    presentation: 'formSheet',
+                    sheetAllowedDetents: [0.62, 0.92],
+                    sheetGrabberVisible: true,
+                    title: 'Research Run',
+                  }}
+                />
+              </Stack>
+              <StatusBar animated={!reduceMotion} style="light" />
+              <E2EFixtureBadge />
+            </ThemeProvider>
+          </SavedListsProvider>
+        </PreferencesProvider>
       </NetworkProvider>
     </SafeAreaProvider>
   );

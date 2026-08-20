@@ -38,6 +38,8 @@ type PriceValuePanelProps = {
   cache?: ChartCache;
   client: ChartClient;
   fontScale: number;
+  /** Interval this panel opens on, from the reader's saved settings. */
+  initialInterval?: ChartInterval;
   now?: () => number;
   reachability: NetworkReachability;
   symbol: string;
@@ -95,13 +97,15 @@ export default function PriceValuePanel({
   cache = defaultCache,
   client,
   fontScale,
+  initialInterval = '1d',
   now = Date.now,
   reachability,
   symbol,
   width,
 }: PriceValuePanelProps) {
-  const [period, setPeriod] = useState<Period>('3mo');
-  const [interval, setInterval] = useState<ChartInterval>('1d');
+  const openingChip = CHART_INTERVAL_CHIPS.find((candidate) => candidate.value === initialInterval) ?? CHART_INTERVAL_CHIPS[1];
+  const [period, setPeriod] = useState<Period>(openingChip.period);
+  const [interval, setInterval] = useState<ChartInterval>(openingChip.value);
   const [state, setState] = useState<ChartState>({ status: 'loading', data: null, fetchedAt: null });
   const coordinator = useRef(new RequestCoordinator<AuctionResponse>());
   const generation = useRef(0);

@@ -166,6 +166,7 @@ function dependencies(options: {
   now?: number;
   providers?: ProviderStatusResponse;
   optionsChain?: OptionsChainResponse;
+  marketSnapshot?: Record<string, unknown>;
 } = {}) {
   const cache = {
     read: jest.fn(async (descriptor: { route?: string }) =>
@@ -180,6 +181,7 @@ function dependencies(options: {
     moneyline: jest.fn(async () => moneyline),
     ...(options.providers ? { providers: jest.fn(async () => options.providers) } : {}),
     ...(options.optionsChain ? { optionsChain: jest.fn(async () => options.optionsChain) } : {}),
+    ...(options.marketSnapshot ? { marketSnapshot: jest.fn(async () => options.marketSnapshot) } : {}),
   };
   const router = { push: jest.fn() };
   const haptics = { selectionAsync: jest.fn(async () => undefined) };
@@ -293,6 +295,21 @@ describe('LensScreen', () => {
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
     expect(deps.client.torque).not.toHaveBeenCalled();
     expect(deps.client.moneyline).not.toHaveBeenCalled();
+  });
+
+  it('opens on the saved defaults from Settings', async () => {
+    const deps = dependencies({ marketSnapshot: { ticker: 'AAPL', provider: 'massive', data: { lastTrade: { p: 231.42 } } } });
+    render(
+      <LensScreen
+        {...deps.props}
+        preferences={{ defaultInterval: '1w', defaultDepth: 'diagnose', liveQuotes: false }}
+      />,
+    );
+
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '1y', interval: '1w' }, expect.anything()));
+    expect(screen.getByText(/Selected depth: Diagnose/)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Show weekly interval' }).props.accessibilityState.selected).toBe(true);
+    expect(deps.client.marketSnapshot).not.toHaveBeenCalled();
   });
 
   it('keeps both chart rails on one line each so no chip lands on the reading below', async () => {

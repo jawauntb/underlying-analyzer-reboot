@@ -15,6 +15,7 @@ import AsyncState from '@/src/components/ui/AsyncState';
 import MetricCard from '@/src/components/ui/MetricCard';
 import type { NetworkReachability } from '@/src/state/network';
 import { useNetworkReachability } from '@/src/state/network';
+import { DEFAULT_PREFERENCES, usePreferences, type Preferences } from '@/src/state/preferences';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
 import ChartIntervalRail from './ChartIntervalRail';
@@ -51,6 +52,7 @@ const idlePanel = <T,>(): PanelState<T> => ({ status: 'idle', data: null, source
 export type LensScreenProps = {
   symbol: string;
   client?: LensClient;
+  preferences?: Preferences;
   cache?: LensOverviewCache;
   reachability?: NetworkReachability;
   router?: LensRouter;
@@ -75,7 +77,8 @@ function moneylineSource(data: MoneylineResponse): string {
 function ConnectedLensScreen(props: LensScreenProps) {
   const router = useRouter();
   const reachability = useNetworkReachability();
-  return <LensController {...props} reachability={reachability} router={router} />;
+  const { preferences } = usePreferences();
+  return <LensController {...props} preferences={props.preferences ?? preferences} reachability={reachability} router={router} />;
 }
 
 export default function LensScreen(props: LensScreenProps) {
@@ -86,6 +89,7 @@ function LensController({
   symbol: rawSymbol,
   client = defaultClient,
   cache,
+  preferences = DEFAULT_PREFERENCES,
   reachability = 'unknown',
   router = { push: () => undefined },
   haptics = Haptics,
@@ -100,9 +104,9 @@ function LensController({
   const chartWidth = Math.max(270, Math.min(layout.maximumContentWidth - 44, width - (compact ? 32 : 44)));
   const normalized = normalizeLensSymbol(rawSymbol);
   const symbol = normalized.symbol;
-  const [selectedDepth, setSelectedDepth] = useState<ResearchDepth>('glance');
+  const [selectedDepth, setSelectedDepth] = useState<ResearchDepth>(preferences.defaultDepth);
   const [openedDepth, setOpenedDepth] = useState<ResearchDepth | null>(null);
-  const [chartInterval, setChartInterval] = useState<ChartInterval>('1d');
+  const [chartInterval, setChartInterval] = useState<ChartInterval>(preferences.defaultInterval);
   const [torqueState, setTorqueState] = useState<PanelState<TorqueResponse>>(idlePanel);
   const [auctionState, setAuctionState] = useState<PanelState<ChartDataset>>(idlePanel);
   const [moneylineState, setMoneylineState] = useState<PanelState<MoneylineResponse>>(idlePanel);
@@ -342,13 +346,14 @@ function LensController({
           cache={cache}
           client={client}
           fontScale={fontScale}
+          initialInterval={preferences.defaultInterval}
           now={now}
           reachability={reachability}
           symbol={symbol}
           width={chartWidth}
         />
 
-        {liveQuoteClient ? <LiveQuoteCard client={liveQuoteClient} symbol={symbol} /> : null}
+        {liveQuoteClient && preferences.liveQuotes ? <LiveQuoteCard client={liveQuoteClient} symbol={symbol} /> : null}
 
         {providerStatusClient ? <MarketDataStatusCard client={providerStatusClient} /> : null}
 
