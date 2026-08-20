@@ -11,7 +11,7 @@ import { AsyncCache, TTL_MS, type CacheRequestDescriptor } from '@/src/state/cac
 import type { NetworkReachability } from '@/src/state/network';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
-import { LENS_AUCTION_PERIODS } from './lens-model';
+import { CHART_INTERVAL_CHIPS, LENS_AUCTION_PERIODS, type ChartInterval } from './lens-model';
 import { errorMessage, explicitProvider, formatTimestamp } from './lens-utils';
 
 const defaultCache = new AsyncCache();
@@ -23,7 +23,7 @@ const PERIODS = [
   { label: '1Y', value: LENS_AUCTION_PERIODS[4], spoken: '1 year' },
 ] as const;
 
-type Period = (typeof PERIODS)[number]['value'];
+type Period = (typeof LENS_AUCTION_PERIODS)[number];
 type ChartData = { dataset: ChartDataset; response: AuctionResponse };
 type ChartClient = Pick<ApiClient, 'auction' | 'baseUrl'>;
 type ChartCache = Pick<AsyncCache, 'read' | 'write'>;
@@ -43,13 +43,24 @@ type PriceValuePanelProps = {
   width: number;
 };
 
-function descriptor(client: ChartClient, symbol: string, period: Period): CacheRequestDescriptor {
+function descriptor(
+  client: ChartClient,
+  symbol: string,
+  period: Period,
+  interval: ChartInterval,
+): CacheRequestDescriptor {
   return {
     baseUrl: client.baseUrl,
     method: 'POST',
     route: API_ENDPOINTS.auction,
-    body: { ticker: symbol, period },
+    body: { ticker: symbol, period, interval },
   };
+}
+
+function intervalCopy(interval: ChartInterval): string {
+  if (interval === '15m') return '15-minute candles with a live last bar.';
+  if (interval === '1w') return 'Weekly candles with a live last bar.';
+  return 'Daily candles with auction value levels and a live last bar.';
 }
 
 function chartData(response: AuctionResponse, symbol: string): ChartData | null {
@@ -89,30 +100,34 @@ export default function PriceValuePanel({
   width,
 }: PriceValuePanelProps) {
   const [period, setPeriod] = useState<Period>('3mo');
+  const [interval, setInterval] = useState<ChartInterval>('1d');
   const [state, setState] = useState<ChartState>({ status: 'loading', data: null, fetchedAt: null });
   const coordinator = useRef(new RequestCoordinator<AuctionResponse>());
   const generation = useRef(0);
   const selected = PERIODS.find((candidate) => candidate.value === period) ?? PERIODS[1];
-  const title = `${symbol} ${selected.label} Price & value`;
+  const selectedInterval = CHART_INTERVAL_CHIPS.find((candidate) => candidate.value === interval) ?? CHART_INTERVAL_CHIPS[1];
+  const title = interval === '1d'
+    ? `${symbol} ${selected.label} Price & value`
+    : `${symbol} ${selectedInterval.label} Price & value`;
 
   useEffect(() => {
     const activeCoordinator = coordinator.current;
     const currentGeneration = ++generation.current;
-    void bootstrap(currentGeneration, period);
+    void bootstrap(currentGeneration, period, interval);
     return () => {
       generation.current += 1;
       activeCoordinator.cancel();
     };
-    // The selected symbol, period, and network truth define one chart lifecycle.
+    // The selected symbol, period, interval, and network truth define one chart lifecycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, reachability, symbol]);
+  }, [interval, period, reachability, symbol]);
 
-  async function bootstrap(currentGeneration: number, requestedPeriod: Period) {
+  async function bootstrap(currentGeneration: number, requestedPeriod: Period, requestedInterval: ChartInterval) {
     setState({ status: 'loading', data: null, fetchedAt: null });
     let cached = null;
     let cacheReadFailed = false;
     try {
-      cached = await cache.read<AuctionResponse>(descriptor(client, symbol, requestedPeriod));
+      cached = await cache.read<AuctionResponse>(descriptor(client, symbol, requestedPeriod, requestedInterval));
     } catch {
       cacheReadFailed = true;
     }
@@ -141,6 +156,7 @@ export default function PriceValuePanel({
       : { status: 'loading', data: null, fetchedAt: null });
     await requestLive({
       requestedPeriod,
+      requestedInterval,
       currentGeneration,
       priorData: cachedData,
       priorFetchedAt: cached?.fetchedAt ?? null,
@@ -149,20 +165,22 @@ export default function PriceValuePanel({
 
   async function requestLive({
     requestedPeriod,
+    requestedInterval,
     currentGeneration,
     priorData,
     priorFetchedAt,
   }: {
     requestedPeriod: Period;
+    requestedInterval: ChartInterval;
     currentGeneration: number;
     priorData: ChartData | null;
     priorFetchedAt: number | null;
   }) {
     try {
       const result = await coordinator.current.run((signal) =>
-        client.auction({ ticker: symbol, period: requestedPeriod }, { signal }),
+        client.auction({ ticker: symbol, period: requestedPeriod, interval: requestedInterval }, { signal }),
       );
-      if (!result.accepted || currentGeneration !== generation.current || requestedPeriod !== period) return;
+      if (!result.accepted || currentGeneration !== generation.current || requestedPeriod !== period || requestedInterval !== interval) return;
       const data = chartData(result.value, symbol);
       if (!data) {
         setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, message: responseError(result.value, symbol) });
@@ -171,8 +189,8 @@ export default function PriceValuePanel({
       const fetchedAt = now();
       const notice = result.value.errors.map((entry) => `${entry.ticker}: ${entry.error}`).join('\n') || undefined;
       setState({ status: 'fresh', data, fetchedAt, message: notice });
-      void cache.write(descriptor(client, symbol, requestedPeriod), compactResponse(result.value), fetchedAt).catch(() => {
-        if (currentGeneration !== generation.current || requestedPeriod !== period) return;
+      void cache.write(descriptor(client, symbol, requestedPeriod, requestedInterval), compactResponse(result.value), fetchedAt).catch(() => {
+        if (currentGeneration !== generation.current || requestedPeriod !== period || requestedInterval !== interval) return;
         setState((current) => {
           if (!current.data || current.data.response !== result.value) return current;
           const warning = 'Chart loaded, but it could not be saved for offline use.';
@@ -180,7 +198,7 @@ export default function PriceValuePanel({
         });
       });
     } catch (error) {
-      if (currentGeneration !== generation.current || requestedPeriod !== period) return;
+      if (currentGeneration !== generation.current || requestedPeriod !== period || requestedInterval !== interval) return;
       setState({ status: 'error', data: priorData, fetchedAt: priorFetchedAt, message: errorMessage(error, 'Price history could not be loaded.') });
     }
   }
@@ -192,6 +210,15 @@ export default function PriceValuePanel({
     setPeriod(next);
   }
 
+  function chooseInterval(next: ChartInterval) {
+    if (next === interval) return;
+    const chip = CHART_INTERVAL_CHIPS.find((candidate) => candidate.value === next);
+    generation.current += 1;
+    setState({ status: 'loading', data: null, fetchedAt: null });
+    setInterval(next);
+    if (chip && next !== '1d') setPeriod(chip.period);
+  }
+
   function retry() {
     if (reachability === 'offline') return;
     const currentGeneration = ++generation.current;
@@ -200,7 +227,7 @@ export default function PriceValuePanel({
     setState(priorData && priorFetchedAt !== null
       ? { status: 'refreshing', data: priorData, fetchedAt: priorFetchedAt }
       : { status: 'loading', data: null, fetchedAt: null });
-    void requestLive({ requestedPeriod: period, currentGeneration, priorData, priorFetchedAt });
+    void requestLive({ requestedPeriod: period, requestedInterval: interval, currentGeneration, priorData, priorFetchedAt });
   }
 
   return (
@@ -209,28 +236,48 @@ export default function PriceValuePanel({
         <View style={styles.headingCopy}>
           <Text style={styles.eyebrow}>MARKET PICTURE</Text>
           <Text accessibilityRole="header" style={styles.heading}>Price & value</Text>
-          <Text style={styles.description}>Daily candles with auction value levels.</Text>
+          <Text style={styles.description}>{intervalCopy(interval)}</Text>
         </View>
-        <View accessibilityRole="tablist" style={styles.periods}>
-          {PERIODS.map((candidate) => {
-            const active = candidate.value === period;
-            return (
-              <Pressable
-                accessibilityLabel={`Show ${candidate.spoken} chart`}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                key={candidate.value}
-                onPress={() => choosePeriod(candidate.value)}
-                style={({ pressed }) => [styles.period, active && styles.periodActive, pressed && styles.pressed]}>
-                <Text style={[styles.periodText, active && styles.periodTextActive]}>{candidate.label}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.chips}>
+          <View accessibilityRole="tablist" style={styles.periods}>
+            {CHART_INTERVAL_CHIPS.map((candidate) => {
+              const active = candidate.value === interval;
+              return (
+                <Pressable
+                  accessibilityLabel={`Show ${candidate.spoken} interval`}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  key={candidate.value}
+                  onPress={() => chooseInterval(candidate.value)}
+                  style={({ pressed }) => [styles.period, active && styles.periodActive, pressed && styles.pressed]}>
+                  <Text style={[styles.periodText, active && styles.periodTextActive]}>{candidate.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {interval === '1d' ? (
+            <View accessibilityRole="tablist" style={styles.periods}>
+              {PERIODS.map((candidate) => {
+                const active = candidate.value === period;
+                return (
+                  <Pressable
+                    accessibilityLabel={`Show ${candidate.spoken} chart`}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: active }}
+                    key={candidate.value}
+                    onPress={() => choosePeriod(candidate.value)}
+                    style={({ pressed }) => [styles.period, active && styles.periodActive, pressed && styles.pressed]}>
+                    <Text style={[styles.periodText, active && styles.periodTextActive]}>{candidate.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
       </View>
 
       <View style={styles.chartFrame}>
-        {state.status === 'loading' ? <AsyncState title="Loading price chart" message={`Fetching ${selected.spoken} of daily price and value data.`} /> : null}
+        {state.status === 'loading' ? <AsyncState title="Loading price chart" message={`Fetching ${selectedInterval.spoken} price and value data.`} /> : null}
         {state.status === 'refreshing' ? <AsyncState title="Saved chart · refreshing" message={`Showing saved data ${formatTimestamp(state.fetchedAt)} while this range updates.`} tone="warning" /> : null}
         {state.status === 'offline' ? <AsyncState actionDisabled actionLabel="Retry price chart" message={`Saved chart remains visible ${formatTimestamp(state.fetchedAt)}.`} onAction={retry} title="Offline · saved chart" tone="warning" /> : null}
         {state.status === 'empty-offline' ? <AsyncState actionDisabled actionLabel="Retry price chart" message={state.message ?? 'Reconnect to load this chart for the first time.'} onAction={retry} title="No saved chart offline" tone="warning" /> : null}
@@ -262,6 +309,7 @@ const styles = StyleSheet.create({
   eyebrow: { ...typography.eyebrow, color: colors.cyan },
   heading: { ...typography.headline, color: colors.ink },
   description: { ...typography.caption, color: colors.inkSecondary },
+  chips: { flexGrow: 1, gap: spacing.xs, minWidth: 190 },
   periods: { flexDirection: 'row', flexGrow: 1, flexWrap: 'wrap', gap: spacing.xs, justifyContent: 'flex-end' },
   period: {
     alignItems: 'center',

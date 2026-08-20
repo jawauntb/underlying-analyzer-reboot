@@ -15,10 +15,44 @@ from app._perf import TTLCache, tune_session
 
 REQUIRED_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
 _HISTORY_TTL_SECONDS = 90.0
+_SNAPSHOT_TTL_SECONDS = 5.0
 _PROFILE_TTL_SECONDS = 90.0
 _SEARCH_TTL_SECONDS = 60.0
 _OPTIONS_TTL_SECONDS = 30.0
 _SEARCH_CONCURRENCY_PER_WORKER = 2
+_EASTERN = "America/New_York"
+HISTORY_INTERVALS = ("15m", "1d", "1w")
+_HISTORY_INTERVAL_ALIASES = {
+    "15m": "15m",
+    "15min": "15m",
+    "15": "15m",
+    "1d": "1d",
+    "d": "1d",
+    "day": "1d",
+    "daily": "1d",
+    "1w": "1w",
+    "w": "1w",
+    "wk": "1w",
+    "1wk": "1w",
+    "week": "1w",
+    "weekly": "1w",
+}
+_MASSIVE_INTERVALS = {
+    "15m": (15, "minute"),
+    "1d": (1, "day"),
+    "1w": (1, "week"),
+}
+_YFINANCE_INTERVALS = {
+    "15m": "15m",
+    "1d": "1d",
+    "1w": "1wk",
+}
+_DEFAULT_PERIOD_FOR_INTERVAL = {
+    "15m": "5d",
+    "1d": "1y",
+    "1w": "2y",
+}
+_INTRADAY_PERIODS = frozenset({"1d", "5d", "1mo"})
 
 MAX_SEARCH_QUERY_LENGTH = 100
 MAX_SECURITY_SYMBOL_LENGTH = 32
@@ -54,6 +88,7 @@ class HistoryResult:
     data: pd.DataFrame
     provider: str
     note: str
+    interval: str = "1d"
 
 
 @dataclass(frozen=True)
@@ -170,6 +205,7 @@ def dates_for_period(period: str) -> tuple[date, date]:
     days_by_period = {
         "1d": 7,
         "5d": 14,
+        "1w": 14,
         "1mo": 45,
         "3mo": 120,
         "6mo": 220,
@@ -180,6 +216,62 @@ def dates_for_period(period: str) -> tuple[date, date]:
         "max": 8000,
     }
     return end - timedelta(days=days_by_period.get(period, 400)), end
+
+
+def normalize_history_interval(value: str | None) -> str:
+    raw = str(value or "1d").strip().lower()
+    interval = _HISTORY_INTERVAL_ALIASES.get(raw)
+    if interval is None:
+        raise ValueError("interval must be 15m, 1d, or 1w")
+    return interval
+
+
+def massive_interval_spec(interval: str) -> tuple[int, str]:
+    return _MASSIVE_INTERVALS[normalize_history_interval(interval)]
+
+
+def yfinance_interval(interval: str) -> str:
+    return _YFINANCE_INTERVALS[normalize_history_interval(interval)]
+
+
+def default_period_for_interval(interval: str) -> str:
+    return _DEFAULT_PERIOD_FOR_INTERVAL[normalize_history_interval(interval)]
+
+
+def clamp_period_for_interval(period: str, interval: str) -> str:
+    normalized = normalize_history_interval(interval)
+    if normalized == "15m" and period not in _INTRADAY_PERIODS:
+        return "5d"
+    return period
+
+
+def chart_history_options(
+    payload: dict[str, Any],
+    *,
+    default_period: str | None = None,
+    include_range: bool = False,
+) -> dict[str, Any]:
+    interval = normalize_history_interval(payload.get("interval"))
+    period = clamp_period_for_interval(
+        str(payload.get("period") or default_period or default_period_for_interval(interval)),
+        interval,
+    )
+    options: dict[str, Any] = {"period": period, "interval": interval}
+    if include_range:
+        if payload.get("start_date"):
+            options["start"] = payload.get("start_date")
+        if payload.get("end_date"):
+            options["end"] = payload.get("end_date")
+    return options
+
+
+def series_timestamp_label(timestamp: Any, interval: str = "1d") -> str:
+    ts = pd.Timestamp(timestamp)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    if normalize_history_interval(interval) == "15m":
+        return ts.strftime("%Y-%m-%dT%H:%M:%S")
+    return ts.date().isoformat()
 
 
 def normalize_ohlcv(data: pd.DataFrame) -> pd.DataFrame:
@@ -228,22 +320,28 @@ class LegacyMarketDataProvider:
         self.session = session
 
     def get_history(self, ticker: str, *, start: date, end: date, interval: str) -> HistoryResult:
+        resolved = normalize_history_interval(interval)
         data = yf.download(
             ticker,
             start=start.isoformat(),
             end=end.isoformat(),
             period=None,
-            interval=interval,
+            interval=yfinance_interval(resolved),
             auto_adjust=False,
             progress=False,
             threads=False,
         )
         normalized = normalize_ohlcv(data)
         if not normalized.empty:
-            return HistoryResult(ticker, normalized, self.name, "Yahoo Finance via yfinance")
-        if interval != "1d":
-            return HistoryResult(ticker, normalized, self.name, "Yahoo Finance via yfinance")
-        return self._history_from_nasdaq(ticker, start=start, end=end)
+            return HistoryResult(
+                ticker, normalized, self.name, "Yahoo Finance via yfinance", interval=resolved
+            )
+        if resolved != "1d":
+            return HistoryResult(
+                ticker, normalized, self.name, "Yahoo Finance via yfinance", interval=resolved
+            )
+        nasdaq = self._history_from_nasdaq(ticker, start=start, end=end)
+        return replace(nasdaq, interval=resolved)
 
     def _history_from_nasdaq(self, ticker: str, *, start: date, end: date) -> HistoryResult:
         nasdaq_symbol = to_nasdaq_symbol(ticker)
@@ -446,6 +544,7 @@ class MarketDataClient:
             else fallback_enabled
         )
         self._history_cache: TTLCache = TTLCache(_HISTORY_TTL_SECONDS)
+        self._snapshot_cache: TTLCache = TTLCache(_SNAPSHOT_TTL_SECONDS)
         self._profile_cache: TTLCache = TTLCache(_PROFILE_TTL_SECONDS)
         self._search_cache: TTLCache = TTLCache(_SEARCH_TTL_SECONDS)
         self._options_cache: TTLCache = TTLCache(_OPTIONS_TTL_SECONDS)
@@ -503,19 +602,20 @@ class MarketDataClient:
         interval: str = "1d",
     ) -> HistoryResult:
         symbol = clean_ticker(ticker)
+        resolved_interval = normalize_history_interval(interval)
         start_date = coerce_date(start)
         end_date = coerce_date(end)
         if start_date is None or end_date is None:
             period_start, period_end = dates_for_period(period)
             start_date = start_date or period_start
             end_date = end_date or period_end
-        cache_key = (symbol, period, start_date, end_date, interval)
+        cache_key = (symbol, period, start_date, end_date, resolved_interval)
         cached = self._history_cache.get(cache_key)
         if cached is not None:
-            return cached
+            return self._with_live_quote(cached, resolved_interval)
         try:
             result = self.provider.get_history(
-                symbol, start=start_date, end=end_date, interval=interval
+                symbol, start=start_date, end=end_date, interval=resolved_interval
             )
         except Exception as exc:
             if not self.fallback_enabled:
@@ -526,7 +626,7 @@ class MarketDataClient:
                     period=period,
                     start=start_date,
                     end=end_date,
-                    interval=interval,
+                    interval=resolved_interval,
                 )
             except Exception as fallback_exc:
                 raise MarketDataError(
@@ -543,13 +643,15 @@ class MarketDataClient:
                     period=period,
                     start=start_date,
                     end=end_date,
-                    interval=interval,
+                    interval=resolved_interval,
                 )
             except Exception as fallback_exc:
                 raise MarketDataError(
                     f"No historical data for {symbol}. massive returned incomplete data; "
                     f"legacy: {fallback_exc}"
                 ) from fallback_exc
+        if result.interval != resolved_interval:
+            result = replace(result, interval=resolved_interval)
         if result.provider == getattr(
             self.provider, "name", "massive"
         ) and history_coverage_is_short(result.data, start_date, end_date):
@@ -565,7 +667,7 @@ class MarketDataClient:
             else self.fallback_provider
         )
         self._history_cache.set(cache_key, result)
-        return result
+        return self._with_live_quote(result, resolved_interval)
 
     def _history_from_yfinance(
         self,
@@ -579,6 +681,21 @@ class MarketDataClient:
         """Compatibility seam for tests and callers that patched the old fallback."""
         _ = period
         return self.fallback_provider.get_history(ticker, start=start, end=end, interval=interval)
+
+    def _with_live_quote(self, result: HistoryResult, interval: str) -> HistoryResult:
+        try:
+            snapshot = self.get_snapshot(result.ticker)
+        except Exception:
+            return result
+        updated = apply_live_quote(result.data, snapshot, interval)
+        if updated is result.data:
+            return result
+        return replace(
+            result,
+            data=updated,
+            interval=interval,
+            note=f"{result.note}; last bar includes live snapshot quote",
+        )
 
     def get_profile(self, ticker: str) -> dict[str, Any]:
         symbol = clean_ticker(ticker)
@@ -649,7 +766,14 @@ class MarketDataClient:
         return self._call_provider("get_expirations", clean_ticker(ticker))
 
     def get_snapshot(self, ticker: str, *, asset_class: str = "stocks") -> dict[str, Any]:
-        return self._call_provider("get_snapshot", clean_ticker(ticker), asset_class=asset_class)
+        symbol = clean_ticker(ticker)
+        cache_key = (symbol, asset_class)
+        cached = self._snapshot_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        payload = self._call_provider("get_snapshot", symbol, asset_class=asset_class)
+        self._snapshot_cache.set(cache_key, payload)
+        return payload
 
     def get_aggregates(
         self,
@@ -845,3 +969,123 @@ def option_number(row: pd.Series | None, column: str) -> float:
     if value is None or pd.isna(value):
         return 0.0
     return float(value)
+
+
+def apply_live_quote(data: pd.DataFrame, snapshot: dict[str, Any], interval: str) -> pd.DataFrame:
+    quote = snapshot_quote(snapshot)
+    if quote is None:
+        return data
+    resolved = normalize_history_interval(interval)
+    trade_ts = _as_naive_utc(quote["ts_ms"]) or pd.Timestamp.utcnow().tz_localize(None)
+    bucket = _session_bucket(trade_ts, resolved)
+    open_px = quote["open"]
+    high_px = max(quote["high"], quote["price"])
+    low_px = min(quote["low"], quote["price"])
+    close_px = quote["price"]
+    volume = quote["volume"]
+    if data.empty:
+        frame = pd.DataFrame(
+            {
+                "Open": [open_px],
+                "High": [high_px],
+                "Low": [low_px],
+                "Close": [close_px],
+                "Volume": [volume],
+                "Adj Close": [close_px],
+            },
+            index=[bucket],
+        )
+        frame.index.name = "Date"
+        return frame
+
+    frame = data.copy()
+    last_index = pd.Timestamp(frame.index[-1])
+    if _same_bar(last_index, bucket, resolved):
+        row = frame.iloc[-1]
+        frame.iloc[-1, frame.columns.get_loc("High")] = max(float(row["High"]), high_px, close_px)
+        frame.iloc[-1, frame.columns.get_loc("Low")] = min(float(row["Low"]), low_px, close_px)
+        frame.iloc[-1, frame.columns.get_loc("Close")] = close_px
+        if "Adj Close" in frame.columns:
+            frame.iloc[-1, frame.columns.get_loc("Adj Close")] = close_px
+        if "Volume" in frame.columns and volume:
+            frame.iloc[-1, frame.columns.get_loc("Volume")] = max(float(row["Volume"]), volume)
+        return frame
+
+    if bucket <= last_index:
+        return data
+
+    added = pd.DataFrame(
+        {
+            "Open": [close_px if resolved == "15m" else open_px],
+            "High": [high_px],
+            "Low": [low_px],
+            "Close": [close_px],
+            "Volume": [volume],
+            "Adj Close": [close_px],
+        },
+        index=[bucket],
+    )
+    combined = pd.concat([frame, added])
+    combined.index.name = frame.index.name
+    return combined
+
+
+def snapshot_quote(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    payload = snapshot.get("ticker")
+    if not isinstance(payload, dict):
+        results = snapshot.get("results")
+        if isinstance(results, dict):
+            payload = results
+        elif isinstance(results, list) and results and isinstance(results[0], dict):
+            payload = results[0]
+        elif isinstance(snapshot.get("day"), dict) or isinstance(snapshot.get("lastTrade"), dict):
+            payload = snapshot
+        else:
+            return None
+    last_trade = payload.get("lastTrade") or payload.get("last_trade") or {}
+    day = payload.get("day") if isinstance(payload.get("day"), dict) else {}
+    minute = payload.get("min") if isinstance(payload.get("min"), dict) else payload.get("minute")
+    minute = minute if isinstance(minute, dict) else {}
+    price = last_trade.get("p") or last_trade.get("price") or day.get("c") or minute.get("c")
+    if price is None:
+        return None
+    return {
+        "price": float(price),
+        "open": float(day.get("o") or minute.get("o") or price),
+        "high": float(day.get("h") or minute.get("h") or price),
+        "low": float(day.get("l") or minute.get("l") or price),
+        "volume": float(day.get("v") or minute.get("v") or 0.0),
+        "ts_ms": last_trade.get("t") or day.get("t") or minute.get("t"),
+    }
+
+
+def _as_naive_utc(value: Any) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        ts = pd.Timestamp(value, unit="ms", tz="UTC")
+    else:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+    return ts.tz_localize(None)
+
+
+def _session_bucket(ts: pd.Timestamp, interval: str) -> pd.Timestamp:
+    aware = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    eastern = aware.tz_convert(_EASTERN)
+    if interval == "15m":
+        return eastern.floor("15min").tz_convert("UTC").tz_localize(None)
+    if interval == "1w":
+        monday = eastern.normalize() - pd.Timedelta(days=int(eastern.dayofweek))
+        return monday.tz_convert("UTC").tz_localize(None)
+    return eastern.normalize().tz_convert("UTC").tz_localize(None)
+
+
+def _same_bar(existing: pd.Timestamp, incoming: pd.Timestamp, interval: str) -> bool:
+    left = pd.Timestamp(existing)
+    if interval == "15m":
+        return abs((left - incoming).total_seconds()) < 60
+    return _session_bucket(left, interval) == _session_bucket(incoming, interval)

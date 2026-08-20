@@ -20,7 +20,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import FuncFormatter
 
-from app.market_data import HistoryResult
+from app.market_data import HistoryResult, series_timestamp_label
 
 CHART_BG = "#05070a"
 AX_BG = "#081016"
@@ -1092,9 +1092,9 @@ def series_annualized_volatility(series: pd.Series) -> float:
     return float(returns.std() * np.sqrt(252))
 
 
-def series_points(series: pd.Series) -> list[dict[str, float | str]]:
+def series_points(series: pd.Series, *, interval: str = "1d") -> list[dict[str, float | str]]:
     return [
-        {"date": timestamp.date().isoformat(), "value": float(value)}
+        {"date": series_timestamp_label(timestamp, interval), "value": float(value)}
         for timestamp, value in series.dropna().items()
     ]
 

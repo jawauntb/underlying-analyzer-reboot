@@ -31,8 +31,9 @@ const levelSpecs = [
 ];
 
 function compactDateLabel(value: string, includeYear: boolean): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(value);
   if (!match) return value;
+  if (match[4] && match[5]) return `${match[2]}/${match[3]} ${match[4]}:${match[5]}`;
   return includeYear ? `${match[2]}/${match[1].slice(-2)}` : `${match[2]}/${match[3]}`;
 }
 

@@ -67,7 +67,11 @@ class FakeStreamingTextGenerator(FakeTextGenerator):
 
 
 class FakeMarketDataClient:
-    def get_history(self, ticker: str, **_: object) -> HistoryResult:
+    def __init__(self) -> None:
+        self.history_calls: list[dict[str, object]] = []
+
+    def get_history(self, ticker: str, **kwargs: object) -> HistoryResult:
+        self.history_calls.append({"ticker": ticker, **kwargs})
         dates = pd.date_range("2025-01-01", periods=260)
         frame = pd.DataFrame(
             {
@@ -80,7 +84,13 @@ class FakeMarketDataClient:
             },
             index=dates,
         )
-        return HistoryResult(ticker=ticker, data=frame, provider="fake", note="fake test provider")
+        return HistoryResult(
+            ticker=ticker,
+            data=frame,
+            provider="fake",
+            note="fake test provider",
+            interval=str(kwargs.get("interval") or "1d"),
+        )
 
     def get_profile(self, ticker: str) -> dict[str, object]:
         return {
@@ -615,6 +625,31 @@ def test_chart_data_endpoint_returns_series_without_images() -> None:
     assert "poc" in dataset["levels"]
     assert len(dataset["series"]["ohlcv"]) > 10
     assert len(dataset["series"]["close"]) > 10
+
+
+def test_chart_data_endpoint_accepts_live_intervals() -> None:
+    app = create_app()
+    app.config["MARKET_DATA_CLIENT"] = FakeMarketDataClient()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/data/charts/auction",
+        json={"ticker": "AAPL", "period": "5d", "interval": "15m"},
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    dataset = payload["datasets"][0]
+    assert dataset["interval"] == "15m"
+    assert dataset["period"] == "5d"
+    assert app.config["MARKET_DATA_CLIENT"].history_calls[0]["interval"] == "15m"
+
+    rejected = client.post(
+        "/api/data/charts/auction",
+        json={"ticker": "AAPL", "interval": "4h"},
+    )
+    assert rejected.status_code == 400
+    assert "interval" in rejected.get_json()["error"]
 
 
 def test_regression_data_endpoint_returns_bands() -> None:

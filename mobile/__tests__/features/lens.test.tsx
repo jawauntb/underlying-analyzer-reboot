@@ -281,7 +281,7 @@ describe('LensScreen', () => {
     expect(screen.getByText('42 analysts · Buy')).toBeTruthy();
     expect(screen.getByText(/Fixture provider · Updated/)).toBeTruthy();
     expect(deps.client.watchlistAlerts).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything());
-    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything());
+    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo', interval: '1d' }, expect.anything());
     expect(await screen.findByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeTruthy();
     expect(screen.getByText(/Selected depth: Glance/)).toBeTruthy();
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
@@ -301,9 +301,9 @@ describe('LensScreen', () => {
       .mockImplementationOnce(() => replacement.promise);
     render(<LensScreen {...deps.props} />);
 
-    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything()));
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo', interval: '1d' }, expect.anything()));
     fireEvent.press(screen.getByRole('tab', { name: 'Show 1 year chart' }));
-    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '1y' }, expect.anything()));
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '1y', interval: '1d' }, expect.anything()));
     await act(async () => replacement.resolve({
       ...auction,
       datasets: [{ ...auction.datasets[0], period: '1y', series: { ohlcv: [{ date: '2026-08-19', open: 230, high: 236, low: 229, close: 235, volume: 12 }] } }],
@@ -311,6 +311,14 @@ describe('LensScreen', () => {
     expect(await screen.findByRole('button', { name: 'View AAPL 1Y Price & value data' })).toBeTruthy();
     await act(async () => initial.resolve(auction));
     expect(screen.queryByRole('button', { name: 'View AAPL 3M Price & value data' })).toBeNull();
+  });
+
+  it('requests a live 15-minute interval for the price chart', async () => {
+    const deps = dependencies();
+    render(<LensScreen {...deps.props} />);
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo', interval: '1d' }, expect.anything()));
+    fireEvent.press(screen.getByRole('tab', { name: 'Show 15 minute interval' }));
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '5d', interval: '15m' }, expect.anything()));
   });
 
   it('keeps cached evidence visible offline and disables retry until connectivity returns', async () => {
@@ -458,8 +466,8 @@ describe('LensScreen', () => {
     await screen.findByText('Apple Inc.');
 
     fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
-    expect(deps.client.torque).toHaveBeenCalledWith({ ticker: 'AAPL' }, expect.anything());
-    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '5d' }, expect.anything());
+    expect(deps.client.torque).toHaveBeenCalledWith({ ticker: 'AAPL', period: '2y', interval: '1d' }, expect.anything());
+    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '5d', interval: '1d' }, expect.anything());
     expect(deps.client.moneyline).not.toHaveBeenCalled();
     expect(await screen.findByText(/Opened depth: Glance/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'View AAPL Torque data' })).toBeTruthy();
@@ -486,7 +494,7 @@ describe('LensScreen', () => {
       params: { symbol: 'AAPL', period: '1y', depth: 'deep-dive' },
     });
     expect(deps.client.torque).not.toHaveBeenCalled();
-    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo' }, expect.anything());
+    expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '3mo', interval: '1d' }, expect.anything());
     expect(deps.client.moneyline).not.toHaveBeenCalled();
     expect(deps.client).not.toHaveProperty('agentChat');
   });

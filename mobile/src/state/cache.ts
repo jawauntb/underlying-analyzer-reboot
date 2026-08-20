@@ -74,7 +74,7 @@ function normalizeCacheValue(value: unknown, key = ''): unknown {
   }
   if (typeof value !== 'object' || value === null) {
     if (key === 'ticker' && typeof value === 'string') return value.trim().toUpperCase();
-    if (key === 'period' && typeof value === 'string') return value.trim().toLowerCase();
+    if ((key === 'period' || key === 'interval') && typeof value === 'string') return value.trim().toLowerCase();
     return value;
   }
   return Object.fromEntries(

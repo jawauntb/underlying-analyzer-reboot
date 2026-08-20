@@ -20,9 +20,14 @@ from app.market_data import (
     MarketDataBusyError,
     MarketDataClient,
     MarketDataError,
+    apply_live_quote,
+    chart_history_options,
+    normalize_history_interval,
     normalize_ohlcv,
     parse_market_number,
+    series_timestamp_label,
     to_nasdaq_symbol,
+    yfinance_interval,
 )
 
 
@@ -285,3 +290,47 @@ def test_market_data_client_caches_history_results() -> None:
     assert first is result
     assert second is result
     assert calls == 1
+
+
+def test_history_interval_aliases_and_chart_options() -> None:
+    assert normalize_history_interval("15min") == "15m"
+    assert normalize_history_interval("1wk") == "1w"
+    assert yfinance_interval("1w") == "1wk"
+    options = chart_history_options({"interval": "15m", "period": "1y"})
+    assert options == {"period": "5d", "interval": "15m"}
+    with pytest.raises(ValueError, match="15m, 1d, or 1w"):
+        normalize_history_interval("4h")
+
+
+def test_series_timestamp_label_keeps_time_only_for_15m() -> None:
+    stamp = pd.Timestamp("2026-08-19 14:45:00")
+    assert series_timestamp_label(stamp, "15m") == "2026-08-19T14:45:00"
+    assert series_timestamp_label(stamp, "1d") == "2026-08-19"
+
+
+def test_apply_live_quote_updates_current_daily_bar() -> None:
+    frame = pd.DataFrame(
+        {
+            "Open": [10.0],
+            "High": [11.0],
+            "Low": [9.5],
+            "Close": [10.5],
+            "Volume": [100.0],
+            "Adj Close": [10.5],
+        },
+        index=[pd.Timestamp("2026-08-19")],
+    )
+    trade_ts = int(pd.Timestamp("2026-08-19 15:45", tz="America/New_York").timestamp() * 1000)
+    updated = apply_live_quote(
+        frame,
+        {
+            "ticker": {
+                "day": {"o": 10.0, "h": 12.0, "l": 9.0, "c": 11.4, "v": 200, "t": trade_ts},
+                "lastTrade": {"p": 11.8, "t": trade_ts},
+            }
+        },
+        "1d",
+    )
+    assert float(updated.iloc[-1]["Close"]) == 11.8
+    assert float(updated.iloc[-1]["High"]) == 12.0
+    assert float(updated.iloc[-1]["Low"]) == 9.0

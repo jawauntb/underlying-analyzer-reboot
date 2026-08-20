@@ -109,6 +109,14 @@
             <option value="10y">10Y</option>
           </select>
         </label>
+        <label class="rail-field rail-field-interval" data-command-field="interval">
+          <span>Interval</span>
+          <select id="command-interval">
+            <option value="15m">15m</option>
+            <option value="1d" selected>1D</option>
+            <option value="1w">1W</option>
+          </select>
+        </label>
         <label class="rail-field rail-field-month" data-command-field="month" hidden>
           <span>Month</span>
           <select id="command-month">
@@ -243,6 +251,14 @@
                 <option value="2y">2Y</option>
                 <option value="5y">5Y</option>
                 <option value="10y">10Y</option>
+              </select>
+            </label>
+            <label data-field="interval">
+              <span>Interval</span>
+              <select id="interval" name="interval">
+                <option value="15m">15m</option>
+                <option value="1d" selected>1D</option>
+                <option value="1w">1W</option>
               </select>
             </label>
             <label data-field="month" hidden>

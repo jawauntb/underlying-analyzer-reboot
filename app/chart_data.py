@@ -28,7 +28,7 @@ from app.charts import (
     terminal_ema,
     terminal_sma,
 )
-from app.market_data import HistoryResult
+from app.market_data import HistoryResult, series_timestamp_label
 from app.torque import (
     COMPONENT_WEIGHTS,
     compute_torque_score,
@@ -59,7 +59,7 @@ def ohlcv_points(history: HistoryResult) -> list[dict[str, float | str]]:
     for timestamp, row in history.data.iterrows():
         rows.append(
             {
-                "date": timestamp.date().isoformat(),
+                "date": series_timestamp_label(timestamp, history.interval),
                 "open": float(row["Open"]),
                 "high": float(row["High"]),
                 "low": float(row["Low"]),
@@ -71,12 +71,12 @@ def ohlcv_points(history: HistoryResult) -> list[dict[str, float | str]]:
 
 
 def frame_points(
-    frame: pd.DataFrame, columns: list[str]
+    frame: pd.DataFrame, columns: list[str], *, interval: str = "1d"
 ) -> list[dict[str, float | str | bool | None]]:
     points: list[dict[str, float | str | bool | None]] = []
     for timestamp, row in frame.iterrows():
         point: dict[str, float | str | bool | None] = {
-            "date": timestamp.date().isoformat()
+            "date": series_timestamp_label(timestamp, interval)
         }
         for column in columns:
             if column not in frame.columns:
@@ -104,13 +104,14 @@ def build_auction_chart_data(history: HistoryResult, *, period: str) -> dict[str
         "chart_type": "auction",
         "ticker": history.ticker,
         "period": period,
+        "interval": history.interval,
         "provider": history.provider,
         "provider_note": history.note,
         "meta": {**meta, **observation},
         "levels": meta,
         "series": {
             "ohlcv": ohlcv_points(history),
-            "close": series_points(history.data["Close"]),
+            "close": series_points(history.data["Close"], interval=history.interval),
         },
     }
 
@@ -203,19 +204,20 @@ def build_regression_chart_data(history: HistoryResult) -> dict[str, Any]:
     return {
         "chart_type": "regression",
         "ticker": history.ticker,
+        "interval": history.interval,
         "provider": history.provider,
         "provider_note": history.note,
         "meta": meta,
         "series": {
             "ohlcv": ohlcv_points(history),
-            "close": series_points(data["Close"]),
-            "trend": series_points(data["trend"]),
-            "upper_band": series_points(data["upper_band"]),
-            "lower_band": series_points(data["lower_band"]),
-            "ema21": series_points(data["ema21"]),
-            "ema50": series_points(data["ema50"]),
-            "ema200": series_points(data["ema200"]),
-            "volume": series_points(data["Volume"]),
+            "close": series_points(data["Close"], interval=history.interval),
+            "trend": series_points(data["trend"], interval=history.interval),
+            "upper_band": series_points(data["upper_band"], interval=history.interval),
+            "lower_band": series_points(data["lower_band"], interval=history.interval),
+            "ema21": series_points(data["ema21"], interval=history.interval),
+            "ema50": series_points(data["ema50"], interval=history.interval),
+            "ema200": series_points(data["ema200"], interval=history.interval),
+            "volume": series_points(data["Volume"], interval=history.interval),
         },
     }
 
@@ -330,16 +332,17 @@ def build_ridge_growth_chart_data(
         "chart_type": "ridge-growth",
         "ticker": history.ticker,
         "period": period,
+        "interval": history.interval,
         "provider": history.provider,
         "provider_note": history.note,
         "meta": meta,
         "series": {
             "ohlcv": ohlcv_points(history),
-            "close": series_points(signal_frame["Close"]),
-            "fast_ma": series_points(signal_frame["fast_ma"]),
-            "base_ma": series_points(signal_frame["base_ma"]),
-            "major_ma": series_points(signal_frame["major_ma"]),
-            "equity": series_points(signal_frame["equity"]),
+            "close": series_points(signal_frame["Close"], interval=history.interval),
+            "fast_ma": series_points(signal_frame["fast_ma"], interval=history.interval),
+            "base_ma": series_points(signal_frame["base_ma"], interval=history.interval),
+            "major_ma": series_points(signal_frame["major_ma"], interval=history.interval),
+            "equity": series_points(signal_frame["equity"], interval=history.interval),
             "signals": frame_points(
                 signal_frame,
                 [
@@ -353,6 +356,7 @@ def build_ridge_growth_chart_data(
                     "trend_confirmed",
                     "rsi_14",
                 ],
+                interval=history.interval,
             ),
         },
     }
@@ -371,6 +375,7 @@ def build_flow_compass_chart_data(
         "chart_type": "flow-compass",
         "ticker": history.ticker,
         "period": period,
+        "interval": history.interval,
         "provider": history.provider,
         "provider_note": history.note,
         "meta": meta,
@@ -380,9 +385,9 @@ def build_flow_compass_chart_data(
         },
         "series": {
             "ohlcv": ohlcv_points(history),
-            "close": series_points(signal_frame["Close"]),
-            "flow_score": series_points(signal_frame["flow_score"]),
-            "compass_signal": series_points(signal_frame["compass_signal"]),
+            "close": series_points(signal_frame["Close"], interval=history.interval),
+            "flow_score": series_points(signal_frame["flow_score"], interval=history.interval),
+            "compass_signal": series_points(signal_frame["compass_signal"], interval=history.interval),
             "signals": frame_points(
                 signal_frame,
                 [
@@ -402,6 +407,7 @@ def build_flow_compass_chart_data(
                     "short_ok",
                     "state",
                 ],
+                interval=history.interval,
             ),
         },
     }
@@ -430,10 +436,10 @@ def build_torque_chart_data(
         close = pd.to_numeric(history.data["Close"], errors="coerce").dropna()
         if not close.empty:
             price_series = {
-                "close": series_points(close),
-                "ema75": series_points(terminal_ema(close, 75)),
-                "sma200": series_points(terminal_sma(close, 200)),
-                "sma50": series_points(terminal_sma(close, 50)),
+                "close": series_points(close, interval=history.interval),
+                "ema75": series_points(terminal_ema(close, 75), interval=history.interval),
+                "sma200": series_points(terminal_sma(close, 200), interval=history.interval),
+                "sma50": series_points(terminal_sma(close, 50), interval=history.interval),
                 "ohlcv": ohlcv_points(history),
             }
 
@@ -477,6 +483,7 @@ def build_torque_chart_data(
     return {
         "chart_type": "torque",
         "ticker": ticker,
+        "interval": history.interval if isinstance(history, HistoryResult) else "1d",
         "provider": history.provider if isinstance(history, HistoryResult) else "n/a",
         "provider_note": history.note if isinstance(history, HistoryResult) else "",
         "meta": meta,
