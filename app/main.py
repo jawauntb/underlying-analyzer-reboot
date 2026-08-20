@@ -83,6 +83,7 @@ from app.charts import (
 )
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
+from app.market_context import build_market_context, collect_market_context
 from app.market_data import (
     MAX_SEARCH_QUERY_LENGTH,
     SEARCH_PROVIDER,
@@ -659,6 +660,7 @@ def create_app() -> Flask:
                 get_market_client(),
                 get_watchlist_client(),
                 payload,
+                sec_client=get_sec_client(),
                 **text_generation_options(),
             )
             return jsonify(response)
@@ -668,12 +670,22 @@ def create_app() -> Flask:
     @app.get("/api/analysis/<ticker>")
     def analysis(ticker: str) -> Any:
         try:
-            summary = summarize_stock(get_market_client(), ticker)
+            client = get_market_client()
+            summary = summarize_stock(client, ticker)
             scanner = build_scanner_rows([summary])
-            generated = generate_analysis_brief([summary], scanner, **text_generation_options())
+            # Chart data is what makes the brief specific: value area, torque stage,
+            # and options positioning instead of profile fundamentals alone.
+            context = build_market_context(client, ticker, sec_client=get_sec_client())
+            generated = generate_analysis_brief(
+                [summary],
+                scanner,
+                market_context=[context],
+                **text_generation_options(),
+            )
             return jsonify(
                 {
                     **summary,
+                    "market_context": context,
                     "Anthropic Brief": generated.text,
                     "Text Provider": generated.provider,
                     "Text Model": generated.model,
@@ -2885,6 +2897,7 @@ def build_analysis_response(
     watchlist_client: TradingViewWatchlistClient,
     payload: dict[str, Any],
     *,
+    sec_client: Any | None = None,
     text_generator: Any | None = None,
     api_key: str | None = None,
     text_model: str | None = None,
@@ -2893,9 +2906,17 @@ def build_analysis_response(
     summaries, errors = collect_summaries(client, selection.tickers)
     require_results(summaries, errors)
     scanner = build_scanner_rows(summaries)
+    # Chart data for the tickers that actually resolved, bounded so a watchlist
+    # brief stays one cheap fan-out rather than a full chart render per name.
+    context = collect_market_context(
+        client,
+        [str(summary["ticker"]) for summary in summaries],
+        sec_client=sec_client,
+    )
     generated = generate_analysis_brief(
         summaries,
         scanner,
+        market_context=context,
         text_generator=text_generator,
         api_key=api_key,
         text_model=text_model,
@@ -2916,6 +2937,7 @@ def build_analysis_response(
         selection.watchlist,
     )
     meta["scanner_count"] = len(scanner)
+    meta["market_context_count"] = len(context)
     meta["text_provider"] = generated.provider
     meta["text_model"] = generated.model
     export = export_payload(
@@ -2929,12 +2951,14 @@ def build_analysis_response(
         summaries=summaries,
         scanner=scanner,
     )
+    export["market_context"] = context
     export["anthropic_brief"] = generated.text
     export["text_provider"] = generated.provider
     export["text_model"] = generated.model
     response = {
         "summaries": summaries,
         "scanner": scanner,
+        "market_context": context,
         "Anthropic Brief": generated.text,
         "Text Provider": generated.provider,
         "Text Model": generated.model,

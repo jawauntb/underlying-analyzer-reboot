@@ -190,7 +190,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         path="/api/analysis/{ticker}",
         path_params=("ticker",),
         input_schema=_schema({"ticker": _TICKER}, required=["ticker"]),
-        returns="Summary metrics plus a generated brief.",
+        returns="Summary metrics, chart-derived market context, and a generated brief.",
         cost=COST_LLM,
     ),
     ToolSpec(
@@ -211,7 +211,10 @@ TOOLS: tuple[ToolSpec, ...] = (
                 "max_results": _MAX_RESULTS,
             }
         ),
-        returns="Per-ticker summaries, scanner rows, and a comparative brief.",
+        returns=(
+            "Per-ticker summaries, chart-derived market context, scanner rows, "
+            "and a comparative brief."
+        ),
         cost=COST_LLM,
     ),
     ToolSpec(

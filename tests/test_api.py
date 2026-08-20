@@ -728,6 +728,15 @@ def test_analysis_endpoint_returns_summary() -> None:
     assert payload["provider"] == "fake"
     assert payload["Anthropic Brief"] == "Anthropic generated brief."
     assert payload["Text Model"] == "claude-test"
+    # The brief now reasons over chart data, not profile fundamentals alone.
+    context = payload["market_context"]
+    assert context["ticker"] == "AAPL"
+    assert context["auction"]["location"]
+    assert context["torque"]["stage_label"]
+    assert {gap["source"] for gap in context["unavailable"]} >= {"options"}
+    prompt = app.config["TEXT_GENERATOR"].calls[0]["prompt"]
+    assert "market_context" in prompt
+    assert "value area" in prompt
 
 
 def test_watchlist_resolve_endpoint_returns_limited_tickers() -> None:
@@ -1276,6 +1285,9 @@ def test_analysis_post_endpoint_returns_batch_summaries() -> None:
     assert payload["export"]["scanner"] == payload["scanner"]
     assert payload["Anthropic Brief"] == "Anthropic generated brief."
     assert payload["export"]["anthropic_brief"] == "Anthropic generated brief."
+    assert [context["ticker"] for context in payload["market_context"]] == ["AAPL", "MSFT"]
+    assert payload["export"]["market_context"] == payload["market_context"]
+    assert payload["meta"]["market_context_count"] == 2
 
 
 def test_stock_fax_tool_returns_migrated_report() -> None:
@@ -1302,6 +1314,11 @@ def test_stock_fax_tool_returns_migrated_report() -> None:
     assert payload["Data Coverage"]["Earnings Transcript / Guidance"] == "available"
     assert payload["Volatility Metrics"]
     assert payload["Auction Market Theory Price Levels"]["Point of Control (POC)"] > 0
+    # Memos read the same chart intelligence the briefs do.
+    intelligence = payload["Chart Intelligence"]
+    assert intelligence["ticker"] == "AAPL"
+    assert intelligence["auction"]["period"] == "2y"
+    assert intelligence["torque"]["stage_label"]
     assert payload["Anthropic Report"] == "Stock Fax narrative."
     assert payload["Text Provider"] == "anthropic"
 
