@@ -48,11 +48,17 @@ The app is linked to [`@jawauntb/undercurrent`](https://expo.dev/accounts/jawaun
 
 ## TestFlight release
 
-Build and submit the production archive from the mobile directory:
+Green `Mobile cloud proof` on `main` runs `.github/workflows/ios-eas-production.yml`, waits on EAS, and auto-submits to App Store Connect. Manual retry or a version tag:
 
 ```bash
-npx eas-cli build --platform ios --profile production
-npx eas-cli submit --platform ios --profile production --latest --auto-testflight-setup
+gh workflow run ios-eas-production.yml --ref main
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Requires repo secret `EXPO_TOKEN`. Do not set `EAS_NO_VCS=1`. Local equivalent:
+
+```bash
+npx eas-cli build --platform ios --profile production --auto-submit --non-interactive
 ```
 
 The first release may prompt an Apple Developer account holder to create or select the distribution certificate, provisioning profile, and App Store Connect app record. Never commit downloaded signing credentials or App Store Connect API keys.
