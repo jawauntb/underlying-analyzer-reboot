@@ -6,6 +6,7 @@ import PulseScreen from '@/app/(tabs)/index';
 import LibraryScreen from '@/app/(tabs)/library';
 import ListsScreen from '@/app/(tabs)/lists';
 import SearchScreen from '@/app/(tabs)/search';
+import SettingsScreen from '@/app/(tabs)/settings';
 import RootLayout, { stackAnimationFor, tickerScreenOptions } from '@/app/_layout';
 import ResearchScreen from '@/app/research';
 import TickerScreen from '@/app/ticker/[symbol]';
@@ -65,6 +66,7 @@ describe('Undercurrent app shell', () => {
     ['Search', SearchScreen],
     ['Lists', ListsScreen],
     ['Library', LibraryScreen],
+    ['Settings', SettingsScreen],
   ])('renders the %s tab without starting a network request', (name, ScreenComponent) => {
     const fetchSpy = jest.spyOn(globalThis, 'fetch');
 
@@ -87,6 +89,7 @@ describe('Undercurrent app shell', () => {
       'tab route search',
       'tab route lists',
       'tab route library',
+      'tab route settings',
     ]);
     tabs.unmount();
 

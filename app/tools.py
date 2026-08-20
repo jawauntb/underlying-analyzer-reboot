@@ -131,6 +131,18 @@ def build_stock_fax_data(
     close = data["Adj Close"].dropna()
     returns = close.pct_change().dropna()
     vah, val, poc = calculate_auction_levels(data)
+    # Imported here because market_context reads this module's moneyline builder.
+    # It reuses the history already fetched above; the SEC trend fetch behind torque
+    # is the one extra round trip, and it is what makes the stage read real.
+    from app.market_context import build_market_context
+
+    chart_intelligence = build_market_context(
+        client,
+        symbol,
+        sec_client=sec_client,
+        history=history,
+        period="2y",
+    )
 
     return {
         "Ticker": symbol,
@@ -166,6 +178,7 @@ def build_stock_fax_data(
             "Value Area High (VAH)": vah,
             "Value Area Low (VAL)": val,
         },
+        "Chart Intelligence": chart_intelligence,
         "Signal Summary": signal_summary(close, returns, poc),
         "Data Coverage": data_coverage(profile, sec_source_pack, earnings_source_pack),
         "Export Rows": price_rows(history),
@@ -831,6 +844,9 @@ def market_memo_prompt(report: dict[str, Any]) -> str:
         "financial quality, management/execution, risk, and scenario levels.\n"
         "- Do not use generic catalysts like 'earnings could move the stock' unless the "
         "data contains a concrete earnings, event, guidance, calendar, or EPS item.\n"
+        "- Use the Chart Intelligence block where supplied: auction acceptance against the "
+        "value area, the torque stage with its component scores, and options open-interest "
+        "positioning. Treat any source named in its 'unavailable' list as not supplied.\n"
         "- The memo must end with an analyst research rating. Treat the rating as a "
         "data-conditioned research classification, not personalized investment advice. Use "
         "exactly one rating from this scale: Strong Buy, Buy, Hold, Neutral, Sell, Strong "
@@ -881,6 +897,7 @@ def generate_analysis_brief(
     summaries: list[dict[str, Any]],
     scanner: list[dict[str, Any]],
     *,
+    market_context: list[dict[str, Any]] | None = None,
     text_generator: TextGenerator | None = None,
     api_key: str | None = None,
     text_model: str | None = None,
@@ -891,18 +908,25 @@ def generate_analysis_brief(
         model=text_model,
         session=session,
     )
-    payload = {"summaries": summaries, "scanner": scanner}
+    payload: dict[str, Any] = {"summaries": summaries, "scanner": scanner}
+    if market_context:
+        payload["market_context"] = market_context
     return generator.generate_text(
         system=MARKET_TEXT_SYSTEM,
         prompt=(
             "Write a concise professional stock brief for this analysis response in markdown. "
             "If multiple tickers are present, lead with the scanner read, then call out the top "
             "one or two names and the main caveats. Include business/sector, valuation, quality, "
-            "performance, and risk only where the supplied summaries support it. Keep it under "
-            "260 words and avoid generic market commentary.\n\n"
+            "performance, and risk only where the supplied summaries support it. "
+            "When market_context is supplied, ground the price read in it: the auction value "
+            "area (VAH/VAL/POC) and whether price is accepted above, inside, or below value; "
+            "the torque stage, score, and component detail; and options open-interest "
+            "positioning. Quote those numbers rather than inventing levels, and treat a source "
+            "as missing only when that entry's `unavailable` list says so. Keep it under "
+            "320 words and avoid generic market commentary.\n\n"
             f"{json.dumps(payload, sort_keys=True, default=str)}"
         ),
-        max_tokens=750,
+        max_tokens=900,
         temperature=0.2,
     )
 

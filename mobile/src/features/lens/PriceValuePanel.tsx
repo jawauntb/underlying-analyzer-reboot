@@ -11,8 +11,9 @@ import { AsyncCache, TTL_MS, type CacheRequestDescriptor } from '@/src/state/cac
 import type { NetworkReachability } from '@/src/state/network';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
+import ChartIntervalRail from './ChartIntervalRail';
 import { CHART_INTERVAL_CHIPS, LENS_AUCTION_PERIODS, type ChartInterval } from './lens-model';
-import { errorMessage, explicitProvider, formatTimestamp } from './lens-utils';
+import { errorMessage, explicitProvider, formatFreshness, formatTimestamp, publicProviderNote } from './lens-utils';
 
 const defaultCache = new AsyncCache();
 
@@ -37,6 +38,8 @@ type PriceValuePanelProps = {
   cache?: ChartCache;
   client: ChartClient;
   fontScale: number;
+  /** Interval this panel opens on, from the reader's saved settings. */
+  initialInterval?: ChartInterval;
   now?: () => number;
   reachability: NetworkReachability;
   symbol: string;
@@ -94,13 +97,15 @@ export default function PriceValuePanel({
   cache = defaultCache,
   client,
   fontScale,
+  initialInterval = '1d',
   now = Date.now,
   reachability,
   symbol,
   width,
 }: PriceValuePanelProps) {
-  const [period, setPeriod] = useState<Period>('3mo');
-  const [interval, setInterval] = useState<ChartInterval>('1d');
+  const openingChip = CHART_INTERVAL_CHIPS.find((candidate) => candidate.value === initialInterval) ?? CHART_INTERVAL_CHIPS[1];
+  const [period, setPeriod] = useState<Period>(openingChip.period);
+  const [interval, setInterval] = useState<ChartInterval>(openingChip.value);
   const [state, setState] = useState<ChartState>({ status: 'loading', data: null, fetchedAt: null });
   const coordinator = useRef(new RequestCoordinator<AuctionResponse>());
   const generation = useRef(0);
@@ -232,49 +237,34 @@ export default function PriceValuePanel({
 
   return (
     <View style={styles.section}>
-      <View style={styles.headingRow}>
-        <View style={styles.headingCopy}>
-          <Text style={styles.eyebrow}>MARKET PICTURE</Text>
-          <Text accessibilityRole="header" style={styles.heading}>Price & value</Text>
-          <Text style={styles.description}>{intervalCopy(interval)}</Text>
-        </View>
-        <View style={styles.chips}>
-          <View accessibilityRole="tablist" style={styles.periods}>
-            {CHART_INTERVAL_CHIPS.map((candidate) => {
-              const active = candidate.value === interval;
-              return (
-                <Pressable
-                  accessibilityLabel={`Show ${candidate.spoken} interval`}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  key={candidate.value}
-                  onPress={() => chooseInterval(candidate.value)}
-                  style={({ pressed }) => [styles.period, active && styles.periodActive, pressed && styles.pressed]}>
-                  <Text style={[styles.periodText, active && styles.periodTextActive]}>{candidate.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          {interval === '1d' ? (
-            <View accessibilityRole="tablist" style={styles.periods}>
-              {PERIODS.map((candidate) => {
-                const active = candidate.value === period;
-                return (
-                  <Pressable
-                    accessibilityLabel={`Show ${candidate.spoken} chart`}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: active }}
-                    key={candidate.value}
-                    onPress={() => choosePeriod(candidate.value)}
-                    style={({ pressed }) => [styles.period, active && styles.periodActive, pressed && styles.pressed]}>
-                    <Text style={[styles.periodText, active && styles.periodTextActive]}>{candidate.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-        </View>
+      <View style={styles.heading}>
+        <Text style={styles.eyebrow}>MARKET PICTURE</Text>
+        <Text accessibilityRole="header" style={styles.title}>Price & value</Text>
+        <Text style={styles.description}>{intervalCopy(interval)}</Text>
       </View>
+
+      <ChartIntervalRail interval={interval} onChange={chooseInterval} testID="price-value-interval-rail" />
+
+      {interval === '1d' ? (
+        <View accessibilityRole="tablist" style={styles.rangeRail} testID="price-value-range-rail">
+          {PERIODS.map((candidate) => {
+            const active = candidate.value === period;
+            return (
+              <Pressable
+                accessibilityLabel={`Show ${candidate.spoken} chart`}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                key={candidate.value}
+                onPress={() => choosePeriod(candidate.value)}
+                style={({ pressed }) => [styles.range, active && styles.rangeActive, pressed && styles.pressed]}>
+                <Text numberOfLines={1} style={[styles.rangeText, active && styles.rangeTextActive]}>
+                  {candidate.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
 
       <View style={styles.chartFrame}>
         {state.status === 'loading' ? <AsyncState title="Loading price chart" message={`Fetching ${selectedInterval.spoken} price and value data.`} /> : null}
@@ -284,8 +274,10 @@ export default function PriceValuePanel({
         {state.status === 'error' ? <AsyncState actionLabel="Retry price chart" message={state.message} onAction={retry} title="Price chart unavailable" tone="error" /> : null}
         {state.data && state.fetchedAt !== null ? (
           <View style={styles.chartContent}>
-            <Text style={styles.provenance}>{source(state.data)} · {formatTimestamp(state.fetchedAt)}</Text>
-            {state.data.response.providerNote ? <Text style={styles.note}>{state.data.response.providerNote}</Text> : null}
+            <Text style={styles.provenance}>{source(state.data)} · {formatFreshness(state.fetchedAt, now)}</Text>
+            {publicProviderNote(state.data.response.providerNote)
+              ? <Text style={styles.note}>{publicProviderNote(state.data.response.providerNote)}</Text>
+              : null}
             {state.message && state.status !== 'error' ? <Text accessibilityRole="alert" style={styles.warning}>{state.message}</Text> : null}
             <AuctionChart dataset={state.data.dataset} fontScale={fontScale} title={title} width={width} />
           </View>
@@ -304,29 +296,29 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
   },
-  headingRow: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, justifyContent: 'space-between' },
-  headingCopy: { flexGrow: 1, flexShrink: 1, gap: spacing.xs, minWidth: 190 },
+  heading: { gap: spacing.xs },
   eyebrow: { ...typography.eyebrow, color: colors.cyan },
-  heading: { ...typography.headline, color: colors.ink },
+  title: { ...typography.headline, color: colors.ink },
   description: { ...typography.caption, color: colors.inkSecondary },
-  chips: { flexGrow: 1, gap: spacing.xs, minWidth: 190 },
-  periods: { flexDirection: 'row', flexGrow: 1, flexWrap: 'wrap', gap: spacing.xs, justifyContent: 'flex-end' },
-  period: {
+  // The range rail is a single-line row sized by flex, so no wrapped chip can ever
+  // be laid out over the chart meta line beneath it.
+  rangeRail: { flexDirection: 'row', gap: spacing.xs },
+  range: {
     alignItems: 'center',
     borderColor: colors.mineral,
     borderRadius: radii.pill,
     borderWidth: 1,
+    flex: 1,
     justifyContent: 'center',
     minHeight: layout.minimumTouchTarget,
-    minWidth: layout.minimumTouchTarget,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
-  periodActive: { backgroundColor: colors.mint, borderColor: colors.mint },
-  periodText: { ...typography.micro, color: colors.inkSecondary },
-  periodTextActive: { color: colors.graphite },
+  rangeActive: { backgroundColor: colors.graphiteSoft, borderColor: colors.mint },
+  rangeText: { ...typography.micro, color: colors.inkMuted },
+  rangeTextActive: { color: colors.mint },
   chartFrame: { minHeight: 260 },
   chartContent: { gap: spacing.sm },
-  provenance: { ...typography.caption, color: colors.mint },
+  provenance: { ...typography.micro, color: colors.inkMuted },
   note: { ...typography.caption, color: colors.inkSecondary },
   warning: { ...typography.caption, color: colors.coral },
   pressed: { opacity: 0.72 },

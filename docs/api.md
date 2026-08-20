@@ -328,6 +328,15 @@ Single-ticker summary + Anthropic brief.
 curl -s http://127.0.0.1:5050/api/analysis/AAPL
 ```
 
+Both analysis routes also return `market_context`: the chart data behind the
+auction, torque, and moneyline charts compressed into numbers — value area
+(VAH/VAL/POC) and acceptance, torque stage/score/components with the latest
+EMA and SMA readings, and options open-interest positioning. The brief is
+generated with that context, so the prose can cite levels instead of guessing
+at them. Every source is best effort: anything missing is named in the entry's
+`unavailable` list rather than dropped, and a batch builds context for at most
+five resolved tickers.
+
 ### `POST /api/analysis`
 
 Batch analysis for tickers or a watchlist.

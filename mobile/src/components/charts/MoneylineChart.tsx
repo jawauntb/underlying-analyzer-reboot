@@ -1,10 +1,11 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
-import { chartColors, colors, spacing, typography } from '@/src/theme/tokens';
+import { chartColors, spacing, typography } from '@/src/theme/tokens';
 
 import type { ChartDataRow } from './ChartDataTable';
 import { ChartFrame } from './ChartFrame';
+import { ChartLegend, type ChartLegendItem } from './ChartLegend';
 import { buildBarPath, buildLinePath, computeChartLayout, createLinearScale, finiteDomain } from './geometry';
 import { normalizeMoneylineChart } from './models';
 
@@ -72,13 +73,16 @@ export function MoneylineChart({
     }],
   }));
 
+  const legendItems: ChartLegendItem[] = [
+    { key: 'calls', label: 'Calls', color: chartColors.positive, mark: 'candle', spoken: 'bars above zero' },
+    { key: 'puts', label: 'Puts', color: chartColors.negative, mark: 'candle', spoken: 'bars below zero' },
+    ...(model.currentPrice === null
+      ? []
+      : [{ key: 'spot', label: 'Spot', color: chartColors.secondary, mark: 'dashed' as const, spoken: 'dashed line' }]),
+  ];
+
   return (
     <View style={styles.surface}>
-      <View testID={`${title}-legend`} style={[styles.legend, chartLayout.compact && styles.legendCompact]}>
-        <Text style={styles.legendText}>Calls ▲ above zero</Text>
-        <Text style={styles.legendText}>Puts ▼ below zero</Text>
-        {model.currentPrice === null ? null : <Text style={styles.legendText}>Spot — dashed</Text>}
-      </View>
       <ChartFrame
         available={model.positioningAvailable}
         data={rows}
@@ -115,15 +119,13 @@ export function MoneylineChart({
           </View>
         </View>
       </ChartFrame>
+      <ChartLegend items={legendItems} testID={`${title}-legend`} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   surface: { gap: spacing.sm, width: '100%' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  legendCompact: { alignItems: 'flex-start', flexDirection: 'column' },
-  legendText: { ...typography.caption, color: colors.inkSecondary },
   xLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',

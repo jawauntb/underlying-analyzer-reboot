@@ -54,6 +54,9 @@ const auction = {
   meta: {},
 };
 
+const auctionWithNote = (providerNote: string) =>
+  ({ ...auction, providerNote }) as unknown as typeof auction;
+
 const moneyline = {
   chartType: 'moneyline' as const,
   ticker: 'AAPL',
@@ -163,6 +166,7 @@ function dependencies(options: {
   now?: number;
   providers?: ProviderStatusResponse;
   optionsChain?: OptionsChainResponse;
+  marketSnapshot?: Record<string, unknown>;
 } = {}) {
   const cache = {
     read: jest.fn(async (descriptor: { route?: string }) =>
@@ -177,6 +181,7 @@ function dependencies(options: {
     moneyline: jest.fn(async () => moneyline),
     ...(options.providers ? { providers: jest.fn(async () => options.providers) } : {}),
     ...(options.optionsChain ? { optionsChain: jest.fn(async () => options.optionsChain) } : {}),
+    ...(options.marketSnapshot ? { marketSnapshot: jest.fn(async () => options.marketSnapshot) } : {}),
   };
   const router = { push: jest.fn() };
   const haptics = { selectionAsync: jest.fn(async () => undefined) };
@@ -290,6 +295,53 @@ describe('LensScreen', () => {
     expect(screen.getByText(/Opened depth: None/)).toBeTruthy();
     expect(deps.client.torque).not.toHaveBeenCalled();
     expect(deps.client.moneyline).not.toHaveBeenCalled();
+  });
+
+  it('opens on the saved defaults from Settings', async () => {
+    const deps = dependencies({ marketSnapshot: { ticker: 'AAPL', provider: 'massive', data: { lastTrade: { p: 231.42 } } } });
+    render(
+      <LensScreen
+        {...deps.props}
+        preferences={{ defaultInterval: '1w', defaultDepth: 'diagnose', liveQuotes: false }}
+      />,
+    );
+
+    await waitFor(() => expect(deps.client.auction).toHaveBeenCalledWith({ ticker: 'AAPL', period: '1y', interval: '1w' }, expect.anything()));
+    expect(screen.getByText(/Selected depth: Diagnose/)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Show weekly interval' }).props.accessibilityState.selected).toBe(true);
+    expect(deps.client.marketSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('keeps both chart rails on one line each so no chip lands on the reading below', async () => {
+    const deps = dependencies();
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText(/Fixture provider · Updated/)).toBeTruthy();
+    const intervalRail = StyleSheet.flatten(screen.getByTestId('price-value-interval-rail').props.style);
+    const rangeRail = StyleSheet.flatten(screen.getByTestId('price-value-range-rail').props.style);
+
+    // Wrapping chip rails were what let the range chips overlap the chart meta line.
+    expect(intervalRail.flexDirection).toBe('row');
+    expect(intervalRail.flexWrap).toBeUndefined();
+    expect(rangeRail.flexDirection).toBe('row');
+    expect(rangeRail.flexWrap).toBeUndefined();
+    expect(screen.getByRole('tab', { name: 'Show 1 year chart' })).toBeTruthy();
+  });
+
+  it('shows a real provider caveat and hides the internal pipeline label', async () => {
+    const deps = dependencies();
+    deps.client.auction.mockImplementation(async () => auctionWithNote('Batch auction chart data'));
+    const { unmount } = render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText(/Fixture provider · Updated/)).toBeTruthy();
+    expect(screen.queryByText('Batch auction chart data')).toBeNull();
+    unmount();
+
+    const delayed = dependencies();
+    delayed.client.auction.mockImplementation(async () => auctionWithNote('Delayed 15 minutes.'));
+    render(<LensScreen {...delayed.props} />);
+
+    expect(await screen.findByText('Delayed 15 minutes.')).toBeTruthy();
   });
 
   it('switches visible chart ranges and ignores a late response from the replaced range', async () => {

@@ -33,10 +33,10 @@ export function TorqueChart({
   const compact = width < 350 || fontScale >= 1.3;
   const model = normalizeTorqueChart(dataset);
   const lines: ChartLine[] = [
-    { key: 'close', label: 'Close — solid', color: chartColors.primary, points: model.priceLines.close, width: 2.5 },
-    { key: 'ema75', label: 'EMA 75 — dashed', color: chartColors.secondary, dashArray: '7 4', points: model.priceLines.ema75 },
-    { key: 'sma50', label: 'SMA 50 — dash-dot', color: chartColors.positive, dashArray: '9 3 2 3', points: model.priceLines.sma50 },
-    { key: 'sma200', label: 'SMA 200 — dotted', color: chartColors.negative, dashArray: '2 4', points: model.priceLines.sma200 },
+    { key: 'close', label: 'Close', color: chartColors.primary, mark: 'line', points: model.priceLines.close, spoken: 'solid line', width: 2.5 },
+    { key: 'ema75', label: 'EMA 75', color: chartColors.secondary, dashArray: '7 4', mark: 'dashed', points: model.priceLines.ema75, spoken: 'dashed line' },
+    { key: 'sma50', label: 'SMA 50', color: chartColors.positive, dashArray: '9 3 2 3', mark: 'dash-dot', points: model.priceLines.sma50, spoken: 'dash-dot line' },
+    { key: 'sma200', label: 'SMA 200', color: chartColors.negative, dashArray: '2 4', mark: 'dotted', points: model.priceLines.sma200, spoken: 'dotted line' },
   ];
   const technicalRows: ChartDataRow[] = model.categories.map((date, categoryIndex) => ({
     key: `torque-price-${categoryIndex}-${date}`,

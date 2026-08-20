@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
-import { chartColors, colors, spacing, typography } from '@/src/theme/tokens';
+import { chartColors, spacing, typography } from '@/src/theme/tokens';
 
 import type { ChartDataRow } from './ChartDataTable';
 import { ChartFrame } from './ChartFrame';
+import { ChartLegend, type ChartLegendItem } from './ChartLegend';
 import { minMaxDecimate } from './decimate';
 import { buildLinePath, computeChartLayout, createLinearScale, finiteDomain } from './geometry';
 import type { LinePoint } from './models';
@@ -15,7 +16,11 @@ export type ChartLine = {
   label: string;
   color: string;
   dashArray?: string;
+  /** Legend mark for this line. Defaults to a solid or dashed rule from `dashArray`. */
+  mark?: ChartLegendItem['mark'];
   points: readonly LinePoint[];
+  /** Spoken description of the mark for screen readers. */
+  spoken?: string;
   width?: number;
 };
 
@@ -87,21 +92,21 @@ export function LineChart({
   const rows = tableRows ? [...tableRows] : defaultTableRows(lines);
   const dateByIndex = new Map(allPoints.map((point) => [point.categoryIndex, point.date]));
 
+  const legendItems: ChartLegendItem[] = lines
+    .filter((line) => line.points.length)
+    .map((line) => {
+      const mark = line.mark ?? (line.dashArray ? 'dashed' : 'line');
+      return {
+        key: line.key,
+        label: line.label,
+        color: line.color,
+        mark,
+        spoken: line.spoken ?? `${mark === 'line' ? 'solid' : mark} line`,
+      };
+    });
+
   return (
     <View style={styles.surface}>
-      <View testID={`${title}-legend`} style={[styles.legend, chartLayout.compact && styles.legendCompact]}>
-        {lines.filter((line) => line.points.length).map((line) => (
-          <View key={line.key} style={styles.legendItem}>
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-              style={[styles.legendRule, { backgroundColor: line.color }]}
-            />
-            <Text style={styles.legendText}>{line.label}</Text>
-          </View>
-        ))}
-      </View>
-
       <ChartFrame
         available={allPoints.length > 0}
         data={rows}
@@ -145,17 +150,13 @@ export function LineChart({
           </View>
         </View>
       </ChartFrame>
+      <ChartLegend items={legendItems} testID={`${title}-legend`} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   surface: { gap: spacing.sm, width: '100%' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  legendCompact: { alignItems: 'flex-start', flexDirection: 'column' },
-  legendItem: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs },
-  legendRule: { borderRadius: 1, height: 3, width: 18 },
-  legendText: { ...typography.caption, color: colors.inkSecondary },
   xLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
