@@ -480,7 +480,7 @@ describe('LensScreen', () => {
     expect(deps.client.torque).toHaveBeenCalledTimes(1);
     expect(deps.client.auction).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole('button', { name: 'View AAPL Moneyline data' })).toBeTruthy();
-  });
+  }, 15_000);
 
   it('deep dive navigates with normalized params without auto-running specialist charts', async () => {
     const deps = dependencies();

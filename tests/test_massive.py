@@ -97,6 +97,33 @@ def test_massive_history_maps_intraday_and_weekly_intervals(
 
     assert session.calls[0][0].endswith(path_fragment)
     assert result.interval in {"15m", "1w"}
+    assert result.data.index[0] == pd.Timestamp("2026-01-02 13:00:00")
+
+
+def test_massive_history_accepts_nanosecond_aggregates() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "status": "OK",
+                    "results": [
+                        {
+                            "t": 1767358800000 * 1_000_000,
+                            "o": 10,
+                            "h": 12,
+                            "l": 9,
+                            "c": 11,
+                            "v": 100,
+                        }
+                    ],
+                }
+            )
+        ]
+    )
+    result = MassiveProvider("secret-key", session=session).get_history(
+        "AAPL", start=date(2026, 1, 1), end=date(2026, 1, 5), interval="15m"
+    )
+    assert result.data.index[0] == pd.Timestamp("2026-01-02 13:00:00")
 
 
 def test_massive_history_rejects_unknown_interval() -> None:
