@@ -17,13 +17,13 @@ import type { NetworkReachability } from '@/src/state/network';
 import { useNetworkReachability } from '@/src/state/network';
 import { colors, layout, radii, spacing, typography } from '@/src/theme/tokens';
 
+import ChartIntervalRail from './ChartIntervalRail';
 import LensOverview, { type LensOverviewCache, type LensOverviewClient } from './LensOverview';
 import PriceValuePanel from './PriceValuePanel';
 import LiveQuoteCard from './LiveQuoteCard';
 import MarketDataStatusCard from './MarketDataStatusCard';
 import OptionsPulseCard from './OptionsPulseCard';
 import {
-  CHART_INTERVAL_CHIPS,
   LENS_AUCTION_PERIODS,
   type ChartInterval,
   normalizeLensSymbol,
@@ -383,27 +383,16 @@ function LensController({
         {openedDepth && openedDepth !== 'deep-dive' ? (
           <View style={styles.panels}>
             <Text accessibilityRole="header" style={styles.panelsTitle}>Opened intelligence</Text>
-            <View accessibilityRole="tablist" style={styles.intervalRow}>
-              {CHART_INTERVAL_CHIPS.map((candidate) => {
-                const active = candidate.value === chartInterval;
-                return (
-                  <Pressable
-                    accessibilityLabel={`Show ${candidate.spoken} interval`}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: active }}
-                    key={candidate.value}
-                    onPress={() => {
-                      if (candidate.value === chartInterval) return;
-                      setChartInterval(candidate.value);
-                      void loadTorque(true, candidate.value);
-                      void loadAuction(true, candidate.value);
-                    }}
-                    style={({ pressed }) => [styles.intervalChip, active && styles.intervalChipActive, pressed && styles.pressed]}>
-                    <Text style={[styles.intervalChipText, active && styles.intervalChipTextActive]}>{candidate.label}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <ChartIntervalRail
+              testID="opened-intelligence-interval-rail"
+              interval={chartInterval}
+              onChange={(next) => {
+                if (next === chartInterval) return;
+                setChartInterval(next);
+                void loadTorque(true, next);
+                void loadAuction(true, next);
+              }}
+            />
             <LensPanel title={`${symbol} Torque`} state={torqueState} onRetry={() => void loadTorque(true)}>
               {torqueState.status === 'ready' ? <TorqueChart dataset={torqueState.data} fontScale={fontScale} title={`${symbol} Torque`} width={chartWidth} /> : null}
             </LensPanel>
@@ -499,20 +488,6 @@ const styles = StyleSheet.create({
   openActionText: { ...typography.label, color: colors.graphite },
   panels: { gap: spacing.lg },
   panelsTitle: { ...typography.headline, color: colors.ink },
-  intervalRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  intervalChip: {
-    alignItems: 'center',
-    borderColor: colors.mineral,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: layout.minimumTouchTarget,
-    minWidth: layout.minimumTouchTarget,
-    paddingHorizontal: spacing.sm,
-  },
-  intervalChipActive: { backgroundColor: colors.mint, borderColor: colors.mint },
-  intervalChipText: { ...typography.micro, color: colors.inkSecondary },
-  intervalChipTextActive: { color: colors.graphite },
   panel: { gap: spacing.sm },
   notice: { ...typography.caption, color: colors.coral },
   pressed: { opacity: 0.72 },

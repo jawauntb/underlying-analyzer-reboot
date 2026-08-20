@@ -107,9 +107,11 @@ describe('financial chart surfaces', () => {
     const view = render(<AuctionChart dataset={auction} title="AAPL auction" width={320} />);
     const paths = view.UNSAFE_getAllByType(Path);
 
-    expect(view.getByText('VAH — dashed')).toBeTruthy();
-    expect(view.getByText('VAL — dashed')).toBeTruthy();
-    expect(view.getByText('POC — dash-dot')).toBeTruthy();
+    expect(view.getByText('VAH')).toBeTruthy();
+    expect(view.getByText('VAL')).toBeTruthy();
+    expect(view.getByText('POC')).toBeTruthy();
+    expect(view.getByLabelText('VAH, value area high, dashed line')).toBeTruthy();
+    expect(view.getByLabelText('POC, point of control, dash-dot line')).toBeTruthy();
     expect(paths.length).toBeLessThanOrEqual(20);
     expect(paths.every((path) => finiteProps(path.props))).toBe(true);
   });
@@ -132,9 +134,9 @@ describe('financial chart surfaces', () => {
   it('hides absent auction levels instead of showing empty legend claims', () => {
     const view = render(<AuctionChart dataset={{ series: { ohlcv: auction.series.ohlcv } }} title="Auction no levels" width={320} />);
 
-    expect(view.queryByText('VAH — dashed')).toBeNull();
-    expect(view.queryByText('VAL — dashed')).toBeNull();
-    expect(view.queryByText('POC — dash-dot')).toBeNull();
+    expect(view.queryByText('VAH')).toBeNull();
+    expect(view.queryByText('VAL')).toBeNull();
+    expect(view.queryByText('POC')).toBeNull();
   });
 
   it('keeps auction unavailable when levels exist without candles', () => {
@@ -191,7 +193,7 @@ describe('financial chart surfaces', () => {
       />,
     );
 
-    expect(view.queryByText('Spot — dashed')).toBeNull();
+    expect(view.queryByText('Spot')).toBeNull();
   });
 
   it('renders torque overlays without a base line and a technical-only fundamentals state', () => {
@@ -208,8 +210,9 @@ describe('financial chart surfaces', () => {
       />,
     );
 
-    expect(view.getByText('EMA 75 — dashed')).toBeTruthy();
-    expect(view.getByText('SMA 200 — dotted')).toBeTruthy();
+    expect(view.getByText('EMA 75')).toBeTruthy();
+    expect(view.getByText('SMA 200')).toBeTruthy();
+    expect(view.getByLabelText('SMA 200, dotted line')).toBeTruthy();
     expect(view.getByText('Fundamental data unavailable — technicals only.')).toBeTruthy();
     expect(view.UNSAFE_getAllByType(Path).length).toBeLessThanOrEqual(35);
   });
@@ -233,12 +236,16 @@ describe('financial chart surfaces', () => {
     expect(view.getByText('100')).toBeTruthy();
   });
 
-  it.each([320, 375, 430])('stacks chart legends at compact widths and preserves %i-point structure', (width) => {
+  it.each([320, 375, 430])('keeps the legend a wrapping rail below the plot at %i points wide', (width) => {
     const view = render(<AuctionChart dataset={auction} title={`Auction ${width}`} width={width} fontScale={width === 430 ? 1.3 : 1} />);
     const legend = view.getByTestId(`Auction ${width}-legend`);
-    const expectedDirection = width < 350 || width === 430 ? 'column' : 'row';
+    const legendStyle = StyleSheet.flatten(legend.props.style);
 
-    expect(StyleSheet.flatten(legend.props.style).flexDirection).toBe(expectedDirection);
+    // A wrapping row keeps five marks on one or two short lines instead of a
+    // five-line column that pushes the plot off the first screen.
+    expect(legendStyle.flexDirection).toBe('row');
+    expect(legendStyle.flexWrap).toBe('wrap');
+    expect(legendStyle.gap).toBeUndefined();
     expect(view.getByRole('button', { name: `View Auction ${width} data` })).toBeTruthy();
   });
 });

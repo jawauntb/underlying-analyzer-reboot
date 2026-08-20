@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
-import { chartColors, colors, spacing, typography } from '@/src/theme/tokens';
+import { chartColors, spacing, typography } from '@/src/theme/tokens';
 
 import type { ChartDataRow } from './ChartDataTable';
 import { ChartFrame } from './ChartFrame';
+import { ChartLegend, type ChartLegendItem } from './ChartLegend';
 import { aggregateOhlcv } from './decimate';
 import {
   buildCandlePaths,
@@ -25,9 +26,9 @@ type AuctionChartProps = {
 };
 
 const levelSpecs = [
-  { key: 'vah' as const, label: 'VAH — dashed', color: chartColors.positive, dashArray: '7 5' },
-  { key: 'val' as const, label: 'VAL — dashed', color: chartColors.negative, dashArray: '7 5' },
-  { key: 'poc' as const, label: 'POC — dash-dot', color: chartColors.secondary, dashArray: '9 4 2 4' },
+  { key: 'vah' as const, label: 'VAH', color: chartColors.positive, dashArray: '7 5', mark: 'dashed' as const, spoken: 'value area high, dashed line' },
+  { key: 'val' as const, label: 'VAL', color: chartColors.negative, dashArray: '7 5', mark: 'dashed' as const, spoken: 'value area low, dashed line' },
+  { key: 'poc' as const, label: 'POC', color: chartColors.secondary, dashArray: '9 4 2 4', mark: 'dash-dot' as const, spoken: 'point of control, dash-dot line' },
 ];
 
 function compactDateLabel(value: string, includeYear: boolean): string {
@@ -107,16 +108,16 @@ export function AuctionChart({
   }, [dataset, fontScale, height, width]);
   const spansYears = model.data.length > 1
     && model.data[0].date.slice(0, 4) !== model.data[model.data.length - 1].date.slice(0, 4);
+  const legendItems: ChartLegendItem[] = [
+    { key: 'candles', label: 'Candles', color: chartColors.positive, mark: 'candle', spoken: 'up and down candles' },
+    { key: 'close', label: 'Close', color: chartColors.primary, mark: 'line', spoken: 'solid line' },
+    ...levelSpecs
+      .filter((level) => model.levels[level.key] !== null)
+      .map((level) => ({ key: level.key, label: level.label, color: level.color, mark: level.mark, spoken: level.spoken })),
+  ];
 
   return (
     <View style={styles.surface}>
-      <View testID={`${title}-legend`} style={[styles.legend, chartLayout.compact && styles.legendCompact]}>
-        <Text style={styles.legendText}>Candles ▲ up / ▼ down</Text>
-        <Text style={styles.legendText}>Close — solid</Text>
-        {levelSpecs.filter((level) => model.levels[level.key] !== null).map((level) => (
-          <Text key={level.key} style={styles.legendText}>{level.label}</Text>
-        ))}
-      </View>
       <ChartFrame available={model.data.length > 0} data={rows} title={title} warnings={model.warnings}>
         <View
           accessibilityElementsHidden
@@ -153,15 +154,13 @@ export function AuctionChart({
           </View>
         </View>
       </ChartFrame>
+      <ChartLegend items={legendItems} testID={`${title}-legend`} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   surface: { gap: spacing.sm, width: '100%' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  legendCompact: { alignItems: 'flex-start', flexDirection: 'column' },
-  legendText: { ...typography.caption, color: colors.inkSecondary },
   xLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -292,6 +292,38 @@ describe('LensScreen', () => {
     expect(deps.client.moneyline).not.toHaveBeenCalled();
   });
 
+  it('keeps both chart rails on one line each so no chip lands on the reading below', async () => {
+    const deps = dependencies();
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText(/Fixture provider · Updated/)).toBeTruthy();
+    const intervalRail = StyleSheet.flatten(screen.getByTestId('price-value-interval-rail').props.style);
+    const rangeRail = StyleSheet.flatten(screen.getByTestId('price-value-range-rail').props.style);
+
+    // Wrapping chip rails were what let the range chips overlap the chart meta line.
+    expect(intervalRail.flexDirection).toBe('row');
+    expect(intervalRail.flexWrap).toBeUndefined();
+    expect(rangeRail.flexDirection).toBe('row');
+    expect(rangeRail.flexWrap).toBeUndefined();
+    expect(screen.getByRole('tab', { name: 'Show 1 year chart' })).toBeTruthy();
+  });
+
+  it('shows a real provider caveat and hides the internal pipeline label', async () => {
+    const deps = dependencies();
+    deps.client.auction.mockImplementation(async () => ({ ...auction, providerNote: 'Batch auction chart data' }));
+    const { unmount } = render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText(/Fixture provider · Updated/)).toBeTruthy();
+    expect(screen.queryByText('Batch auction chart data')).toBeNull();
+    unmount();
+
+    const delayed = dependencies();
+    delayed.client.auction.mockImplementation(async () => ({ ...auction, providerNote: 'Delayed 15 minutes.' }));
+    render(<LensScreen {...delayed.props} />);
+
+    expect(await screen.findByText('Delayed 15 minutes.')).toBeTruthy();
+  });
+
   it('switches visible chart ranges and ignores a late response from the replaced range', async () => {
     const initial = deferred<typeof auction>();
     const replacement = deferred<typeof auction>();
