@@ -952,7 +952,9 @@ def create_app() -> Flask:
             # into the route's existing handler exactly as the sequential version did.
             with ThreadPoolExecutor(max_workers=3) as executor:
                 history_future = executor.submit(
-                    client.get_history, ticker, **chart_history_options(payload, default_period="2y")
+                    client.get_history,
+                    ticker,
+                    **chart_history_options(payload, default_period="2y"),
                 )
                 profile_future = executor.submit(_load_profile)
                 sec_trend_future = executor.submit(_load_sec_trend)
@@ -1019,7 +1021,9 @@ def create_app() -> Flask:
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 history_future = executor.submit(
-                    client.get_history, ticker, **chart_history_options(payload, default_period="2y")
+                    client.get_history,
+                    ticker,
+                    **chart_history_options(payload, default_period="2y"),
                 )
                 profile_future = executor.submit(_load_profile)
                 sec_trend_future = executor.submit(_load_sec_trend)

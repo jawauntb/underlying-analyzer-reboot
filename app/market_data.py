@@ -1059,17 +1059,38 @@ def snapshot_quote(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _as_naive_utc(value: Any) -> pd.Timestamp | None:
-    if value is None:
-        return None
+def epoch_to_naive_utc(value: Any) -> pd.Timestamp:
+    if isinstance(value, bool) or value is None:
+        raise ValueError("epoch timestamp is required")
     if isinstance(value, int | float):
-        ts = pd.Timestamp(value, unit="ms", tz="UTC")
+        numeric: int | float = value
     else:
-        ts = pd.Timestamp(value)
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
+        item = getattr(value, "item", None)
+        numeric = item() if callable(item) else float(value)
+    if isinstance(numeric, bool) or not isinstance(numeric, int | float):
+        raise ValueError("epoch timestamp must be numeric")
+    magnitude = abs(float(numeric))
+    if magnitude >= 1e16:
+        unit = "ns"
+    elif magnitude >= 1e13:
+        unit = "us"
+    elif magnitude >= 1e11:
+        unit = "ms"
+    else:
+        unit = "s"
+    return pd.Timestamp(int(numeric), unit=unit, tz="UTC").tz_localize(None)
+
+
+def _as_naive_utc(value: Any) -> pd.Timestamp | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float) or callable(getattr(value, "item", None)):
+        try:
+            return epoch_to_naive_utc(value)
+        except (OverflowError, TypeError, ValueError, pd.errors.OutOfBoundsDatetime):
+            return None
+    ts = pd.Timestamp(value)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
     return ts.tz_localize(None)
 
 

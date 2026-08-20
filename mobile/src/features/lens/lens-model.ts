@@ -13,12 +13,12 @@ export const CHART_INTERVAL_CHIPS = [
   { label: '15m', value: '15m', spoken: '15 minute', period: '5d' },
   { label: '1D', value: '1d', spoken: 'daily', period: '3mo' },
   { label: '1W', value: '1w', spoken: 'weekly', period: '1y' },
-] as const satisfies ReadonlyArray<{
+] as const satisfies readonly {
   label: string;
   value: ChartInterval;
   spoken: string;
   period: LensAuctionPeriod;
-}>;
+}[];
 
 export const RESEARCH_DEPTH_LABELS: Record<ResearchDepth, string> = {
   glance: 'Glance',

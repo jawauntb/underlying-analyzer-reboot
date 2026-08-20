@@ -25,6 +25,7 @@ from app.market_data import (
     MarketDataError,
     OptionChainResult,
     choose_expiry,
+    epoch_to_naive_utc,
     massive_interval_spec,
     normalize_history_interval,
     normalize_ohlcv,
@@ -223,7 +224,7 @@ class MassiveProvider:
         frame = pd.DataFrame(
             [
                 {
-                    "Date": pd.to_datetime(row.get("t"), unit="ms", utc=True).tz_localize(None),
+                    "Date": epoch_to_naive_utc(row.get("t")),
                     "Open": row.get("o"),
                     "High": row.get("h"),
                     "Low": row.get("l"),
@@ -238,7 +239,9 @@ class MassiveProvider:
             return HistoryResult(ticker, frame, self.name, self.note, interval=resolved)
         frame = frame.set_index("Date")
         frame["Adj Close"] = frame["Close"]
-        return HistoryResult(ticker, normalize_ohlcv(frame), self.name, self.note, interval=resolved)
+        return HistoryResult(
+            ticker, normalize_ohlcv(frame), self.name, self.note, interval=resolved
+        )
 
     def get_profile(self, ticker: str) -> dict[str, Any]:
         payload = self._request_json(f"/v3/reference/tickers/{ticker}")

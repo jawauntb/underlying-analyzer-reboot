@@ -22,6 +22,7 @@ from app.market_data import (
     MarketDataError,
     apply_live_quote,
     chart_history_options,
+    epoch_to_naive_utc,
     normalize_history_interval,
     normalize_ohlcv,
     parse_market_number,
@@ -334,3 +335,40 @@ def test_apply_live_quote_updates_current_daily_bar() -> None:
     assert float(updated.iloc[-1]["Close"]) == 11.8
     assert float(updated.iloc[-1]["High"]) == 12.0
     assert float(updated.iloc[-1]["Low"]) == 9.0
+
+
+def test_epoch_to_naive_utc_accepts_ms_and_ns() -> None:
+    eastern = pd.Timestamp("2026-08-19 15:45", tz="America/New_York")
+    ms = int(eastern.timestamp() * 1000)
+    ns = int(eastern.timestamp() * 1_000_000_000)
+    assert epoch_to_naive_utc(ms) == epoch_to_naive_utc(ns)
+    assert series_timestamp_label(epoch_to_naive_utc(ns), "15m") == "2026-08-19T19:45:00"
+
+
+def test_apply_live_quote_accepts_nanosecond_trade_time() -> None:
+    frame = pd.DataFrame(
+        {
+            "Open": [10.0],
+            "High": [11.0],
+            "Low": [9.5],
+            "Close": [10.5],
+            "Volume": [100.0],
+            "Adj Close": [10.5],
+        },
+        index=[pd.Timestamp("2026-08-19 19:30:00")],
+    )
+    eastern = pd.Timestamp("2026-08-19 15:45", tz="America/New_York")
+    trade_ts = int(eastern.timestamp() * 1_000_000_000)
+    updated = apply_live_quote(
+        frame,
+        {
+            "ticker": {
+                "day": {"o": 10.0, "h": 12.0, "l": 9.0, "c": 11.4, "v": 200},
+                "lastTrade": {"p": 11.8, "t": trade_ts},
+            }
+        },
+        "15m",
+    )
+    assert float(updated.iloc[-1]["Close"]) == 11.8
+    assert updated.index[-1] == pd.Timestamp("2026-08-19 19:45:00")
+    assert series_timestamp_label(updated.index[-1], "15m") == "2026-08-19T19:45:00"
