@@ -158,6 +158,7 @@ function boundedAgentRequest(request: AgentChatRequest): Record<string, unknown>
     tools: [...MOBILE_AGENT_TOOLS],
     tool_policy: 'exact',
     ...(request.context ? { context: request.context.trim().slice(0, 2_000) } : {}),
+    ...(request.requiredFirstTool ? { required_first_tool: request.requiredFirstTool } : {}),
   };
 }
 

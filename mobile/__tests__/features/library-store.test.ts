@@ -1,4 +1,4 @@
-import { MOBILE_AGENT_TOOLS } from '@/src/api/agentTools';
+import { LEGACY_MOBILE_AGENT_TOOLS, MOBILE_AGENT_TOOLS } from '@/src/api/agentTools';
 import {
   LIBRARY_NAMESPACE,
   LibraryStore,
@@ -114,6 +114,27 @@ describe('LibraryStore', () => {
     const reopened = await store.read('run-1');
     expect(reopened).toMatchObject({ id: 'run-1', symbol: 'AAPL', summary: expect.stringContaining('Demand') });
     expect((await store.list()).records).toHaveLength(1);
+  });
+
+  it('keeps pre-packet v1 Library records instead of treating them as corrupt', async () => {
+    const storage = new MemoryStorage();
+    storage.values.set(`${LIBRARY_NAMESPACE}legacy-run`, JSON.stringify({
+      ...completion({
+        tools: [...LEGACY_MOBILE_AGENT_TOOLS],
+        toolTrace: [{ name: 'analyze_ticker', status: 'completed', durationMs: 24, error: null }],
+      }),
+      schemaVersion: 1,
+      id: 'legacy-run',
+      source: { kind: 'research-agent', transport: 'stream' },
+      cachedAt: 200,
+      accessedAt: 200,
+    }));
+    const store = new LibraryStore(storage);
+
+    const snapshot = await store.list();
+
+    expect(snapshot.corruptedCount).toBe(0);
+    expect(snapshot.records[0]).toMatchObject({ id: 'legacy-run', tools: [...LEGACY_MOBILE_AGENT_TOOLS] });
   });
 
   it('prunes least-recently-used records by count and reports pruning', async () => {

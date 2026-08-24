@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode
 
 from flask import current_app
@@ -32,6 +32,8 @@ MAX_RESULT_CHARS = 14000
 MAX_STRING_CHARS = 2400
 MAX_ARRAY_ITEMS = 40
 IMAGE_KEYS = ("data", "b64_json", "image_base64")
+TICKER_RESEARCH_TOOL = "ticker_research_bundle"
+ResultView = Literal["agent", "full"]
 
 
 @dataclass
@@ -67,7 +69,7 @@ class ToolResult:
     error: str | None = None
     duration_ms: int = 0
 
-    def model_text(self) -> str:
+    def model_text(self, *, max_result_chars: int | None = MAX_RESULT_CHARS) -> str:
         """The string handed back to the model as tool output."""
         if not self.ok:
             return json.dumps({"error": self.error or "Tool call failed"})
@@ -86,14 +88,14 @@ class ToolResult:
                 "title in prose; do not attempt to reproduce them."
             )
         text = json.dumps(payload, default=str)
-        if len(text) > MAX_RESULT_CHARS:
+        if max_result_chars is not None and len(text) > max_result_chars:
             # Truncating raw JSON would hand the model a broken document, so
             # wrap the readable prefix in a valid envelope instead.
             return json.dumps(
                 {
                     "truncated": True,
                     "total_chars": len(text),
-                    "preview": text[:MAX_RESULT_CHARS],
+                    "preview": text[:max_result_chars],
                 }
             )
         return text
@@ -116,11 +118,14 @@ def execute_tool(
     arguments: dict[str, Any] | None = None,
     *,
     keep_images: bool = True,
+    result_view: ResultView = "agent",
 ) -> ToolResult:
     """Run one registry tool and return a normalized result.
 
     ``keep_images`` controls whether extracted artifacts carry their base64
     payload. The browser wants them; the stdio MCP client usually does not.
+    ``result_view`` keeps agent events compact while preserving a full-data
+    path for MCP and other programmatic callers.
     """
     import time
 
@@ -129,9 +134,7 @@ def execute_tool(
         spec = get_tool(name)
         method, path, body, query = build_request(spec, arguments or {})
     except ToolArgumentError as exc:
-        return ToolResult(
-            name=name, ok=False, status=400, url="", result=None, error=str(exc)
-        )
+        return ToolResult(name=name, ok=False, status=400, url="", result=None, error=str(exc))
 
     url = path + (f"?{urlencode(query)}" if query else "")
     try:
@@ -164,11 +167,58 @@ def execute_tool(
         ok=ok,
         status=status,
         url=url,
-        result=_compact(stripped) if ok else None,
+        result=_result_for_view(name, stripped, result_view) if ok else None,
         artifacts=artifacts,
         error=error,
         duration_ms=_elapsed_ms(started),
     )
+
+
+def _result_for_view(name: str, value: Any, result_view: ResultView) -> Any:
+    if result_view == "full":
+        return value
+    if name == TICKER_RESEARCH_TOOL:
+        return _ticker_research_agent_projection(value)
+    return _compact(value)
+
+
+def _ticker_research_agent_projection(value: Any) -> dict[str, Any]:
+    """Return bounded decision evidence instead of duplicating raw chart series.
+
+    The direct HTTP endpoint and MCP full view still return the complete packet.
+    This smaller representation is designed for agent tool blocks and NDJSON
+    events, whose consumers have strict payload and context budgets.
+    """
+    if not isinstance(value, dict):
+        return {"agent_context": _compact(value)}
+
+    meta = value.get("meta")
+    safe_meta = meta if isinstance(meta, dict) else {}
+    return {
+        "ticker": value.get("ticker"),
+        "agent_context": _compact(value.get("agent_context") or {}),
+        "provider": value.get("provider"),
+        "provider_note": value.get("provider_note"),
+        "meta": _compact(
+            {
+                "schema_version": safe_meta.get("schema_version"),
+                "requested_periods": safe_meta.get("requested_periods"),
+                "interval": safe_meta.get("interval"),
+                "chart_sources": safe_meta.get("chart_sources"),
+                "source_status": safe_meta.get("source_status"),
+                "error_count": safe_meta.get("error_count"),
+                "errors": safe_meta.get("errors"),
+                "rate_limit": safe_meta.get("rate_limit"),
+            }
+        ),
+        "raw_series": {
+            "note": (
+                "This is the complete decision context available to this agent. "
+                "Raw per-bar series are intentionally withheld from in-product agent "
+                "calls; repeating this tool returns the same projection."
+            ),
+        },
+    }
 
 
 def _elapsed_ms(started: float) -> int:
@@ -211,10 +261,7 @@ def _extract_artifacts(
 ) -> Any:
     """Replace embedded base64 images with refs, collecting them as artifacts."""
     if isinstance(value, list):
-        return [
-            _extract_artifacts(item, artifacts, spec, title_hint=title_hint)
-            for item in value
-        ]
+        return [_extract_artifacts(item, artifacts, spec, title_hint=title_hint) for item in value]
     if not isinstance(value, dict):
         return value
 
@@ -241,11 +288,7 @@ def _extract_artifacts(
             caption=_optional_str(value.get("caption")) or _optional_str(meta.get("caption")),
         )
         artifacts.append(artifact)
-        rest = {
-            key: item
-            for key, item in value.items()
-            if key not in IMAGE_KEYS and key != "mime"
-        }
+        rest = {key: item for key, item in value.items() if key not in IMAGE_KEYS and key != "mime"}
         return {
             **_extract_artifacts(rest, artifacts, spec, title_hint=artifact.title),
             "image_ref": artifact.id,

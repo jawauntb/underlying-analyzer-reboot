@@ -69,6 +69,7 @@ describe('ApiClient E2E transport selection', () => {
     const request = {
       messages: [{ role: 'user' as const, content: 'Run bounded ticker research.' }],
       context: 'Ticker: AAPL\nPeriod: 1y',
+      requiredFirstTool: 'ticker_research_bundle',
     };
     const streamedEvents: unknown[] = [];
     const first = client.agentStream(request, { onEvent: (event) => streamedEvents.push(event) });

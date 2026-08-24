@@ -32,9 +32,7 @@ def test_tool_names_are_unique_and_valid() -> None:
 def test_every_tool_binds_to_a_registered_route(app: Flask) -> None:
     """The registry may only point at routes the app actually serves."""
     registered = {
-        (rule.rule, method)
-        for rule in app.url_map.iter_rules()
-        for method in rule.methods or set()
+        (rule.rule, method) for rule in app.url_map.iter_rules() for method in rule.methods or set()
     }
 
     for spec in TOOLS:
@@ -91,6 +89,21 @@ def test_build_request_uses_query_for_get_tools() -> None:
     spec = get_tool("analyze_ticker")
     method, path, body, query = build_request(spec, {"ticker": "MSFT"})
     assert (method, path, body, query) == ("GET", "/api/analysis/MSFT", None, {})
+
+
+def test_ticker_research_bundle_is_available_to_agents_and_mcp() -> None:
+    spec = get_tool("ticker_research_bundle")
+
+    method, path, body, query = build_request(spec, {"ticker": "AAPL"})
+
+    assert spec.agent is True
+    assert spec.mcp is True
+    assert (method, path, body, query) == (
+        "POST",
+        "/api/data/ticker-research",
+        {"ticker": "AAPL"},
+        {},
+    )
 
 
 def test_build_request_rejects_unknown_enum_value() -> None:

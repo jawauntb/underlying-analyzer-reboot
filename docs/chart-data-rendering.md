@@ -17,6 +17,7 @@ your UI will match the terminal's PNGs for the same request.
 | Route | Returns |
 | --- | --- |
 | `POST /api/data/charts/<chart_type>` | Batch envelope with `datasets[]` (one per ticker, or per ticker+window for ridge-growth) |
+| `POST /api/data/ticker-research` | One complete single-ticker packet: 1M/3M/1Y chart datasets, fixed-10Y seasonality, options, and source provenance |
 | `POST /api/data/tools/torque` | Single torque dataset (score + chartable series) |
 | `POST /api/data/tools/moneyline` | Single options open-interest ladder dataset |
 
@@ -88,6 +89,29 @@ route returns `400 {"error": "..."}`.
 - There is never an `images` key on data routes; `export.image_files` is `[]`.
 - The two `/api/data/tools/...` routes return the dataset at the top level
   (plus an `export`), not wrapped in `datasets[]`.
+
+---
+
+## Complete ticker research packet
+
+`POST /api/data/ticker-research` is the single-symbol alternative when a
+client or agent needs every chart-backed source in one request. Its only input
+is `{"ticker":"AAPL"}`. It returns a compact `agent_context` first, followed
+by `intervals.1mo`, `intervals.3mo`, and `intervals.1y`; each interval's
+`charts` object has `auction`, `regression`, `ridge_growth`, `flow_compass`,
+`torque`, `portfolio`, and `volatility` datasets in the schemas documented
+below. The packet additionally provides `seasonality` (the existing fixed-10Y
+performance schema), `options.moneyline`, raw normalized source data, and
+best-effort `meta.source_status` / `meta.errors`.
+
+The packet is not a replacement schema: render each nested chart with the same
+keys you would render from the individual endpoint. It intentionally derives
+1M, 3M, and 1Y from one fixed-10Y daily ticker result, using that same shared
+history for seasonality; it makes one 1Y SPY pull for the single-name portfolio
+benchmark. That keeps provider work bounded and preserves the Massive-first
+adapter's cache, fallback, retry, and `Retry-After` behavior. The direct route
+and MCP return every nested series; terminal-agent events carry the compact
+`agent_context` projection so mobile event/context limits remain safe.
 
 ### Provider, freshness, and fallback metadata
 

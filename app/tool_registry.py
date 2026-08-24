@@ -168,10 +168,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         title="Provider status",
         group="meta",
         summary="Market data provider notes and fallback order",
-        when_to_use=(
-            "Use when a data call failed or the user asks where the numbers "
-            "come from."
-        ),
+        when_to_use=("Use when a data call failed or the user asks where the numbers come from."),
         method="GET",
         path="/api/providers",
         input_schema=_schema({}),
@@ -269,10 +266,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="chart_data",
         title="Chart data pack",
         group="data",
-        summary=(
-            "Return chartable JSON series for one of eight chart packs "
-            "(no rendered images)"
-        ),
+        summary=("Return chartable JSON series for one of eight chart packs (no rendered images)"),
         when_to_use=(
             "Prefer this over render_chart when an upstream UI will draw its own "
             "charts. Same inputs and math as render_chart; response carries "
@@ -313,6 +307,28 @@ TOOLS: tuple[ToolSpec, ...] = (
         ),
         returns="datasets[] with series, levels, tables, and meta — no images.",
         cost=COST_FAST,
+    ),
+    ToolSpec(
+        name="ticker_research_bundle",
+        title="Comprehensive ticker research",
+        group="data",
+        summary="One complete direct packet, with a compact projection for in-product agents",
+        when_to_use=(
+            "Use when an agent or upstream function needs the complete 1M, 3M, "
+            "and 1Y technical read in one call: auction, seasonality, regression, "
+            "Ridge, Flow Compass, Torque, portfolio, volatility, and options. "
+            "In-product agent calls receive agent_context; HTTP and MCP callers "
+            "receive the full packet."
+        ),
+        method="POST",
+        path="/api/data/ticker-research",
+        input_schema=_schema({"ticker": _TICKER}, required=["ticker"]),
+        returns=(
+            "In-product agents receive compact agent_context and provenance. Direct HTTP and MCP "
+            "calls receive full 1M/3M/1Y datasets, fixed 10Y seasonality, moneyline/options, "
+            "profile, SEC trend, snapshot, and explicit unavailable-source errors."
+        ),
+        cost=COST_SLOW,
     ),
     ToolSpec(
         name="stock_fax",
@@ -447,8 +463,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         group="signals",
         summary="Rank a list of tickers by torque stage and score",
         when_to_use=(
-            "Use to find Coiled Spring / Inflecting / Proof Phase names across "
-            "a watchlist."
+            "Use to find Coiled Spring / Inflecting / Proof Phase names across a watchlist."
         ),
         method="POST",
         path="/api/tools/torque/scan",
@@ -492,9 +507,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         title="Options moneyline data",
         group="data",
         summary="Options open-interest ladder as JSON (no image)",
-        when_to_use=(
-            "Use when an upstream UI will plot the moneyline / moneywall itself."
-        ),
+        when_to_use=("Use when an upstream UI will plot the moneyline / moneywall itself."),
         method="POST",
         path="/api/data/tools/moneyline",
         input_schema=_schema(
@@ -553,9 +566,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         title="Watchlist alerts",
         group="watchlists",
         summary="Prioritized digest of setups, risk flags, and regime changes",
-        when_to_use=(
-            "Use for 'what changed' and daily-review questions across a list."
-        ),
+        when_to_use=("Use for 'what changed' and daily-review questions across a list."),
         method="POST",
         path="/api/watchlists/alerts",
         input_schema=_schema(

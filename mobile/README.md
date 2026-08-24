@@ -2,6 +2,15 @@
 
 Undercurrent is the native Expo Go companion to The Underlying Analyzer. It is guest-first, read-only market research for iPhone: Pulse, saved Lists, a focused Ticker Lens, and an explicitly started Research Run.
 
+Research Run asks for and server-enforces `ticker_research_bundle` as the first
+tool call, refusing any other tool before it can run:
+one bounded, Massive-first packet of the ticker's 1M, 3M, and 1Y Auction,
+Regression, Ridge, Compass, Torque, portfolio, and volatility data, plus
+seasonality and options. The streamed agent result uses the packet's compact
+decision context; direct HTTP or MCP callers can obtain the full datasets. This
+is user-triggered and is intentionally outside the low-call
+production smoke check.
+
 ## Run in Expo Go
 
 Use Node 22.16.0, then install the locked dependencies and start Metro.

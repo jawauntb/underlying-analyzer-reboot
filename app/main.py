@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,7 @@ from app.market_data import (
     chart_history_options,
     clean_ticker,
     normalize_history_interval,
+    option_chain_payload,
 )
 from app.massive_stream import (
     MassiveStreamEntitlementError,
@@ -110,6 +112,12 @@ from app.mcp_http import (
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.openapi import build_openapi_document
 from app.sec import SecClient, SecDataError
+from app.ticker_research import (
+    TickerResearchBusyError,
+    build_ticker_research_bundle,
+    release_ticker_research_client,
+    try_acquire_ticker_research_client,
+)
 from app.tool_registry import tool_catalog_payload
 from app.tools import (
     DEFAULT_OPENAI_IMAGE_MODEL,
@@ -422,17 +430,7 @@ def create_app() -> Flask:
         try:
             symbol = clean_ticker(ticker)
             chain = get_market_client().get_option_chain(symbol, request.args.get("expiry"))
-            return jsonify(
-                {
-                    "ticker": chain.ticker,
-                    "expiry": chain.expiry,
-                    "current_price": chain.current_price,
-                    "expirations": chain.expirations,
-                    "rows": chain.rows,
-                    "provider": chain.provider,
-                    "provider_note": chain.note,
-                }
-            )
+            return jsonify(option_chain_payload(chain))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except MarketDataCapabilityError as exc:
@@ -499,9 +497,7 @@ def create_app() -> Flask:
 
     @app.get("/api/data/market/corporate-events")
     def market_corporate_events() -> Any:
-        return market_data_collection_endpoint_response(
-            get_market_client(), "get_corporate_events"
-        )
+        return market_data_collection_endpoint_response(get_market_client(), "get_corporate_events")
 
     @app.get("/api/data/market/ipos")
     def market_ipos() -> Any:
@@ -564,12 +560,7 @@ def create_app() -> Flask:
             return jsonify({"error": "asset_class must be stocks or options"}), 400
         if feed not in {"trades", "quotes", "aggregates_minute", "aggregates_second"}:
             return jsonify(
-                {
-                    "error": (
-                        "feed must be trades, quotes, aggregates_minute, or "
-                        "aggregates_second"
-                    )
-                }
+                {"error": ("feed must be trades, quotes, aggregates_minute, or aggregates_second")}
             ), 400
 
         def event_stream() -> Any:
@@ -651,6 +642,39 @@ def create_app() -> Flask:
         except Exception as exc:
             app.logger.exception("Unexpected chart data error")
             return jsonify({"error": f"Unexpected chart data error: {exc}"}), 500
+
+    @app.post("/api/data/ticker-research")
+    def ticker_research_data() -> Any:
+        """Return one data-only, chart-complete packet for a single ticker."""
+        try:
+            payload = request.get_json(silent=True) or {}
+            if not isinstance(payload, dict):
+                raise ValueError("Request body must be a JSON object")
+            client_key = ticker_research_client_key()
+            if client_key and not try_acquire_ticker_research_client(client_key):
+                response = jsonify({"error": "Ticker research is already running for this client."})
+                response.headers["Retry-After"] = "1"
+                return response, 429
+            try:
+                return jsonify(
+                    build_ticker_research_bundle(
+                        get_market_client(),
+                        str(payload.get("ticker") or ""),
+                        sec_client=get_sec_client(),
+                    )
+                )
+            finally:
+                if client_key:
+                    release_ticker_research_client(client_key)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except TickerResearchBusyError as exc:
+            response = jsonify({"error": str(exc)})
+            response.headers["Retry-After"] = "1"
+            return response, 503
+        except Exception as exc:
+            app.logger.exception("Unexpected ticker research data error")
+            return jsonify({"error": f"Unexpected ticker research data error: {exc}"}), 500
 
     @app.post("/api/analysis")
     def analysis_batch() -> Any:
@@ -1236,6 +1260,25 @@ def get_market_client() -> MarketDataClient:
     return current_app.config["MARKET_DATA_CLIENT"]
 
 
+def ticker_research_client_key() -> str | None:
+    """Return a bounded client key without trusting arbitrary header text.
+
+    Railway's proxy supplies the first ``X-Forwarded-For`` value. Local
+    in-process agent/MCP calls are loopback and intentionally rely on the
+    provider-wide packet gate instead of competing as one browser client.
+    """
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",", 1)[0]
+    for candidate in (forwarded.strip(), request.remote_addr or ""):
+        try:
+            address = ip_address(candidate)
+        except ValueError:
+            continue
+        if address.is_loopback:
+            return None
+        return address.compressed
+    return None
+
+
 def get_massive_stream_provider() -> MassiveStreamProvider:
     return current_app.config["MASSIVE_STREAM_PROVIDER"]
 
@@ -1577,12 +1620,21 @@ def agent_run_options(payload: dict[str, Any]) -> dict[str, Any]:
     if "tool_policy" in payload and tool_policy != "exact":
         raise AgentError("tool_policy must be 'exact' when provided")
     exact_tool_policy = tool_policy == "exact"
+    tool_specs = select_tools(payload.get("tools"), exact=exact_tool_policy)
+    required_first_tool = payload.get("required_first_tool")
+    if required_first_tool is not None:
+        if not isinstance(required_first_tool, str) or not required_first_tool.strip():
+            raise AgentError("required_first_tool must be a recognized selected tool name")
+        required_first_tool = required_first_tool.strip()
+        if not exact_tool_policy or required_first_tool not in {spec.name for spec in tool_specs}:
+            raise AgentError("required_first_tool must be a recognized selected tool name")
     return {
         "client": client,
         "messages": messages,
         "model": getattr(client, "model", None),
-        "tool_specs": select_tools(payload.get("tools"), exact=exact_tool_policy),
+        "tool_specs": tool_specs,
         "suppress_refused_tool_events": exact_tool_policy,
+        "required_first_tool": required_first_tool,
         "system_extra": context if isinstance(context, str) else None,
     }
 
@@ -2456,9 +2508,7 @@ def build_chart_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        history_options = chart_history_options(
-            payload, default_period="1y", include_range=True
-        )
+        history_options = chart_history_options(payload, default_period="1y", include_range=True)
         histories, errors = collect_histories(
             client,
             selection.tickers,
@@ -2829,9 +2879,7 @@ def build_chart_data_response(
 
     if chart_key == "portfolio":
         selection = resolve_ticker_selection(payload, watchlist_client)
-        history_options = chart_history_options(
-            payload, default_period="1y", include_range=True
-        )
+        history_options = chart_history_options(payload, default_period="1y", include_range=True)
         histories, errors = collect_histories(
             client,
             selection.tickers,

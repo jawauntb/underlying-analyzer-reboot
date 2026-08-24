@@ -1,6 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { exactMobileToolEcho, MOBILE_AGENT_TOOLS } from '@/src/api/agentTools';
+import {
+  exactLegacyMobileToolEcho,
+  exactMobileToolEcho,
+  MOBILE_AGENT_TOOLS,
+} from '@/src/api/agentTools';
 import { normalizeSymbol } from '@/src/api/endpoints';
 import { normalizeResearchPeriod, type ResearchPeriod } from '@/src/features/research/research-model';
 import { utf8Bytes } from '@/src/state/cache';
@@ -170,14 +174,15 @@ function projectArtifacts(value: unknown): LibraryArtifact[] {
 
 export function projectCompletedResearch(
   value: unknown,
-  options: { id: string; cachedAt: number },
+  options: { id: string; cachedAt: number; allowLegacyTools?: boolean },
 ): LibraryRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Research completion is invalid.');
   }
   const completion = value as Partial<ResearchCompletion> & { status?: unknown };
   if (completion.status !== 'completed') throw new Error('Only terminal completed research can be saved.');
-  const tools = exactMobileToolEcho(completion.tools);
+  const tools = exactMobileToolEcho(completion.tools)
+    ?? (options.allowLegacyTools ? exactLegacyMobileToolEcho(completion.tools) : null);
   if (!tools) throw new Error('Research completion has an invalid tool allowlist.');
   const generatedAt = completion.generatedAt;
   if (!isFiniteNumber(generatedAt)) throw new Error('Research generated time is invalid.');
@@ -226,7 +231,7 @@ function parseRecord(raw: string): LibraryRecord | null {
         ...record,
         transport: record.source.transport,
       },
-      { id: String(record.id), cachedAt: record.cachedAt },
+      { id: String(record.id), cachedAt: record.cachedAt, allowLegacyTools: true },
     );
     return { ...projected, accessedAt: record.accessedAt };
   } catch {

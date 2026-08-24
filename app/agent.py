@@ -83,8 +83,7 @@ def build_system_prompt(
     specs = tool_specs if tool_specs is not None else agent_tools()
     if specs:
         tool_lines = [
-            f"- `{spec.name}` ({spec.cost}): {spec.summary.rstrip('.')}."
-            for spec in specs
+            f"- `{spec.name}` ({spec.cost}): {spec.summary.rstrip('.')}." for spec in specs
         ]
         tool_guidance = "## Available tools\n\n" + "\n".join(tool_lines)
     else:
@@ -207,6 +206,7 @@ def run_agent_stream(
     model: str | None = None,
     tool_specs: tuple[ToolSpec, ...] | None = None,
     suppress_refused_tool_events: bool = False,
+    required_first_tool: str | None = None,
     system_extra: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
 ) -> Iterator[dict[str, Any]]:
@@ -221,6 +221,8 @@ def run_agent_stream(
     tool_trace: list[str] = []
     tool_budget = MAX_TOOL_CALLS
     stop_reason = "end_turn"
+    first_tool_called = False
+    required_first_result_pending = False
 
     yield {
         "type": "start",
@@ -254,7 +256,27 @@ def run_agent_stream(
                 assistant_text_parts.append(joined)
 
             if not pending or stop_reason != "tool_use":
+                if required_first_tool and not first_tool_called:
+                    yield {
+                        "type": "error",
+                        "message": (f"Agent must call {required_first_tool} before answering."),
+                    }
+                    return
                 break
+
+            if required_first_tool and not first_tool_called:
+                first_name = str(pending[0].get("name") or "")
+                if first_name != required_first_tool:
+                    yield {
+                        "type": "error",
+                        "message": (
+                            f"Agent must call {required_first_tool} first; "
+                            f"{first_name or 'an unnamed tool'} was refused."
+                        ),
+                    }
+                    return
+                first_tool_called = True
+                required_first_result_pending = True
 
             assistant_blocks: list[dict[str, Any]] = []
             if joined:
@@ -289,9 +311,7 @@ def run_agent_stream(
 
                 if spec is None:
                     error = f"Tool {name} is not available for this turn."
-                    tool_trace.append(
-                        f"{name}({_trace_args(call.get('input'))}) -> error: {error}"
-                    )
+                    tool_trace.append(f"{name}({_trace_args(call.get('input'))}) -> error: {error}")
                     if not suppress_refused_tool_events:
                         yield {
                             "type": "tool_call",
@@ -314,9 +334,7 @@ def run_agent_stream(
                             "result": None,
                             "artifacts": [],
                         }
-                    result_blocks.append(
-                        _tool_result_block(call["id"], error, is_error=True)
-                    )
+                    result_blocks.append(_tool_result_block(call["id"], error, is_error=True))
                     continue
 
                 yield {
@@ -338,15 +356,25 @@ def run_agent_stream(
                 event_payload["id"] = call["id"]
                 yield event_payload
 
+                if required_first_result_pending and name == required_first_tool:
+                    required_first_result_pending = False
+                    if not result.ok:
+                        yield {
+                            "type": "error",
+                            "message": (
+                                f"Required first tool {required_first_tool} failed: "
+                                f"{result.error or 'unknown error'}"
+                            ),
+                        }
+                        return
+
                 if result.ok and name == "compose_research_article":
                     article_event = _article_event(result.result)
                     if article_event:
                         yield article_event
 
                 result_blocks.append(
-                    _tool_result_block(
-                        call["id"], result.model_text(), is_error=not result.ok
-                    )
+                    _tool_result_block(call["id"], result.model_text(), is_error=not result.ok)
                 )
 
             conversation.append({"role": "user", "content": result_blocks})
@@ -368,9 +396,7 @@ def run_agent_stream(
     }
 
 
-def _tool_result_block(
-    tool_use_id: str, content: str, *, is_error: bool = False
-) -> dict[str, Any]:
+def _tool_result_block(tool_use_id: str, content: str, *, is_error: bool = False) -> dict[str, Any]:
     block: dict[str, Any] = {
         "type": "tool_result",
         "tool_use_id": tool_use_id,
