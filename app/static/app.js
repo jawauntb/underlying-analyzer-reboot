@@ -24,6 +24,7 @@ const modeTitles = {
   portfolio: "Portfolio",
   volatility: "Volatility",
   analysis: "Stock Brief",
+  "ticker-research": "Research Packet",
 };
 
 const modeContracts = {
@@ -51,6 +52,8 @@ const modeContracts = {
     "Ranks realized volatility and expected range; use it to size risk and spot regime changes across the list.",
   analysis:
     "Generates an equity brief and scanner pass; use ranks, sector context, and data gaps as diligence starters.",
+  "ticker-research":
+    "Runs the complete chart-data packet for one ticker: 1M, 3M, and 1Y auction, regression, Ridge, Compass, Torque, portfolio, volatility, plus fixed seasonality and options. Export it to hand the full data to another agent or function.",
 };
 
 const sharedFields = ["watchlist-url", "max-results"];
@@ -81,6 +84,7 @@ const fieldRules = {
   portfolio: [...sharedFields, "start-date", "end-date", "interval", "investment", "benchmark"],
   volatility: [...sharedFields, "interval"],
   analysis: [...sharedFields],
+  "ticker-research": [],
 };
 
 const form = document.querySelector("#chart-form");
@@ -118,6 +122,8 @@ const formMonthSelect = document.querySelector("#month");
 const chartViewer = createChartViewer();
 let liveStream = null;
 let liveStreamTimer = null;
+let activeRun = null;
+let runGeneration = 0;
 mountAccountControls({ root: document.querySelector("#account-control") });
 mountSavedWatchlistCockpit({
   root: document.querySelector("#saved-watchlists"),
@@ -214,6 +220,7 @@ function startLiveQuote() {
 }
 
 commandRunButton.addEventListener("click", () => {
+  if (commandRunButton.disabled) return;
   syncFormFromCommand();
   form.requestSubmit(generateButton);
 });
@@ -234,6 +241,7 @@ if (mobileRunGo && mobileRunTicker && mobileRunMode) {
     if (mobileRunBar?.hidden) {
       return;
     }
+    if (mobileRunGo.disabled) return;
     formTickersInput.value = mobileRunTicker.value;
     commandTickersInput.value = mobileRunTicker.value;
     if (mobileRunMode.value !== state.mode) {
@@ -276,30 +284,36 @@ document.addEventListener("keydown", (event) => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const mode = state.mode;
+  const payload = payloadFromForm();
+  const run = beginRun(mode);
   clearOutput();
   setLoading(true);
 
   try {
-    const payload = payloadFromForm();
-    if (state.mode === "analysis") {
-      await fetchAnalysis(payload);
-    } else if (state.mode === "cockpit") {
-      await fetchCockpit(payload);
-    } else if (state.mode === "torque-scan") {
-      await fetchTorqueScan(payload);
-    } else if (state.mode === "alerts") {
-      await fetchAlerts(payload);
+    if (mode === "analysis") {
+      await fetchAnalysis(payload, run);
+    } else if (mode === "ticker-research") {
+      await fetchTickerResearch(payload, run);
+    } else if (mode === "cockpit") {
+      await fetchCockpit(payload, run);
+    } else if (mode === "torque-scan") {
+      await fetchTorqueScan(payload, run);
+    } else if (mode === "alerts") {
+      await fetchAlerts(payload, run);
     } else {
-      await fetchChart(payload);
+      await fetchChart(payload, run);
     }
+    ensureRunIsActive(run);
     if (outputPanel) outputPanel.scrollTop = 0;
     focusOutputOnMobile();
   } catch (error) {
+    if (!isRunActive(run) || isAbortError(error)) return;
     showError(error.message || "Request failed");
     if (outputPanel) outputPanel.scrollTop = 0;
     focusOutputOnMobile();
   } finally {
-    setLoading(false);
+    if (finishRun(run)) setLoading(false);
   }
 });
 
@@ -356,6 +370,7 @@ function syncModeCopy() {
 }
 
 function setMode(mode, options = {}) {
+  cancelActiveRun();
   const nextMode = modeTitles[mode] ? mode : "auction";
   state.mode = nextMode;
   document.querySelectorAll(".mode-button").forEach((button) => {
@@ -463,6 +478,7 @@ function commandLabel(mode) {
       portfolio: "portfolio",
       volatility: "volatility",
       analysis: "brief",
+      "ticker-research": "research-packet",
     }[mode] || mode
   );
 }
@@ -518,13 +534,15 @@ function payloadFromForm() {
   };
 }
 
-async function fetchChart(payload) {
-  const response = await fetch(`/api/charts/${state.mode}`, {
+async function fetchChart(payload, run = null) {
+  const response = await fetch(`/api/charts/${run?.mode || state.mode}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: run?.controller.signal,
   });
   const data = await response.json();
+  ensureRunIsActive(run);
   if (!response.ok) {
     throw new Error(data.error || "Could not generate chart");
   }
@@ -538,13 +556,15 @@ async function fetchChart(payload) {
   renderWarnings(data.meta?.errors || []);
 }
 
-async function fetchAnalysis(payload) {
+async function fetchAnalysis(payload, run = null) {
   const response = await fetch("/api/analysis", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: run?.controller.signal,
   });
   const data = await response.json();
+  ensureRunIsActive(run);
   if (!response.ok) {
     throw new Error(data.error || "Could not fetch brief");
   }
@@ -556,13 +576,35 @@ async function fetchAnalysis(payload) {
   renderWarnings(data.meta?.errors || []);
 }
 
-async function fetchCockpit(payload) {
+async function fetchTickerResearch(payload, run = null) {
+  const response = await fetch("/api/data/ticker-research", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticker: payload.ticker }),
+    signal: run?.controller.signal,
+  });
+  const data = await response.json();
+  ensureRunIsActive(run);
+  if (!response.ok) {
+    throw new Error(data.error || "Could not build research packet");
+  }
+  sourceChip.textContent = data.provider || "provider";
+  state.lastExport = data;
+  exportButton.disabled = false;
+  researchLibrary.setCanSave(true);
+  renderTickerResearch(data);
+  renderWarnings(data.meta?.errors || []);
+}
+
+async function fetchCockpit(payload, run = null) {
   const response = await fetch("/api/watchlists/cockpit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: run?.controller.signal,
   });
   const data = await response.json();
+  ensureRunIsActive(run);
   if (!response.ok) {
     throw new Error(data.error || "Could not build cockpit");
   }
@@ -590,7 +632,8 @@ const torqueScanState = {
   errors: [],
 };
 
-async function fetchTorqueScan(payload) {
+async function fetchTorqueScan(payload, run = null) {
+  ensureRunIsActive(run);
   torqueScanState.rows = [];
   torqueScanState.filter = new Set();
   torqueScanState.total = null;
@@ -603,7 +646,9 @@ async function fetchTorqueScan(payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: run?.controller.signal,
   });
+  ensureRunIsActive(run);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || "Could not run torque scan");
@@ -618,6 +663,7 @@ async function fetchTorqueScan(payload) {
 
   for (;;) {
     const { done, value } = await reader.read();
+    ensureRunIsActive(run);
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const parts = buffer.split("\n");
@@ -625,18 +671,25 @@ async function fetchTorqueScan(payload) {
     parts.forEach((line) => {
       if (!line.trim()) return;
       try {
+        ensureRunIsActive(run);
         const event = JSON.parse(line);
         handleTorqueScanEvent(event);
-      } catch {
-        /* ignore */
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        /* ignore malformed stream rows */
       }
     });
   }
   buffer += decoder.decode();
+  ensureRunIsActive(run);
   if (buffer.trim()) {
     try {
+      ensureRunIsActive(run);
       handleTorqueScanEvent(JSON.parse(buffer));
-    } catch { /* ignore */ }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      /* ignore malformed final stream row */
+    }
   }
 
   sourceChip.textContent = `${torqueScanState.rows.length} rows`;
@@ -830,13 +883,15 @@ function escapeHtml(value) {
   }[c]));
 }
 
-async function fetchAlerts(payload) {
+async function fetchAlerts(payload, run = null) {
   const response = await fetch("/api/watchlists/alerts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: run?.controller.signal,
   });
   const data = await response.json();
+  ensureRunIsActive(run);
   if (!response.ok) {
     throw new Error(data.error || "Could not build alerts");
   }
@@ -846,6 +901,7 @@ async function fetchAlerts(payload) {
   researchLibrary.setCanSave(true);
   renderAlerts(data);
   renderWarnings(data.meta?.errors || []);
+  return data;
 }
 
 function renderImages(images) {
@@ -1123,6 +1179,89 @@ function renderAnalysis(data) {
   }
   summaries.forEach((summary) => stack.append(briefCard(summary)));
   imagesEl.append(stack);
+}
+
+function renderTickerResearch(data) {
+  imagesEl.innerHTML = "";
+  emptyState.hidden = true;
+  const context = data.agent_context || {};
+  const windows = context.intervals || {};
+  summaryEl.innerHTML = "";
+  summaryEl.hidden = false;
+  [
+    ["Windows", Object.keys(windows).length],
+    ["Chart Sources", data.meta?.chart_sources?.length || 0],
+    ["Data Gaps", data.meta?.error_count || 0],
+    ["Provider", data.provider || "Unavailable"],
+  ].forEach(([label, value]) => summaryEl.append(summaryItem(label, value)));
+
+  const stack = document.createElement("div");
+  stack.className = "brief-stack";
+  const overview = document.createElement("article");
+  overview.className = "brief-card";
+  const overviewTitle = document.createElement("h3");
+  overviewTitle.textContent = `${data.ticker || "Ticker"} ${
+    data.saved_packet ? "saved research summary" : "complete data packet"
+  }`;
+  const overviewGrid = document.createElement("div");
+  overviewGrid.className = "brief-grid";
+  overviewGrid.append(
+    summaryItem("Seasonality", bundleText(context.seasonality?.selected_month)),
+    summaryItem("5Y Month Mean", bundlePercent(context.seasonality?.mean_5y, 1)),
+    summaryItem("Options Expiry", bundleText(context.options?.expiry)),
+    summaryItem("Put / Call", bundleNumber(context.options?.put_call_ratio)),
+  );
+  overview.append(overviewTitle, overviewGrid);
+  stack.append(overview);
+
+  ["1mo", "3mo", "1y"].forEach((period) => {
+    const window = windows[period];
+    if (!window) return;
+    stack.append(researchWindowCard(period, window));
+  });
+  imagesEl.append(stack);
+}
+
+function researchWindowCard(period, window) {
+  const card = document.createElement("article");
+  card.className = "brief-card";
+  const title = document.createElement("h3");
+  title.textContent = `${period.toUpperCase()} chart evidence`;
+  const grid = document.createElement("div");
+  grid.className = "brief-grid";
+  const auction = window.auction || {};
+  const regression = window.regression || {};
+  const ridge = window.ridge_growth || {};
+  const flow = window.flow_compass || {};
+  const torque = window.torque || {};
+  const volatility = window.volatility || {};
+  [
+    [
+      "Auction",
+      `${bundleText(auction.level_window)} · ${bundleText(auction.location)} · POC ${bundleNumber(auction.poc)}`,
+    ],
+    ["Regression", `Slope ${bundleNumber(regression.slope_per_day)}`],
+    ["Ridge", `${bundleText(ridge.state)} · ${bundleText(ridge.recommendation)}`],
+    ["Compass", `${bundleText(flow.state)} · ${bundleNumber(flow.score)}`],
+    ["Torque", `${bundleText(torque.stage_label)} · ${bundleNumber(torque.total_score)}`],
+    ["Annual Vol", bundlePercent(volatility.annual_vol)],
+  ].forEach(([label, value]) => grid.append(summaryItem(label, value)));
+  card.append(title, grid);
+  return card;
+}
+
+function bundleText(value) {
+  return value === null || value === undefined || value === "" ? "Unavailable" : String(value);
+}
+
+function bundleNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? formatValue(value) : "Unavailable";
+}
+
+function bundlePercent(value, multiplier = 100) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${formatValue(value * multiplier)}%`
+    : "Unavailable";
 }
 
 function renderCockpit(data) {
@@ -1593,46 +1732,35 @@ function applySavedWatchlist(row) {
 
 async function runSavedCockpit(row) {
   const payload = watchlistActionPayload(row);
-  clearOutput();
   setMode("cockpit", { clear: false });
+  const run = beginRun("cockpit");
+  clearOutput();
   setLoading(true);
   try {
-    await fetchCockpit(payload);
+    await fetchCockpit(payload, run);
   } catch (error) {
+    if (!isRunActive(run) || isAbortError(error)) return null;
     showError(error.message || "Could not run saved cockpit");
     throw error;
   } finally {
-    setLoading(false);
+    if (finishRun(run)) setLoading(false);
   }
 }
 
 async function runSavedAlertRule(row) {
   const payload = alertRulePayload(row);
-  clearOutput();
   setMode("alerts", { clear: false });
+  const run = beginRun("alerts");
+  clearOutput();
   setLoading(true);
   try {
-    const response = await fetch("/api/watchlists/alerts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "Could not run alert rule");
-    }
-    sourceChip.textContent = data.provider || "provider";
-    state.lastExport = data.export || data;
-    exportButton.disabled = false;
-    researchLibrary.setCanSave(true);
-    renderAlerts(data);
-    renderWarnings(data.meta?.errors || []);
-    return data;
+    return await fetchAlerts(payload, run);
   } catch (error) {
+    if (!isRunActive(run) || isAbortError(error)) return null;
     showError(error.message || "Could not run alert rule");
     throw error;
   } finally {
-    setLoading(false);
+    if (finishRun(run)) setLoading(false);
   }
 }
 
@@ -1680,9 +1808,50 @@ function showError(message) {
   errorEl.hidden = false;
 }
 
+function beginRun(mode) {
+  cancelActiveRun();
+  const run = {
+    id: ++runGeneration,
+    mode,
+    controller: new AbortController(),
+  };
+  activeRun = run;
+  return run;
+}
+
+function cancelActiveRun() {
+  if (!activeRun) return;
+  activeRun.controller.abort();
+  activeRun = null;
+  setLoading(false);
+}
+
+function isRunActive(run) {
+  return run !== null && activeRun === run;
+}
+
+function finishRun(run) {
+  if (!isRunActive(run)) return false;
+  activeRun = null;
+  return true;
+}
+
+function ensureRunIsActive(run) {
+  if (!run || isRunActive(run)) return;
+  const error = new Error("This request was superseded by a newer run.");
+  error.name = "AbortError";
+  throw error;
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
 function setLoading(isLoading) {
   document.body.classList.toggle("is-loading", isLoading);
   generateButton.disabled = isLoading;
+  commandRunButton.disabled = isLoading;
+  if (mobileRunGo) mobileRunGo.disabled = isLoading;
   exportButton.disabled = isLoading || !state.lastExport;
   generateButton.textContent = isLoading ? "Generating..." : "Generate";
   if (isLoading) {
@@ -1725,7 +1894,21 @@ function buildResearchRecord() {
     title: `${modeTitles[state.mode]}${ticker ? ` - ${ticker}` : ""}`,
     summary: modeContracts[state.mode],
     source_url: payload.watchlist?.source_url || payload.meta?.watchlist_source_url,
-    payload,
+    payload: state.mode === "ticker-research" ? compactTickerResearchRecord(payload) : payload,
+  };
+}
+
+function compactTickerResearchRecord(payload) {
+  if (!payload?.agent_context) {
+    return payload;
+  }
+  return {
+    ticker: payload.ticker,
+    agent_context: payload.agent_context,
+    provider: payload.provider,
+    provider_note: payload.provider_note,
+    meta: payload.meta,
+    saved_packet: true,
   };
 }
 
@@ -1754,6 +1937,11 @@ function openSavedResearch(record) {
   }
   if (state.mode === "analysis" || payload.summaries || payload["Anthropic Brief"]) {
     renderAnalysis(payload);
+    renderWarnings(payload.meta?.errors || []);
+    return;
+  }
+  if (state.mode === "ticker-research" || payload.agent_context) {
+    renderTickerResearch(payload);
     renderWarnings(payload.meta?.errors || []);
     return;
   }

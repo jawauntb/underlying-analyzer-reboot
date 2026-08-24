@@ -102,6 +102,19 @@ class OptionChainResult:
     note: str
 
 
+def option_chain_payload(chain: OptionChainResult) -> dict[str, Any]:
+    """Serialize an option-chain result for every HTTP/data consumer."""
+    return {
+        "ticker": chain.ticker,
+        "expiry": chain.expiry,
+        "current_price": chain.current_price,
+        "expirations": chain.expirations,
+        "rows": chain.rows,
+        "provider": chain.provider,
+        "provider_note": chain.note,
+    }
+
+
 class MarketDataProvider(Protocol):
     name: str
     note: str
@@ -161,9 +174,7 @@ class MarketDataProvider(Protocol):
 
     def get_market_status(self) -> dict[str, Any]: ...
 
-    def get_news(
-        self, ticker: str, *, params: dict[str, Any] | None = None
-    ) -> dict[str, Any]: ...
+    def get_news(self, ticker: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
 
     def get_corporate_events(self, *, params: dict[str, Any] | None = None) -> dict[str, Any]: ...
 

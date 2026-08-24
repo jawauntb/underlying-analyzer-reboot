@@ -356,6 +356,12 @@ function ResearchRunController({
           <Text style={[styles.metaNote, capability.status === 'unavailable' && styles.errorText]}>{capability.message}</Text>
         </View>
 
+        <View accessibilityLabel="Complete ticker data packet" style={styles.metaCard}>
+          <Text style={styles.metaLabel}>COMPLETE PACKET</Text>
+          <Text style={styles.metaValue}>1M · 3M · 1Y</Text>
+          <Text style={styles.metaNote}>Starts with Auction, seasonality, Regression, Ridge, Compass, Torque, portfolio, volatility, and options.</Text>
+        </View>
+
         <View style={styles.toolCard}>
           <Text style={styles.metaLabel}>THIS RUN CAN USE</Text>
           <View style={styles.toolGrid}>

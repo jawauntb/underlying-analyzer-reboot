@@ -17,7 +17,7 @@ All JSON request bodies use `Content-Type: application/json`. Errors return:
 { "error": "human-readable message" }
 ```
 
-Typical status codes: `200` success, `400` bad input / data failure, `401` auth required, `500` unexpected server error, `503` scheduler misconfigured.
+Typical status codes: `200` success, `400` bad input / data failure, `401` auth required, `429` caller rate/concurrency limit, `500` unexpected server error, `503` temporarily unavailable or scheduler misconfigured.
 
 Ticker selection (charts, analysis, cockpit, alerts, torque scan) accepts one of:
 
@@ -274,6 +274,64 @@ curl -s -X POST http://127.0.0.1:5050/api/data/charts/auction \
   "export": { "mode": "auction-data", "tickers": ["AAPL"], "image_files": [] }
 }
 ```
+
+### `POST /api/data/ticker-research`
+
+Builds one data-only, single-ticker research packet that contains the inputs
+behind every chart the terminal makes for that ticker. It does not call an LLM
+or render PNGs, so pass the response directly to an agent, another function, a
+native client, or `Export JSON` in the web terminal.
+
+**Input** — the route deliberately accepts only one field:
+
+```json
+{ "ticker": "AAPL" }
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/data/ticker-research \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"AAPL"}'
+```
+
+The response contains:
+
+- `agent_context`: compact levels, scores, positioning, provider context, and
+  unavailable-source warnings. Agents should read this first.
+- `intervals.1mo`, `intervals.3mo`, and `intervals.1y`: daily auction,
+  regression, Ridge Growth, Flow Compass, Torque, single-name portfolio, and
+  volatility datasets using the same schemas as the individual data routes.
+  Auction levels retain the terminal's explicit `21 completed daily sessions`
+  calculation, while each window still carries its own OHLCV and every other
+  chart's period-specific series.
+- `seasonality`: the Month Map / performance dataset using its fixed 10-year
+  daily history.
+- `options.moneyline` and `source_data.options_chain`: the options ladder and
+  normalized option-chain rows; `source_data` also retains profile, SEC trend,
+  and the latest available snapshot.
+- `meta.source_status` and `meta.errors`: best-effort source provenance. A
+  missing option entitlement or SEC result does not discard price analysis.
+
+Price history is Massive-first through `MarketDataClient`; its normal cache,
+fallback, retry, and `Retry-After` handling remain in force. The endpoint makes
+one fixed-10Y daily ticker pull, locally derives its 1M, 3M, and 1Y chart
+windows and seasonality from that shared series, and makes one 1Y SPY pull for
+portfolio benchmarks. It limits concurrent source fan-out to three and admits
+at most two packets per process. A full packet returns `503` with
+`Retry-After: 1` when that local capacity is saturated instead of creating
+unbounded provider traffic. One non-loopback client may hold one packet per
+process; an overlapping request from that client returns `429` with the same
+`Retry-After: 1` backoff hint. The client key uses Railway's proxy-supplied
+`X-Forwarded-For` address (with direct-peer fallback); deploy it only behind a
+proxy that normalizes that header. Deployments with multiple workers should size
+the worker count against Massive and SEC quotas because these admission limits
+are per process.
+
+The direct route and both MCP transports return the full packet. The terminal's
+in-product agent receives only the compact `agent_context` projection plus
+provenance in its stream event, preventing a raw-series packet from exceeding
+the mobile event/context budget; use this route when an agent or function needs
+every series.
 
 ### `POST /api/data/tools/torque`
 

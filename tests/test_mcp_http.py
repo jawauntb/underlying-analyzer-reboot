@@ -9,6 +9,7 @@ from werkzeug.test import TestResponse
 
 from app.main import create_app
 from app.mcp_http import METHOD_NOT_FOUND, PROTOCOL_VERSION, handle_mcp_payload
+from app.tool_executor import ToolResult
 
 
 @pytest.fixture()
@@ -59,13 +60,56 @@ def test_tools_list_exposes_schemas(client: FlaskClient) -> None:
 
 
 def test_tools_call_runs_a_real_tool(client: FlaskClient) -> None:
-    result = rpc(
-        client, "tools/call", {"name": "list_capabilities", "arguments": {}}
-    ).get_json()["result"]
+    result = rpc(client, "tools/call", {"name": "list_capabilities", "arguments": {}}).get_json()[
+        "result"
+    ]
 
     assert result["isError"] is False
     payload = json.loads(result["content"][0]["text"])
     assert payload["result"]["tool_count"] > 0
+
+
+def test_mcp_uses_the_full_view_only_for_ticker_research(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_execute(name: str, _arguments: dict[str, Any], **kwargs: Any) -> ToolResult:
+        calls.append((name, kwargs["result_view"]))
+        return ToolResult(
+            name=name,
+            ok=True,
+            status=200,
+            url="/api/fake",
+            result={"payload": "x" * 20_000},
+        )
+
+    monkeypatch.setattr("app.mcp_http.execute_tool", fake_execute)
+    regular = handle_mcp_payload(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "health_check", "arguments": {}},
+        }
+    )
+    packet = handle_mcp_payload(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "ticker_research_bundle",
+                "arguments": {"ticker": "AAPL"},
+            },
+        }
+    )
+
+    assert calls == [("health_check", "agent"), ("ticker_research_bundle", "full")]
+    regular_text = json.loads(regular["result"]["content"][0]["text"])
+    packet_text = json.loads(packet["result"]["content"][0]["text"])
+    assert regular_text["truncated"] is True
+    assert packet_text["result"]["payload"] == "x" * 20_000
 
 
 def test_tools_call_reports_validation_errors_as_invalid_params(client: FlaskClient) -> None:
@@ -137,9 +181,7 @@ def test_sse_accept_header_returns_event_stream(client: FlaskClient) -> None:
 
 
 def test_malformed_body_is_a_parse_error(client: FlaskClient) -> None:
-    response = client.post(
-        "/api/mcp", data="not json", content_type="application/json"
-    )
+    response = client.post("/api/mcp", data="not json", content_type="application/json")
     assert response.status_code == 400
     assert response.get_json()["error"]["code"] == -32700
 
@@ -149,9 +191,7 @@ def test_resources_round_trip(client: FlaskClient) -> None:
     uris = {resource["uri"] for resource in resources}
     assert "underlying://catalog/tools" in uris
 
-    read = rpc(
-        client, "resources/read", {"uri": "underlying://catalog/tools"}
-    ).get_json()["result"]
+    read = rpc(client, "resources/read", {"uri": "underlying://catalog/tools"}).get_json()["result"]
     assert json.loads(read["contents"][0]["text"])["tool_count"] > 0
 
 

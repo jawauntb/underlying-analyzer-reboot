@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.tool_executor import execute_tool
+from app.tool_executor import TICKER_RESEARCH_TOOL, execute_tool
 from app.tool_registry import (
     ToolArgumentError,
     coerce_arguments,
@@ -81,7 +81,7 @@ def server_descriptor(base_url: str | None = None) -> dict[str, Any]:
         ],
         "hint": (
             "POST JSON-RPC 2.0 to this URL. GET returns this descriptor. "
-            "Example: {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+            'Example: {"jsonrpc":"2.0","id":1,"method":"tools/list"}'
         ),
     }
 
@@ -197,11 +197,24 @@ def _tools_call(params: dict[str, Any]) -> dict[str, Any]:
     # result with isError set. Validate first so each lands in the right place.
     coerce_arguments(spec, arguments)
 
-    result = execute_tool(spec.name, arguments, keep_images=include_images)
+    full_packet = spec.name == TICKER_RESEARCH_TOOL
+    result = execute_tool(
+        spec.name,
+        arguments,
+        keep_images=include_images,
+        result_view="full" if full_packet else "agent",
+    )
 
     content: list[dict[str, Any]] = []
     if result.ok:
-        content.append({"type": "text", "text": result.model_text()})
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    result.model_text(max_result_chars=None) if full_packet else result.model_text()
+                ),
+            }
+        )
         if include_images:
             for artifact in result.artifacts:
                 if not artifact.data:
@@ -214,9 +227,7 @@ def _tools_call(params: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
     else:
-        content.append(
-            {"type": "text", "text": result.error or f"{spec.title} failed"}
-        )
+        content.append({"type": "text", "text": result.error or f"{spec.title} failed"})
 
     return {
         "content": content,
@@ -235,11 +246,7 @@ def _resources_read(params: dict[str, Any]) -> dict[str, Any]:
         text = json.dumps(build_openapi_document(), indent=2)
     else:
         raise ToolArgumentError(f"Unknown resource '{uri}'")
-    return {
-        "contents": [
-            {"uri": uri, "mimeType": "application/json", "text": text}
-        ]
-    }
+    return {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}
 
 
 def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:

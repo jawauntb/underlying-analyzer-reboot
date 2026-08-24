@@ -49,6 +49,7 @@ from app.market_data import (
     HistoryResult,
     MarketDataClient,
     MarketDataError,
+    OptionChainResult,
     clean_ticker,
 )
 from app.market_data import (
@@ -956,6 +957,16 @@ def build_moneyline_data(
     """Gather options open-interest ladder data without rendering a chart image."""
     symbol = clean_ticker(ticker)
     chain = (market_client or _configured_market_client()).get_option_chain(symbol, expiry)
+    return moneyline_data_from_chain(chain, ticker=symbol)
+
+
+def moneyline_data_from_chain(
+    chain: OptionChainResult,
+    *,
+    ticker: str | None = None,
+) -> dict[str, Any]:
+    """Build the Moneyline dataset from an already-fetched canonical chain."""
+    symbol = clean_ticker(ticker or chain.ticker)
     current_price = chain.current_price
     selected_expiry = chain.expiry
     rows = chain.rows

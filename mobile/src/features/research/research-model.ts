@@ -8,7 +8,8 @@ export const RESEARCH_PERIODS = ['5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '1
 export type ResearchPeriod = (typeof RESEARCH_PERIODS)[number];
 
 export const RESEARCH_MESSAGE =
-  'Run the bounded mobile research workflow. Summarize the evidence, uncertainty, and provider provenance.';
+  'Run the bounded mobile research workflow. First call ticker_research_bundle for the complete 1M, 3M, and 1Y chart-data packet, then summarize the evidence, uncertainty, and provider provenance.';
+const REQUIRED_RESEARCH_TOOL = 'ticker_research_bundle';
 
 type RouteValue = string | string[] | undefined;
 
@@ -95,6 +96,7 @@ export function buildResearchRequest(input: { symbol: string; period: string }):
   return {
     messages: [{ role: 'user', content: RESEARCH_MESSAGE }],
     context: buildResearchContext(input.symbol, input.period),
+    requiredFirstTool: REQUIRED_RESEARCH_TOOL,
   };
 }
 
@@ -121,6 +123,36 @@ function traceFromEvents(events: readonly AgentStreamEvent[]): ResearchTraceEntr
   return entries.map((entry) => entry.trace);
 }
 
+function requireSuccessfulTickerResearchFirst(
+  calls: readonly { name: string; ok: boolean | null; error: string | null }[],
+): void {
+  const first = calls[0];
+  if (first?.name !== REQUIRED_RESEARCH_TOOL) {
+    throw new Error(`Research Run must start with ${REQUIRED_RESEARCH_TOOL}.`);
+  }
+  if (first.ok !== true) {
+    throw new Error(first.error || `${REQUIRED_RESEARCH_TOOL} did not complete.`);
+  }
+}
+
+function streamToolCalls(events: readonly AgentStreamEvent[]): {
+  name: string;
+  ok: boolean | null;
+  error: string | null;
+}[] {
+  return events.flatMap((event) => {
+    if (event.type !== 'tool_call') return [];
+    const outcome = events.find(
+      (candidate) => candidate.type === 'tool_result' && candidate.id === event.id,
+    );
+    return [{
+      name: event.name,
+      ok: outcome?.type === 'tool_result' ? outcome.ok : null,
+      error: outcome?.type === 'tool_result' ? outcome.error ?? null : null,
+    }];
+  });
+}
+
 export function completionFromAgentResult(input: {
   result: AgentStreamResult;
   symbol: string;
@@ -132,6 +164,7 @@ export function completionFromAgentResult(input: {
     if (!result.fallback) throw new Error('The fallback response is missing.');
     const tools = exactMobileToolEcho(result.fallback.tools);
     if (!tools) throw new Error('The fallback tool allowlist does not match this run.');
+    requireSuccessfulTickerResearchFirst(result.fallback.toolCalls);
     const expandedCall = result.fallback.toolCalls.find(
       (call) => !(MOBILE_AGENT_TOOLS as readonly string[]).includes(call.name),
     );
@@ -160,6 +193,7 @@ export function completionFromAgentResult(input: {
   }
   const tools = exactMobileToolEcho(result.state.tools);
   if (!tools) throw new Error('The streamed tool allowlist does not match this run.');
+  requireSuccessfulTickerResearchFirst(streamToolCalls(result.state.events));
   return {
     status: 'completed',
     symbol: normalizeSymbol(input.symbol),

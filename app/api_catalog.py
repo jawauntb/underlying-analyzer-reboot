@@ -384,6 +384,14 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         },
     },
     {
+        "method": "POST",
+        "path": "/api/data/ticker-research",
+        "group": "data",
+        "summary": "Complete single-ticker chart data bundle for 1M, 3M, and 1Y",
+        "auth": "none",
+        "body": {"ticker": "string (required)"},
+    },
+    {
         "method": "GET",
         "path": "/api/analysis/{ticker}",
         "group": "analysis",

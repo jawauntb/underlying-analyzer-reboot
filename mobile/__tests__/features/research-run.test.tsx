@@ -63,9 +63,9 @@ function completedState(text = 'Completed AAPL research') {
       tools: [...MOBILE_AGENT_TOOLS],
       events: [
         { type: 'start', model: 'claude-sonnet', tools: [...MOBILE_AGENT_TOOLS] },
-        { type: 'tool_call', id: 'call-1', name: 'analyze_ticker', input: {} },
-        { type: 'tool_result', id: 'call-1', name: 'analyze_ticker', ok: true, durationMs: 31, artifacts: [] },
-        { type: 'done', stopReason: 'end_turn', text, toolTrace: ['analyze_ticker'] },
+        { type: 'tool_call', id: 'call-1', name: 'ticker_research_bundle', input: {} },
+        { type: 'tool_result', id: 'call-1', name: 'ticker_research_bundle', ok: true, durationMs: 31, artifacts: [] },
+        { type: 'done', stopReason: 'end_turn', text, toolTrace: ['ticker_research_bundle'] },
       ],
       error: null,
     },
@@ -99,7 +99,7 @@ function dependencies() {
 }
 
 describe('ResearchRunScreen', () => {
-  it('does only a safe capability read on open and previews agent_ready plus the exact six tools', async () => {
+  it('does only a safe capability read on open and previews the complete ticker packet plus the exact tool allowlist', async () => {
     const deps = dependencies();
     render(<ResearchRunScreen {...deps.props} />);
 
@@ -107,6 +107,8 @@ describe('ResearchRunScreen', () => {
     expect(deps.client.tools).toHaveBeenCalledTimes(1);
     expect(deps.client.agentStream).not.toHaveBeenCalled();
     expect(screen.getByText('agent_ready · YES')).toBeTruthy();
+    expect(screen.getByLabelText('Complete ticker data packet')).toBeTruthy();
+    expect(screen.getByText('1M · 3M · 1Y')).toBeTruthy();
     MOBILE_AGENT_TOOLS.forEach((name) => expect(screen.getByText(name)).toBeTruthy());
     expect(screen.getByText(/Articles stay outside this run/)).toBeTruthy();
   });
@@ -116,7 +118,7 @@ describe('ResearchRunScreen', () => {
     deps.client.tools.mockResolvedValue({ ...catalog, tools: catalog.tools.slice(1) });
     render(<ResearchRunScreen {...deps.props} />);
 
-    expect(await screen.findByText(/Required tools are unavailable: analyze_ticker/)).toBeTruthy();
+    expect(await screen.findByText(/Required tools are unavailable: ticker_research_bundle/)).toBeTruthy();
     expect(screen.getByText('agent_ready · YES')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start AAPL Research Run' })).toBeDisabled();
     expect(deps.client.agentStream).not.toHaveBeenCalled();
@@ -138,6 +140,7 @@ describe('ResearchRunScreen', () => {
     expect(deps.client.agentStream).toHaveBeenCalledWith({
       messages: [{ role: 'user', content: RESEARCH_MESSAGE }],
       context: 'Ticker: AAPL\nPeriod: 1y',
+      requiredFirstTool: 'ticker_research_bundle',
     }, expect.objectContaining({ onEvent: expect.any(Function) }));
 
     act(() => {
@@ -225,8 +228,8 @@ describe('ResearchRunScreen', () => {
           tools: [...MOBILE_AGENT_TOOLS],
           text: 'Fallback complete',
           stopReason: 'end_turn',
-          toolCalls: [{ name: 'stock_fax', ok: true, durationMs: 20, error: null }],
-          toolTrace: ['stock_fax'],
+          toolCalls: [{ name: 'ticker_research_bundle', ok: true, durationMs: 20, error: null }],
+          toolTrace: ['ticker_research_bundle'],
           articles: [],
           artifacts: [],
         },

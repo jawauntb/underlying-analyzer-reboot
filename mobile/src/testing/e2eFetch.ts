@@ -117,7 +117,10 @@ function expectExactResearchBoundary(body: JsonObject): void {
     && tools.length === MOBILE_AGENT_TOOLS.length
     && new Set(tools).size === MOBILE_AGENT_TOOLS.length
     && MOBILE_AGENT_TOOLS.every((tool) => tools.includes(tool));
-  if (!exactTools) throw new Error('[E2E fixture] Research requires the exact six-tool boundary.');
+  if (!exactTools) throw new Error('[E2E fixture] Research requires the exact bounded-tool boundary.');
+  if (body.required_first_tool !== 'ticker_research_bundle') {
+    throw new Error('[E2E fixture] Research requires ticker_research_bundle before any other tool.');
+  }
   if (body.context !== 'Ticker: AAPL\nPeriod: 1y') {
     throw new Error('[E2E fixture] Research context must be exactly AAPL over 1y.');
   }
@@ -340,12 +343,14 @@ function researchResponse(state: FixtureState, signal: AbortSignal | null): Resp
   const summary = 'AAPL remains above its deterministic support band. Momentum and options positioning agree, while this fixture makes no live-market claim.';
   return streamResponse(ndjson([
     { type: 'start', model: FIXTURE_MODEL, tools: [...MOBILE_AGENT_TOOLS] },
+    { type: 'tool_call', id: 'fixture-packet', name: 'ticker_research_bundle', input: { ticker: 'AAPL' } },
+    { type: 'tool_result', id: 'fixture-packet', name: 'ticker_research_bundle', ok: true, duration_ms: 42, result: { ticker: 'AAPL', periods: ['1mo', '3mo', '1y'] }, artifacts: [] },
     { type: 'tool_call', id: 'fixture-analysis', name: 'analyze_ticker', input: { ticker: 'AAPL', period: '1y' } },
     { type: 'tool_result', id: 'fixture-analysis', name: 'analyze_ticker', ok: true, duration_ms: 24, result: { posture: 'constructive' }, artifacts: [] },
     { type: 'tool_call', id: 'fixture-sources', name: 'sec_source_pack', input: { ticker: 'AAPL' } },
     { type: 'tool_result', id: 'fixture-sources', name: 'sec_source_pack', ok: true, duration_ms: 18, result: { filings: 2 }, artifacts: [{ type: 'source-pack', ticker: 'AAPL', provider: FIXTURE_PROVIDER }] },
     { type: 'text', text: summary },
-    { type: 'done', stop_reason: 'end_turn', text: summary, tool_trace: ['analyze_ticker', 'sec_source_pack'] },
+    { type: 'done', stop_reason: 'end_turn', text: summary, tool_trace: ['ticker_research_bundle', 'analyze_ticker', 'sec_source_pack'] },
   ]), signal, false);
 }
 
@@ -391,8 +396,8 @@ function createHandler(state: FixtureState): FetchLike {
         tools: [...MOBILE_AGENT_TOOLS],
         text: 'AAPL deterministic fallback completed.',
         stop_reason: 'end_turn',
-        tool_calls: [],
-        tool_trace: [],
+        tool_calls: [{ name: 'ticker_research_bundle', ok: true, duration_ms: 42, error: null }],
+        tool_trace: ['ticker_research_bundle'],
         artifacts: [],
         articles: [],
       });

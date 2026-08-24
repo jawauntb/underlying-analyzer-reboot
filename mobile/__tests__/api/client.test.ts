@@ -423,7 +423,7 @@ describe('ApiClient', () => {
     ).rejects.toMatchObject({ kind: 'api', message: 'agent offline' });
   });
 
-  it('always sends the exact six tools and bounds agent input', async () => {
+  it('always sends the exact bounded tool set and bounds agent input', async () => {
     const fetchImpl = jest.fn(async () => response({ body: { ok: true, model: 'test', tools: MOBILE_AGENT_TOOLS, text: 'ok', tool_calls: [], tool_trace: [], artifacts: [], articles: [], stop_reason: 'end_turn' } }));
     const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
     await client.agentChat({
@@ -434,9 +434,21 @@ describe('ApiClient', () => {
     const body = JSON.parse(String(init?.body));
     expect(body.tools).toEqual(MOBILE_AGENT_TOOLS);
     expect(body.tool_policy).toBe('exact');
+    expect(body.required_first_tool).toBeUndefined();
     expect(body.messages).toHaveLength(40);
     expect(body.messages.every((message: { content: string }) => message.content.length <= 12_000)).toBe(true);
     expect(body.context).toHaveLength(2_000);
+  });
+
+  it('forwards a requested server-enforced first tool', async () => {
+    const fetchImpl = jest.fn(async () => response({ body: { ok: true, model: 'test', tools: MOBILE_AGENT_TOOLS, text: 'ok', tool_calls: [], tool_trace: [], artifacts: [], articles: [], stop_reason: 'end_turn' } }));
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl });
+    await client.agentChat({
+      messages: [{ role: 'user', content: 'research' }],
+      requiredFirstTool: 'ticker_research_bundle',
+    });
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+    expect(JSON.parse(String(init?.body)).required_first_tool).toBe('ticker_research_bundle');
   });
 
   it('rejects a non-stream response that does not echo the exact mobile tool boundary', async () => {

@@ -299,6 +299,8 @@ export type AgentMessage = { role: AgentRole; content: string };
 export type AgentChatRequest = {
   messages: AgentMessage[];
   context?: string;
+  /** Require the server to refuse any other first tool before execution. */
+  requiredFirstTool?: string;
 };
 
 export type AgentToolCallSummary = {

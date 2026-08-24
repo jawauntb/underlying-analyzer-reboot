@@ -15,7 +15,7 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 describe('deterministic E2E fixture transport', () => {
   beforeEach(() => resetE2EFixtureStateForTests());
 
-  it('serves the exact six-tool capability and the default Pulse without external fetches', async () => {
+  it('serves the exact bounded-tool capability and the default Pulse without external fetches', async () => {
     const tools = await request(API_ENDPOINTS.tools);
     expect(await body(tools)).toMatchObject({
       agent_ready: true,
@@ -114,6 +114,7 @@ describe('deterministic E2E fixture transport', () => {
         messages: [{ role: 'user', content: 'Run bounded ticker research.' }],
         tools: [...MOBILE_AGENT_TOOLS],
         tool_policy: 'exact',
+        required_first_tool: 'ticker_research_bundle',
         context: 'Ticker: AAPL\nPeriod: 1y',
       }),
       signal: controller.signal,
@@ -152,12 +153,13 @@ describe('deterministic E2E fixture transport', () => {
         tool_policy: 'exact',
         context: 'Ticker: AAPL\nPeriod: 1y',
       }),
-    })).rejects.toThrow(/exact six-tool boundary/);
+    })).rejects.toThrow(/exact bounded-tool boundary/);
     await expect(request(API_ENDPOINTS.agentStream, {
       method: 'POST',
       body: JSON.stringify({
         messages: [{ role: 'user', content: 'go' }],
         tools: MOBILE_AGENT_TOOLS,
+        required_first_tool: 'ticker_research_bundle',
         context: 'Ticker: AAPL\nPeriod: 1y',
       }),
     })).rejects.toThrow(/exact tool policy/);

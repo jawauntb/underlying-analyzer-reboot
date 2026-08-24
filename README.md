@@ -13,6 +13,7 @@ A reboot of the old `tube` Python chart backend and `tufe` frontend as one repo:
 - A research agent at `/chat` with streaming answers, inline charts, and saveable briefs
 - One tool registry driving the HTTP API, OpenAPI 3.1, both MCP transports, and the agent
 - JSON exports for generated ticker/watchlist data
+- A single `POST /api/data/ticker-research` packet for all chart-backed data on one ticker (1M, 3M, and 1Y)
 
 ## Native iPhone app
 
@@ -133,6 +134,15 @@ Tools execute in-process against the app's own public HTTP routes, so there is e
 implementation of each capability and no network hop between the agent and the API.
 Rendered charts are lifted out of tool results as artifacts: the model reads a cheap
 reference, the browser receives the image and renders it inline.
+
+For a comprehensive data handoff without an LLM or image generation, use
+`POST /api/data/ticker-research` (or `ticker_research_bundle` through MCP) with
+`{"ticker":"AAPL"}`. It returns the 1M/3M/1Y datasets for Auction,
+Regression, Ridge, Flow Compass, Torque, portfolio, and volatility, plus fixed
+10Y seasonality, options, and source provenance. The terminal agent receives a
+compact decision-context projection so its streamed event stays mobile-safe.
+See
+[docs/api.md](docs/api.md#post-apidataticker-research).
 
 Set `ANTHROPIC_API_KEY` to enable the agent, and optionally `ANTHROPIC_AGENT_MODEL` to run
 the conversation on a different model from memo generation. Conversations and briefs save

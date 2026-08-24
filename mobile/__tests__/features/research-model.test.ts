@@ -48,6 +48,11 @@ const catalog = {
 };
 
 describe('research model', () => {
+  it('allows the complete ticker packet in the bounded mobile research run', () => {
+    expect(MOBILE_AGENT_TOOLS).toContain('ticker_research_bundle');
+    expect(RESEARCH_MESSAGE).toMatch(/ticker_research_bundle/i);
+  });
+
   it('normalizes the route without requesting data and defaults the period to 1y', () => {
     expect(normalizeResearchRouteParams({ symbol: ' aapl ' })).toEqual({
       ok: true,
@@ -74,7 +79,7 @@ describe('research model', () => {
     expect(normalizeResearchRouteParams(params)).toEqual({ ok: false, error: expect.stringMatching(message) });
   });
 
-  it('previews agent_ready while selecting only the six bounded mobile tools', () => {
+  it('previews agent_ready while selecting only the bounded mobile tools', () => {
     expect(deriveResearchCapability(catalog)).toEqual({
       ready: true,
       agentReady: true,
@@ -85,7 +90,7 @@ describe('research model', () => {
     expect(deriveResearchCapability({ ...catalog, agentReady: false }).ready).toBe(false);
     expect(deriveResearchCapability({ ...catalog, tools: catalog.tools.slice(1) })).toMatchObject({
       ready: false,
-      missingTools: ['analyze_ticker'],
+      missingTools: ['ticker_research_bundle'],
     });
   });
 
@@ -98,6 +103,7 @@ describe('research model', () => {
     expect(request).toEqual({
       messages: [{ role: 'user', content: RESEARCH_MESSAGE }],
       context: 'Ticker: AAPL\nPeriod: 1y',
+      requiredFirstTool: 'ticker_research_bundle',
     });
     expect(request).not.toHaveProperty('ticker');
     expect(request).not.toHaveProperty('period');
@@ -117,12 +123,63 @@ describe('research model', () => {
           tools: [...MOBILE_AGENT_TOOLS],
           text: 'Unsafe trace',
           stopReason: 'end_turn',
-          toolCalls: [{ name: 'compose_article', ok: true, durationMs: 1, error: null }],
+          toolCalls: [
+            { name: 'ticker_research_bundle', ok: true, durationMs: 1, error: null },
+            { name: 'compose_article', ok: true, durationMs: 1, error: null },
+          ],
           toolTrace: [],
           articles: [],
           artifacts: [],
         },
       },
     })).toThrow(/outside/i);
+  });
+
+  it('rejects a completed stream that does not start with the complete ticker packet', () => {
+    expect(() => completionFromAgentResult({
+      symbol: 'AAPL',
+      period: '1y',
+      generatedAt: 100,
+      result: {
+        transport: 'stream',
+        state: {
+          status: 'completed',
+          text: 'Skipped packet',
+          model: 'claude-sonnet',
+          tools: [...MOBILE_AGENT_TOOLS],
+          events: [{ type: 'tool_call', id: 'call-1', name: 'analyze_ticker', input: {} }],
+          error: null,
+        },
+      },
+    })).toThrow(/must start/i);
+  });
+
+  it('rejects a completed run when the required packet tool failed', () => {
+    expect(() => completionFromAgentResult({
+      symbol: 'AAPL',
+      period: '1y',
+      generatedAt: 100,
+      result: {
+        transport: 'stream',
+        state: {
+          status: 'completed',
+          text: 'Fallback summary without packet data',
+          model: 'claude-sonnet',
+          tools: [...MOBILE_AGENT_TOOLS],
+          events: [
+            { type: 'tool_call', id: 'packet-1', name: 'ticker_research_bundle', input: { ticker: 'AAPL' } },
+            {
+              type: 'tool_result',
+              id: 'packet-1',
+              name: 'ticker_research_bundle',
+              ok: false,
+              error: 'Ticker research is busy; try again shortly.',
+              artifacts: [],
+            },
+          ],
+          error: null,
+        },
+      },
+    })).toThrow(/busy/i);
   });
 });

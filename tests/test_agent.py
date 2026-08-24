@@ -11,6 +11,7 @@ from flask.testing import FlaskClient
 from app.agent import AgentError, build_system_prompt, normalize_history, select_tools
 from app.articles import ArticleError, article_markdown, normalize_article
 from app.main import create_app
+from app.tool_executor import ToolResult
 
 
 class StubAgentClient:
@@ -40,9 +41,7 @@ def stream_events(client: FlaskClient, body: dict[str, Any]) -> list[dict[str, A
     response = client.post("/api/agent/chat/stream", json=body)
     assert response.status_code == 200
     return [
-        json.loads(line)
-        for line in response.get_data(as_text=True).splitlines()
-        if line.strip()
+        json.loads(line) for line in response.get_data(as_text=True).splitlines() if line.strip()
     ]
 
 
@@ -95,9 +94,7 @@ def test_agent_runs_a_tool_then_answers() -> None:
         ]
     )
 
-    events = stream_events(
-        client, {"messages": [{"role": "user", "content": "what can you do?"}]}
-    )
+    events = stream_events(client, {"messages": [{"role": "user", "content": "what can you do?"}]})
     by_type = {event["type"]: event for event in events}
 
     assert by_type["tool_call"]["name"] == "list_capabilities"
@@ -131,9 +128,7 @@ def test_agent_emits_article_event_for_composed_brief() -> None:
         ]
     )
 
-    events = stream_events(
-        client, {"messages": [{"role": "user", "content": "write it up"}]}
-    )
+    events = stream_events(client, {"messages": [{"role": "user", "content": "write it up"}]})
     article = next(event for event in events if event["type"] == "article")
 
     assert article["article"]["title"] == "NVDA into the print"
@@ -244,9 +239,7 @@ def test_select_tools_falls_back_to_everything() -> None:
     assert select_tools([]) == select_tools(None)
     assert select_tools("health_check") == select_tools(None)
     assert select_tools(["not-a-tool"]) == select_tools(None)
-    assert [spec.name for spec in select_tools(["health_check", "not-a-tool"])] == [
-        "health_check"
-    ]
+    assert [spec.name for spec in select_tools(["health_check", "not-a-tool"])] == ["health_check"]
 
 
 def test_select_tools_rejects_a_nonempty_unknown_allowlist() -> None:
@@ -287,9 +280,7 @@ def test_system_prompt_names_only_selected_tools() -> None:
 
 
 def test_system_prompt_preserves_selected_chart_and_article_guidance() -> None:
-    specs = select_tools(
-        ["render_chart", "compose_research_article"], exact=True
-    )
+    specs = select_tools(["render_chart", "compose_research_article"], exact=True)
 
     prompt = build_system_prompt(tool_specs=specs)
 
@@ -306,9 +297,7 @@ def test_system_prompt_preserves_selected_chart_and_article_guidance() -> None:
         (["health_check", "not-a-tool"], ["health_check"]),
     ],
 )
-def test_legacy_endpoint_preserves_tool_fallbacks(
-    tools: Any, expected: list[str] | None
-) -> None:
+def test_legacy_endpoint_preserves_tool_fallbacks(tools: Any, expected: list[str] | None) -> None:
     _, client = build_client(
         [[{"type": "text", "text": "Ready."}, {"type": "stop", "stop_reason": "end_turn"}]]
     )
@@ -345,9 +334,7 @@ def test_exact_endpoint_rejects_invalid_allowlists(tools: Any) -> None:
 
 @pytest.mark.parametrize("endpoint", ["/api/agent/chat", "/api/agent/chat/stream"])
 @pytest.mark.parametrize("tool_policy", [None, "best_effort", "", False, ["exact"]])
-def test_endpoint_rejects_unknown_tool_policy(
-    endpoint: str, tool_policy: Any
-) -> None:
+def test_endpoint_rejects_unknown_tool_policy(endpoint: str, tool_policy: Any) -> None:
     _, client = build_client(
         [[{"type": "text", "text": "unused"}, {"type": "stop", "stop_reason": "end_turn"}]]
     )
@@ -398,11 +385,7 @@ def test_legacy_stream_reports_a_refused_unselected_tool(
         },
     )
 
-    refused = [
-        event
-        for event in events
-        if event["type"] in {"tool_call", "tool_result"}
-    ]
+    refused = [event for event in events if event["type"] in {"tool_call", "tool_result"}]
     assert [event["type"] for event in refused] == ["tool_call", "tool_result"]
     assert all(event["name"] == "list_capabilities" for event in refused)
     assert refused[1]["status"] == 403
@@ -457,6 +440,115 @@ def test_agent_does_not_execute_a_tool_outside_the_selected_allowlist(
         "content": "Tool list_capabilities is not available for this turn.",
         "is_error": True,
     }
+
+
+def test_agent_refuses_a_wrong_first_tool_before_it_executes() -> None:
+    app, client = build_client(
+        [
+            [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "health_check",
+                    "input": {},
+                },
+                {"type": "stop", "stop_reason": "tool_use"},
+            ]
+        ]
+    )
+
+    events = stream_events(
+        client,
+        {
+            "messages": [{"role": "user", "content": "research AAPL"}],
+            "tools": ["health_check", "ticker_research_bundle"],
+            "tool_policy": "exact",
+            "required_first_tool": "ticker_research_bundle",
+        },
+    )
+
+    assert [event["type"] for event in events] == ["start", "error"]
+    assert "ticker_research_bundle first" in events[-1]["message"]
+    assert len(app.config["AGENT_CLIENT"].turns) == 1
+
+
+def test_agent_stops_when_the_required_first_tool_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, client = build_client(
+        [
+            [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "ticker_research_bundle",
+                    "input": {"ticker": "AAPL"},
+                },
+                {"type": "stop", "stop_reason": "tool_use"},
+            ]
+        ]
+    )
+
+    monkeypatch.setattr(
+        "app.agent.execute_tool",
+        lambda name, _arguments: ToolResult(
+            name=name,
+            ok=False,
+            status=503,
+            url="/api/data/ticker-research",
+            result=None,
+            error="Ticker research is busy; try again shortly.",
+        ),
+    )
+    events = stream_events(
+        client,
+        {
+            "messages": [{"role": "user", "content": "research AAPL"}],
+            "tools": ["ticker_research_bundle"],
+            "tool_policy": "exact",
+            "required_first_tool": "ticker_research_bundle",
+        },
+    )
+
+    assert [event["type"] for event in events] == [
+        "start",
+        "tool_call",
+        "tool_result",
+        "error",
+    ]
+    assert "Required first tool ticker_research_bundle failed" in events[-1]["message"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"required_first_tool": ""},
+        {"required_first_tool": "not-a-tool"},
+        {
+            "required_first_tool": "ticker_research_bundle",
+            "tool_policy": "exact",
+            "tools": ["health_check"],
+        },
+    ],
+)
+def test_agent_rejects_invalid_required_first_tool(payload: dict[str, Any]) -> None:
+    _, client = build_client(
+        [[{"type": "text", "text": "unused"}, {"type": "stop", "stop_reason": "end_turn"}]]
+    )
+
+    response = client.post(
+        "/api/agent/chat",
+        json={
+            "messages": [{"role": "user", "content": "research AAPL"}],
+            **payload,
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.get_json()["error"]
+        == "required_first_tool must be a recognized selected tool name"
+    )
 
 
 def test_article_normalization_cleans_input() -> None:

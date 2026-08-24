@@ -91,7 +91,7 @@ The catalog is generated, so the authoritative list is always live:
 | meta | `list_capabilities`, `health_check`, `provider_status` |
 | research | `analyze_ticker`, `analyze_batch`, `stock_fax`, `vision_memo`, `sec_source_pack`, `search_news` |
 | charts | `render_chart` |
-| data | `chart_data`, `torque_data`, `moneyline_data` |
+| data | `chart_data`, `ticker_research_bundle`, `torque_data`, `moneyline_data` |
 | signals | `torque_score`, `torque_scan`, `moneyline` |
 | watchlists | `resolve_watchlist`, `watchlist_cockpit`, `watchlist_alerts` |
 | studio | `compose_research_article`, `pixel_image` |
