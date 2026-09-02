@@ -13,3 +13,6 @@ stock_analysis.log
 .worktrees
 .railway/
 /.artifacts/
+
+# Prism engine local cache
+.prism-cache/

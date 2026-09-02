@@ -540,6 +540,128 @@ Set a descriptive `SEC_USER_AGENT`. See README for rate-limit guidance.
 
 ---
 
+## Prism (`ubermemo`)
+
+The full-stack memo engine. Every route below is also mounted under `/api/ubermemo`, and the
+same capabilities are agent/MCP tools `prism_memo` (alias `ubermemo`), `prism_get`,
+`prism_chat` and `prism_export`. Full reference: [prism.md](prism.md).
+
+Every top-level key of the returned packet is always present. A section that could not be
+built is `null` with a sibling `<section>_error` string and a row in `meta.errors`, so a
+client can index the same keys on every response.
+
+### `POST /api/prism`
+
+Builds the packet: profile, universe, seasonality, macro, cross-asset relational, factors,
+regimes, entropy, spectral, eigen, fundamentals, filings, volatility, levels, news,
+scenarios, recent windows and the cited memo.
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `ticker` | string | — | Required. Max 16 chars, `A-Z0-9.-:^` |
+| `force` | boolean | `false` | Rebuild even if today's packet is stored |
+| `include_memo` | boolean | `true` | `false` skips the model call and returns data only |
+| `as_of` | string | today | ISO date to build against |
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/prism \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"NVDA","force":true}'
+```
+
+A cold build fans out to Massive, FRED, SEC EDGAR, Exa and Anthropic and takes **one to
+three minutes**; allow at least a 180s client timeout and poll `GET /api/prism/<ticker>`
+while waiting. Without `force`, a packet already stored for the same `as_of` is returned
+immediately with `meta.cache.packet: "hit"`.
+
+Admission is bounded exactly like `/api/data/ticker-research`: two concurrent builds per
+process and one in-flight build per non-loopback client. Saturation returns `503`
+(process) or `429` (client), both with `Retry-After: 30`. `400` covers a missing or
+malformed ticker and a body that is not a JSON object; `500` carries the build failure.
+
+### `GET /api/prism/<ticker>`
+
+The latest stored packet. Optional `as_of` query parameter selects a specific build.
+`404` with `"No stored Prism packet for <T>. POST /api/prism to build one."` when none exists.
+
+```bash
+curl -s http://127.0.0.1:5050/api/prism/NVDA
+```
+
+### `GET /api/prism/<ticker>/summary`
+
+The bounded agent projection of the stored packet — recommendation, entry/exit/reassess,
+key determinants, what is priced in, scenario cases and weights, current regime, 3-month
+entropy, this-month seasonality, fundamentals stage and ratios, volatility, five news
+items, a 1,500-character memo excerpt, the list of unavailable sections, and
+`meta.errors`. Typically under 15 KB. `404` when nothing is stored.
+
+### `GET /api/prism/<ticker>/export`
+
+| Query | Values | Content-Type |
+| --- | --- | --- |
+| `format` | `txt` (default) | `text/plain; charset=utf-8` |
+| | `json` | `application/json` |
+| | `pdf` | `application/pdf` |
+| `as_of` | ISO date | Selects a specific stored build |
+
+Responds with the bytes plus
+`Content-Disposition: attachment; filename="prism-<TICKER>-<as_of>.<ext>"` and a
+`Content-Length`. `400` for an unknown format, `404` when nothing is stored.
+
+```bash
+curl -s 'http://127.0.0.1:5050/api/prism/NVDA/export?format=pdf' -o nvda-prism.pdf
+```
+
+### `POST /api/prism/chat`
+
+Asks one question about a stored packet. The system prompt is the same bounded projection
+the memo was written from, so answers cite the same evidence.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `ticker` | string | Required; a packet must already be stored |
+| `message` | string | Required, max 4,000 characters |
+| `history` | array | Optional `{role, content}` turns; the last 40 are used |
+| `conversation_id` | string | Optional; continues a stored thread |
+| `as_of` | string | Optional ISO date of the packet to answer from |
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/prism/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"NVDA","message":"What is the regime and how sure are you?"}'
+```
+
+```json
+{
+  "conversation_id": "…",
+  "ticker": "NVDA",
+  "reply": "…",
+  "citations": [{ "id": "C2", "claim": "…", "source": "prism.regimes.current", "url": null }],
+  "available_citations": [],
+  "model": "claude-opus-4-8",
+  "method": "model",
+  "reason": null,
+  "history": [],
+  "store_errors": [],
+  "generated_at": "…"
+}
+```
+
+`400` for a missing or oversized message or a non-list `history`; `404` when no packet is
+stored for the ticker.
+
+### `GET /api/prism/`
+
+Engine metadata: name, alias, version and the route map.
+
+Without `ANTHROPIC_API_KEY` the memo and chat return a complete deterministic read with
+`method: "deterministic"` and a `reason`, rather than failing. Prism-specific configuration
+(`PRISM_CACHE_DIR`, `PRISM_CACHE_ENABLED`, `PRISM_CACHE_TTL_DAYS`, `PRISM_STORE_ENABLED`,
+`PRISM_TEXT_MODEL`) is documented in [prism.md](prism.md#configuration).
+
+---
+
 ## Tools
 
 ### `POST /api/tools/fax`

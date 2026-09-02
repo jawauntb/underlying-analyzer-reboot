@@ -150,6 +150,50 @@ to Supabase when signed in and to local storage otherwise.
 
 See [docs/agent.md](docs/agent.md) for the streaming protocol.
 
+## Prism (`ubermemo`)
+
+A prism splits one beam into its spectrum. **Prism** splits one ticker's price into its
+macro, factor, regime, spectral, entropy, fundamental and filing components, keeps every
+intermediate number with its provenance, and recombines them into bull / neutral / bear
+scenarios, a recommendation with entry and exit levels, and a memo you can chat with.
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/prism \
+  -H 'Content-Type: application/json' -d '{"ticker":"NVDA"}'
+
+curl -s http://127.0.0.1:5050/api/prism/NVDA/summary
+curl -s 'http://127.0.0.1:5050/api/prism/NVDA/export?format=pdf' -o nvda.pdf
+```
+
+No server needed: `python -m app.prism.cli NVDA --format txt|json|pdf` runs the whole engine
+in-process. See [docs/prism.md § Command line](docs/prism.md#command-line) for every flag,
+the exit codes, and where `PRISM_CACHE_DIR` puts the packets.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/prism` | Build the packet (1-3 minutes cold; `force`, `include_memo` flags) |
+| `GET /api/prism/<ticker>` | The latest stored packet |
+| `GET /api/prism/<ticker>/summary` | Bounded agent projection (~15 KB) |
+| `GET /api/prism/<ticker>/export?format=txt\|json\|pdf` | Download the memo |
+| `POST /api/prism/chat` | Ask one question about a built packet |
+
+Every route is also mounted under `/api/ubermemo`, and the same capabilities are agent/MCP
+tools `prism_memo` (alias `ubermemo`), `prism_get`, `prism_chat` and `prism_export`.
+
+Every top-level packet key is always present; a section that could not be built is `null`
+with a sibling `<section>_error` and a row in `meta.errors`, so a single dead source costs
+one section rather than the whole memo. Data comes from Massive (prices, financials,
+options, news), FRED (rates, VIX, credit, dollar, oil, FX, payrolls), SEC EDGAR (10-K/10-Q
+sections), Exa (news and policy) and Anthropic (the memo). Without `ANTHROPIC_API_KEY` the
+memo and chat degrade to a complete deterministic read rather than going missing. Nothing
+in Prism depends on Yahoo/yfinance.
+
+Configuration: `PRISM_CACHE_DIR` (default `.prism-cache`, gitignored), `PRISM_CACHE_ENABLED`,
+`PRISM_CACHE_TTL_DAYS`, `PRISM_STORE_ENABLED`, `PRISM_TEXT_MODEL`. Packets and chats also
+persist to Supabase (`prism_packets`, `prism_chats`) when `SUPABASE_SERVICE_ROLE_KEY` is set.
+
+Full reference: [docs/prism.md](docs/prism.md).
+
 ## Docs
 
 On-site docs: `/docs` (API section at `/docs#api`, MCP at `/docs#mcp`).
@@ -159,6 +203,8 @@ Machine-readable catalog: `GET /api/docs` (lists every public endpoint, tool, an
 OpenAPI 3.1: `GET /api/openapi`.
 
 Raw markdown API reference: `/docs/api.md` and [docs/api.md](docs/api.md).
+
+Prism (`ubermemo`) engine reference: [docs/prism.md](docs/prism.md).
 
 MCP (no API key): [docs/mcp.md](docs/mcp.md). Streamable HTTP at `/api/mcp`, or stdio via
 `underlying-mcp` pointed at the Railway production URL by default.
