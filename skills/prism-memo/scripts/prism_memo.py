@@ -175,7 +175,7 @@ def fetch_doppler_config(token: str, project: str, config: str) -> dict[str, str
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:  # noqa: S310 - fixed https host
+        with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise PrismSkillError(
@@ -240,7 +240,7 @@ def http(
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(), exc.headers.get("Content-Type", "") if exc.headers else ""
@@ -358,7 +358,7 @@ def local_cli(
     command = [python_for(repo), "-m", "app.prism.cli", *args]
     note(f"note: running {' '.join(['python', '-m', 'app.prism.cli', *args])} in {repo}")
     try:
-        return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        return subprocess.run(
             command,
             cwd=str(repo),
             env=env,
