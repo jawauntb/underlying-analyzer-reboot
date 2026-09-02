@@ -111,6 +111,7 @@ from app.mcp_http import (
 )
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.openapi import build_openapi_document
+from app.prism.routes import register_prism_routes
 from app.sec import SecClient, SecDataError
 from app.ticker_research import (
     TickerResearchBusyError,
@@ -206,6 +207,15 @@ def create_app() -> Flask:
     app.config["ALERT_SCHEDULER_TOKEN"] = os.getenv("ALERT_SCHEDULER_TOKEN")
     app.config["ALERT_STORE"] = None
     app.config["TEXT_GENERATOR"] = None
+    # Prism (working alias "ubermemo"). Overrides let tests inject fakes without
+    # disturbing the shared clients the rest of the terminal uses.
+    app.config["PRISM_CACHE_DIR"] = os.getenv("PRISM_CACHE_DIR", ".prism-cache")
+    app.config["PRISM_TEXT_MODEL"] = os.getenv("PRISM_TEXT_MODEL")
+    app.config["PRISM_MARKET_CLIENT"] = None
+    app.config["PRISM_SEC_CLIENT"] = None
+    app.config["PRISM_EXA_CLIENT"] = None
+    app.config["PRISM_TEXT_GENERATOR"] = None
+    app.config["PRISM_STORE"] = None
 
     @app.get("/")
     def index() -> Response:
@@ -1253,6 +1263,7 @@ def create_app() -> Flask:
         return jsonify(collect_agent_turn(run_agent_stream(**options)))
 
     register_compat_routes(app)
+    register_prism_routes(app)
     return app
 
 

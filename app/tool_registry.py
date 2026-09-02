@@ -716,9 +716,141 @@ TOOLS: tuple[ToolSpec, ...] = (
         produces_images=True,
         cost=COST_SLOW,
     ),
+    ToolSpec(
+        name="prism_memo",
+        title="Prism full-stack memo",
+        group="research",
+        summary=(
+            "Build the complete Prism packet for one ticker: seasonality, macro, "
+            "cross-asset, factors, regimes, entropy, spectral cycles, fundamentals, "
+            "filings, volatility, levels, news, scenarios and a cited memo"
+        ),
+        when_to_use=(
+            "Use when the user wants the full investment case on a single name - a "
+            "recommendation with entry and exit levels, scenario probabilities, and "
+            "the evidence behind them. It is the most expensive tool here: it fans "
+            "out to Massive, FRED, SEC EDGAR, Exa and a text model and can take one "
+            "to three minutes. For a name already built today, call prism_get first."
+        ),
+        method="POST",
+        path="/api/prism",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Rebuild from source even if today's packet is stored",
+                },
+                "include_memo": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Set false to skip the language-model memo and return data only",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns=(
+            "The full PrismPacket. Every section key is always present; a section "
+            "that could not be built is null with a sibling <section>_error and an "
+            "entry in meta.errors."
+        ),
+        cost=COST_LLM,
+        aliases=("ubermemo",),
+    ),
+    ToolSpec(
+        name="prism_get",
+        title="Prism packet (stored)",
+        group="research",
+        summary="Read the most recently built Prism packet for a ticker without rebuilding",
+        when_to_use=(
+            "Call before prism_memo to see whether a packet already exists, and "
+            "afterwards to re-read one cheaply. Returns 404 when nothing has been "
+            "built for the ticker."
+        ),
+        method="GET",
+        path="/api/prism/{ticker}",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "as_of": {
+                    "type": "string",
+                    "description": "ISO date of a specific stored build (default: the latest)",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns="The stored PrismPacket, or a 404 error when none exists.",
+        path_params=("ticker",),
+        cost=COST_FAST,
+    ),
+    ToolSpec(
+        name="prism_chat",
+        title="Prism memo chat",
+        group="research",
+        summary="Ask one question about a built Prism packet and get a cited answer",
+        when_to_use=(
+            "Use to interrogate a memo the engine already produced - why the "
+            "recommendation is what it is, what a specific number means, what would "
+            "change it. Requires a packet to exist; build one with prism_memo first."
+        ),
+        method="POST",
+        path="/api/prism/chat",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "message": {
+                    "type": "string",
+                    "description": "The question to ask about the packet",
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Continue an existing thread instead of starting a new one",
+                },
+            },
+            required=["ticker", "message"],
+        ),
+        returns="A reply with the packet citations it used and the conversation id.",
+        cost=COST_LLM,
+    ),
+    ToolSpec(
+        name="prism_export",
+        title="Prism export",
+        group="research",
+        summary="Download a stored Prism packet as plain text, JSON, or a rendered PDF",
+        when_to_use=(
+            "Use when the user wants the memo as a file to read or share. 'txt' is "
+            "the full packet as readable tables, 'json' is the raw packet, 'pdf' is "
+            "the typeset memo."
+        ),
+        method="GET",
+        path="/api/prism/{ticker}/export",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "format": {
+                    "type": "string",
+                    "enum": ["txt", "json", "pdf"],
+                    "default": "txt",
+                    "description": "Export format",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns="The exported document bytes with a download filename.",
+        path_params=("ticker",),
+        cost=COST_SLOW,
+    ),
 )
 
 TOOLS_BY_NAME: dict[str, ToolSpec] = {spec.name: spec for spec in TOOLS}
+
+#: Working names that resolve to a canonical tool. Prism shipped as "ubermemo"
+#: first and callers still ask for it by that name; an alias keeps them working
+#: without a second entry in the catalog.
+TOOL_ALIASES: dict[str, str] = {
+    alias: spec.name for spec in TOOLS for alias in spec.aliases if alias not in TOOLS_BY_NAME
+}
 
 
 class ToolArgumentError(ValueError):
@@ -726,7 +858,8 @@ class ToolArgumentError(ValueError):
 
 
 def get_tool(name: str) -> ToolSpec:
-    spec = TOOLS_BY_NAME.get(name)
+    """Resolve a tool by its canonical name or by one of its aliases."""
+    spec = TOOLS_BY_NAME.get(name) or TOOLS_BY_NAME.get(TOOL_ALIASES.get(name, ""))
     if spec is None:
         known = ", ".join(sorted(TOOLS_BY_NAME))
         raise ToolArgumentError(f"Unknown tool '{name}'. Available tools: {known}")
@@ -777,14 +910,26 @@ def mcp_tool_definitions() -> list[dict[str, Any]]:
 def tool_catalog_payload() -> dict[str, Any]:
     """Compact capability catalog for the UI, ``/api/docs``, and the agent.
 
-    Deliberately omits input schemas. The agent already carries them in its tool
-    definitions, and repeating eighteen full schemas here would make
-    ``list_capabilities`` one of the most expensive calls in the registry.
-    Schemas live in ``GET /api/openapi`` and MCP ``tools/list``.
+    This is an index, not a reference. It carries what a caller needs to choose a
+    tool - the name, the lane, what it is for, when to reach for it, its cost and
+    the route behind it - and nothing that is already published in full
+    elsewhere. Argument schemas, per-argument documentation and the response
+    contract live in ``GET /api/openapi`` and MCP ``tools/list``.
+
+    That boundary is a budget, not a preference: ``list_capabilities`` is itself a
+    tool call, so its result passes through the same size cap as any other tool
+    result (``app.tool_executor.MAX_RESULT_CHARS``). Repeating every schema and
+    response contract here would push the catalog past that cap and hand the
+    model a truncated index of the very tools it is trying to choose between.
     """
     return {
         "ok": True,
         "tool_count": len(TOOLS),
+        "schemas": {
+            "openapi": "/api/openapi",
+            "mcp": "POST /api/mcp (tools/list)",
+            "note": "Argument schemas and response contracts are published there in full.",
+        },
         "groups": [
             {
                 "id": group,
@@ -801,14 +946,11 @@ def tool_catalog_payload() -> dict[str, Any]:
                 "group": spec.group,
                 "summary": spec.summary,
                 "when_to_use": spec.when_to_use,
-                "returns": spec.returns,
                 "cost": spec.cost,
                 "produces_images": spec.produces_images,
                 "agent": spec.agent,
                 "mcp": spec.mcp,
                 "http": {"method": spec.method, "path": spec.path},
-                "arguments": sorted(spec.properties),
-                "required": list(spec.required),
             }
             for spec in TOOLS
         ],

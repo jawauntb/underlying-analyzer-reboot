@@ -37,7 +37,7 @@ mcp = [
 underlying-mcp = "mcp_server.server:main"
 
 [tool.setuptools]
-packages = ["app", "mcp_server"]
+packages = ["app", "app.prism", "mcp_server"]
 
 [tool.ruff]
 line-length = 100

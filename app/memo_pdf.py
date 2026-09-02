@@ -120,6 +120,14 @@ class MemoPdfPayload:
 
     memo_sections: dict[str, str] | None = None
 
+    #: Product wordmark shown on the cover, the full-memo page and every footer.
+    #: Defaults to the original Vision Memo branding so existing callers are
+    #: unchanged; Prism passes "PRISM MEMO".
+    document_title: str = "VISION MEMO"
+    #: Label for the ``target_low`` cell. Prism puts a reassess/stop level there,
+    #: which is not a target.
+    target_low_label: str = "TARGET LOW"
+
     charts: list[dict] | None = None
     scenarios: list[dict] | None = None
     citations: list[dict] | None = None
@@ -567,9 +575,16 @@ class HBar(Flowable):
 class _MemoCanvas(Canvas):
     """Canvas subclass that paints the dark page background and scan lines."""
 
-    def __init__(self, *args: Any, ticker: str = "", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        ticker: str = "",
+        document_title: str = "VISION MEMO",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._ticker = ticker
+        self._document_title = document_title
         self._saved_pages: list[dict] = []
 
     def showPage(self) -> None:  # type: ignore[override]
@@ -591,8 +606,9 @@ class _MemoCanvas(Canvas):
         self.setFillColor(MUTED)
         self.setFont(BODY_FONT, 8)
         footer_y = MARGIN / 2
-        left_text = self._ticker.upper() if self._ticker else "VISION MEMO"
-        self.drawString(MARGIN, footer_y, left_text + " — Vision Memo")
+        title = self._document_title or "VISION MEMO"
+        left_text = self._ticker.upper() if self._ticker else title.upper()
+        self.drawString(MARGIN, footer_y, f"{left_text} — {title.title()}")
         self.drawRightString(
             PAGE_W - MARGIN,
             footer_y,
@@ -713,8 +729,20 @@ def _decode_image(data: str | bytes | None) -> BytesIO | None:
         return None
 
 
-def _safe_paragraph(text: str, style_key: str = "body") -> Paragraph:
+def _safe_paragraph(text: str, style_key: str = "body", *, raw: bool = False) -> Paragraph:
+    """A paragraph, with markdown inline conversion unless ``raw`` is set.
+
+    ``_md_inline`` XML-escapes its whole input, so a caller that deliberately
+    built ReportLab markup (``<font color="...">``) used to have that markup drawn
+    as literal visible text. ``raw=True`` skips the conversion for strings the
+    caller already escaped itself.
+    """
     style = STYLES.get(style_key, STYLES["body"])
+    if raw:
+        try:
+            return Paragraph(text, style)
+        except Exception:
+            return Paragraph(_xml_escape(text or ""), style)
     try:
         return Paragraph(_md_inline(text), style)
     except Exception:
@@ -729,7 +757,7 @@ def _safe_paragraph(text: str, style_key: str = "body") -> Paragraph:
 def _build_cover(payload: MemoPdfPayload) -> list[Flowable]:
     story: list[Flowable] = []
     story.append(Spacer(1, 0.35 * inch))
-    story.append(_safe_paragraph("VISION MEMO", "cover_subtitle"))
+    story.append(_safe_paragraph(payload.document_title, "cover_subtitle"))
     story.append(_safe_paragraph(payload.ticker.upper(), "cover_ticker"))
     story.append(_safe_paragraph(payload.company_name, "cover_company"))
 
@@ -751,7 +779,7 @@ def _build_cover(payload: MemoPdfPayload) -> list[Flowable]:
 
     target_cells: list[list[Any]] = [
         [
-            _safe_paragraph("TARGET LOW", "small"),
+            _safe_paragraph(payload.target_low_label, "small"),
             _safe_paragraph("TARGET MID", "small"),
             _safe_paragraph("TARGET HIGH", "small"),
             _safe_paragraph("CURRENT", "small"),
@@ -834,6 +862,7 @@ def _build_cover(payload: MemoPdfPayload) -> list[Flowable]:
                 + " · ".join(_xml_escape(s) for s in stage_text_parts)
                 + "</b></font>",
                 "section",
+                raw=True,
             )
         )
 
@@ -1012,6 +1041,7 @@ def _torque_section(payload: MemoPdfPayload) -> list[Flowable]:
     stage = _safe_paragraph(
         f'<font color="#b28cff"><b>{_xml_escape(payload.torque_stage or "")}</b></font>',
         "section",
+        raw=True,
     )
 
     score_table = Table([[big], [stage]], colWidths=[CONTENT_W])
@@ -1108,7 +1138,7 @@ def _torque_section(payload: MemoPdfPayload) -> list[Flowable]:
 
 
 def _memo_body(payload: MemoPdfPayload) -> list[Flowable]:
-    story: list[Flowable] = [_safe_paragraph("VISION MEMO", "h1")]
+    story: list[Flowable] = [_safe_paragraph(payload.document_title, "h1")]
     if not payload.memo_text:
         story.append(_safe_paragraph("No memo body available.", "muted"))
         return story
@@ -1350,7 +1380,7 @@ def _build_doc(buffer: BytesIO, payload: MemoPdfPayload) -> BaseDocTemplate:
         rightMargin=MARGIN,
         topMargin=MARGIN,
         bottomMargin=MARGIN,
-        title=f"{payload.ticker} Vision Memo",
+        title=f"{payload.ticker} {payload.document_title.title()}",
         author="Underlying Analyzer",
     )
 
@@ -1529,6 +1559,8 @@ def render_memo_pdf(payload: MemoPdfPayload) -> bytes:
             torque_stage=payload.torque_stage,
             torque_components=payload.torque_components,
             memo_sections=payload.memo_sections,
+            document_title=(payload.document_title or "VISION MEMO").strip() or "VISION MEMO",
+            target_low_label=(payload.target_low_label or "TARGET LOW").strip() or "TARGET LOW",
             charts=payload.charts,
             scenarios=payload.scenarios,
             citations=payload.citations,
@@ -1550,7 +1582,10 @@ def render_memo_pdf(payload: MemoPdfPayload) -> bytes:
         doc.build(
             story,
             canvasmaker=lambda *a, **kw: _MemoCanvas(
-                *a, ticker=safe.ticker.upper(), **kw
+                *a,
+                ticker=safe.ticker.upper(),
+                document_title=safe.document_title,
+                **kw
             ),
         )
         return buf.getvalue()
