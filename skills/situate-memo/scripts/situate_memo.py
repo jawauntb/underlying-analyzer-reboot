@@ -277,7 +277,7 @@ def http_error_message(origin: str, path: str, status: int, payload: bytes) -> s
     except Exception:  # noqa: BLE001 - a non-JSON body is normal for a 404 page
         detail = payload.decode("utf-8", "replace")[:200].strip()
     detail = redact_secrets(detail)
-    if status == 404 and (path.startswith("/api/situate") or path.startswith("/api/research")):
+    if status == 404 and (path.startswith(("/api/situate", "/api/research"))):
         return (
             f"{origin} answered 404 for {path}. Either Situate is not deployed at this "
             "origin yet, or no packet has been built for that ticker — run "
