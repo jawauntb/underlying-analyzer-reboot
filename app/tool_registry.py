@@ -717,6 +717,134 @@ TOOLS: tuple[ToolSpec, ...] = (
         cost=COST_SLOW,
     ),
     ToolSpec(
+        name="situate",
+        title="Situate research engine",
+        group="research",
+        summary=(
+            "Situate one ticker: the factor basket it is exposed to, the current "
+            "volatility/trend state, the odds per horizon (historical base rates "
+            "beside the option-implied distribution), what the business is saying "
+            "(fundamentals + filing diffs + news), cheap/rich zones, and a posture "
+            "memo — distributions never point targets, never buy/sell"
+        ),
+        when_to_use=(
+            "Use for the full single-name research case on a stock: what you are "
+            "buying in factor terms, the per-horizon return distribution, what "
+            "options are pricing versus history, and a cited posture memo "
+            "(odds_favorable / balanced / odds_unfavorable). It fans out to "
+            "Massive, FRED, SEC EDGAR, Exa and a text model and can take one to "
+            "three minutes; for a name already built today, call situate_get first."
+        ),
+        method="POST",
+        path="/api/situate",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Rebuild from source even if today's packet is stored",
+                },
+                "include_memo": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Set false to skip the language-model memo and return data only",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns=(
+            "The full SituatePacket. Every section key is always present; a section "
+            "that could not be built is null with a sibling <section>_error and an "
+            "entry in meta.errors."
+        ),
+        cost=COST_LLM,
+        aliases=("ubermemo",),
+    ),
+    ToolSpec(
+        name="situate_get",
+        title="Situate packet (stored)",
+        group="research",
+        summary="Read the most recently built Situate packet for a ticker without rebuilding",
+        when_to_use=(
+            "Call before situate to see whether a packet already exists, and "
+            "afterwards to re-read one cheaply. Returns 404 when nothing has been "
+            "built for the ticker."
+        ),
+        method="GET",
+        path="/api/situate/{ticker}",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "as_of": {
+                    "type": "string",
+                    "description": "ISO date of a specific stored build (default: the latest)",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns="The stored SituatePacket, or a 404 error when none exists.",
+        path_params=("ticker",),
+        cost=COST_FAST,
+    ),
+    ToolSpec(
+        name="situate_chat",
+        title="Situate memo chat",
+        group="research",
+        summary="Ask one question about a built Situate packet and get a cited answer",
+        when_to_use=(
+            "Use to interrogate a Situate packet the engine already produced - why "
+            "the posture is what it is, what a specific number means, what would "
+            "change it. Requires a packet to exist; build one with situate first."
+        ),
+        method="POST",
+        path="/api/situate/{ticker}/chat",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "message": {
+                    "type": "string",
+                    "description": "The question to ask about the packet",
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Continue an existing thread instead of starting a new one",
+                },
+            },
+            required=["ticker", "message"],
+        ),
+        returns="A reply with the packet citations it used and the conversation id.",
+        path_params=("ticker",),
+        cost=COST_LLM,
+    ),
+    ToolSpec(
+        name="situate_export",
+        title="Situate export",
+        group="research",
+        summary="Download a stored Situate packet as Markdown, JSON, or a rendered PDF",
+        when_to_use=(
+            "Use when the user wants the memo as a file to read or share. 'md' is "
+            "the memo markdown, 'json' is the raw packet, 'pdf' is the typeset memo."
+        ),
+        method="GET",
+        path="/api/situate/{ticker}/export",
+        input_schema=_schema(
+            {
+                "ticker": _TICKER,
+                "format": {
+                    "type": "string",
+                    "enum": ["md", "json", "pdf"],
+                    "default": "md",
+                    "description": "Export format",
+                },
+            },
+            required=["ticker"],
+        ),
+        returns="The exported document bytes with a download filename.",
+        path_params=("ticker",),
+        cost=COST_SLOW,
+    ),
+    ToolSpec(
         name="prism_memo",
         title="Prism full-stack memo",
         group="research",

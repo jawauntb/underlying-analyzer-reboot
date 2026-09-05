@@ -113,6 +113,7 @@ from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.openapi import build_openapi_document
 from app.prism.routes import register_prism_routes
 from app.sec import SecClient, SecDataError
+from app.situate.routes import register_situate_routes
 from app.ticker_research import (
     TickerResearchBusyError,
     build_ticker_research_bundle,
@@ -1264,6 +1265,7 @@ def create_app() -> Flask:
 
     register_compat_routes(app)
     register_prism_routes(app)
+    register_situate_routes(app)
     return app
 
 

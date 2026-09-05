@@ -662,6 +662,108 @@ Without `ANTHROPIC_API_KEY` the memo and chat return a complete deterministic re
 
 ---
 
+## Situate (research)
+
+The single-name research engine that reforms Prism. Where Prism forecasts, Situate
+*situates*: exposure, per-horizon odds, what options are pricing, what the business is
+saying, cheap/rich zones and a **posture** memo — distributions never point targets, never
+buy/sell. Every route below is also mounted under `/api/research`, and the same
+capabilities are agent/MCP tools `situate`, `situate_get`, `situate_chat` and
+`situate_export`. Full reference: [situate.md](situate.md).
+
+Every top-level key of the returned `SituatePacket` is always present. A section that could
+not be built is `null` with a sibling `<section>_error` and a row in `meta.errors`, so a
+client can index the same keys on every response. Returns are decimal fractions.
+
+### `POST /api/situate`
+
+Builds the packet: profile, exposure, state, base_rates, implied, fundamentals, text,
+levels, stack, the merged odds distribution, scenarios and the cited posture memo.
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `ticker` | string | — | Required. Max 16 chars, `A-Z0-9.-:^` |
+| `force` | boolean | `false` | Rebuild even if today's packet is stored |
+| `include_memo` | boolean | `true` | `false` skips the model call and returns data only |
+| `as_of` | string | today | ISO date to build against |
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/situate \
+  -H 'Content-Type: application/json' \
+  -d '{"ticker":"NVDA","force":true}'
+```
+
+A cold build fans out to Massive, FRED, SEC EDGAR, Exa and Anthropic and takes **one to
+three minutes**; allow at least a 180s client timeout and poll `GET /api/situate/<ticker>`
+while waiting. Without `force`, a packet already stored for the same `as_of` returns
+immediately with `meta.cache.packet: "hit"`. Admission is bounded exactly like Prism: `503`
+(process) or `429` (client) with `Retry-After: 30`; `400` for a malformed ticker/`as_of`/body;
+`500` carries a build failure.
+
+### `GET /api/situate/<ticker>`
+
+The latest stored packet. Optional `as_of` query parameter selects a specific build.
+`404` with `"No stored Situate packet for <T>. POST /api/situate to build one."` when none
+exists.
+
+### `GET /api/situate/<ticker>/summary`
+
+The bounded agent projection: posture, one-line, falsifiers, what is priced in, zones,
+exposure (R², idiosyncratic share, betas), state cells, per-horizon odds (source, P(up),
+median), stack-published flag, recent events, a 1,500-character memo excerpt, the list of
+unavailable sections and `meta.errors`. `404` when nothing is stored.
+
+### `GET /api/situate/<ticker>/export`
+
+| Query | Values | Content-Type |
+| --- | --- | --- |
+| `format` | `md` (default) | `text/markdown; charset=utf-8` |
+| | `json` | `application/json` |
+| | `pdf` | `application/pdf` |
+| `as_of` | ISO date | Selects a specific stored build |
+
+Responds with the bytes plus
+`Content-Disposition: attachment; filename="situate-<TICKER>-<as_of>.<ext>"` and a
+`Content-Length`. `400` for an unknown format, `404` when nothing is stored.
+
+```bash
+curl -s 'http://127.0.0.1:5050/api/situate/NVDA/export?format=pdf' -o nvda-situate.pdf
+```
+
+### `POST /api/situate/<ticker>/chat`
+
+Asks one question about a stored packet. The system prompt is the same bounded briefing the
+memo was written from, so answers cite the same evidence. The ticker is a path segment.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `message` | string | Required, max 4,000 characters |
+| `history` | array | Optional `{role, content}` turns; the last 40 are used |
+| `conversation_id` | string | Optional; continues a stored thread |
+| `as_of` | string | Optional ISO date of the packet to answer from |
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/situate/NVDA/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"What is the posture and how sure are you?"}'
+```
+
+The reply carries `conversation_id`, `ticker`, `reply`, the `citations` used,
+`available_citations`, `model`, `method` and `generated_at`. `400` for a missing/oversized
+message or a non-list `history`; `404` when no packet is stored.
+
+### `GET /api/situate/`
+
+Engine metadata: name, alias, version and the route map.
+
+Without `ANTHROPIC_API_KEY` the memo and chat return a complete deterministic read with
+`method: "deterministic"` and a `reason`, rather than failing. Situate reuses Prism's
+storage configuration (`PRISM_CACHE_DIR`, `PRISM_STORE_ENABLED`) but roots its packets under
+a `situate/` sub-directory so a Situate packet never overwrites a Prism one. Full reference:
+[situate.md](situate.md).
+
+---
+
 ## Tools
 
 ### `POST /api/tools/fax`

@@ -287,7 +287,17 @@ def load_daily(
             # without ever handing a section a stale price.
             cached_as_of = str(meta.get("as_of") or "")
             fresh = bool(cached_as_of) and cached_as_of >= end.isoformat()
-            if fresh and len(trimmed) >= MIN_USABLE_POINTS:
+            # Only reuse a cached row that actually covers the requested window.
+            # A transient full-window failure can fall back to (and cache) a
+            # shorter span; reusing that for a longer request silently truncates
+            # every downstream stat's sample. When the cached span is shorter
+            # than asked, fall through and re-fetch.
+            try:
+                cached_years = int(meta.get("requested_years") or 0)
+            except (TypeError, ValueError):
+                cached_years = 0
+            covers_request = cached_years >= int(years)
+            if fresh and covers_request and len(trimmed) >= MIN_USABLE_POINTS:
                 return SeriesLoad(
                     symbol=resolved_symbol,
                     series=trimmed,

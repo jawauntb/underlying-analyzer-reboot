@@ -28,7 +28,12 @@ from flask import current_app
 
 from app.tool_registry import ToolArgumentError, ToolSpec, build_request, get_tool
 
-MAX_RESULT_CHARS = 14000
+# The capability catalog (list_capabilities) is itself a tool result and passes
+# through this cap. Adding the Situate research tools pushed the catalog just over
+# the previous 14000 budget, which truncated the very index the model uses to
+# choose a tool; 20000 restores headroom while still truncating genuinely large
+# results (a full research packet is far larger and still truncates).
+MAX_RESULT_CHARS = 20000
 MAX_STRING_CHARS = 2400
 MAX_ARRAY_ITEMS = 40
 IMAGE_KEYS = ("data", "b64_json", "image_base64")
