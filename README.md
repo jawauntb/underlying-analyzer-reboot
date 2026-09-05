@@ -194,6 +194,44 @@ persist to Supabase (`prism_packets`, `prism_chats`) when `SUPABASE_SERVICE_ROLE
 
 Full reference: [docs/prism.md](docs/prism.md).
 
+## Situate (research)
+
+**Situate** is the single-name research engine that reforms Prism. Where Prism forecasts a
+recommendation, Situate *situates* a stock: what you are exposed to (a factor basket), the
+odds per horizon (historical base rates beside the option-implied distribution), what the
+options market is pricing, and what the business is saying — then states a **posture**
+(`odds_favorable` / `balanced` / `odds_unfavorable`) at a horizon, with cheap/rich zones and
+three falsifiers. No point price targets, no buy/sell grammar. Situate is additive: Prism
+stays in place and green.
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/situate \
+  -H 'Content-Type: application/json' -d '{"ticker":"NVDA"}'
+
+curl -s http://127.0.0.1:5050/api/situate/NVDA/summary
+curl -s 'http://127.0.0.1:5050/api/situate/NVDA/export?format=pdf' -o nvda-situate.pdf
+```
+
+No server needed: `python -m app.situate.cli NVDA --export md,json,pdf` runs the whole engine
+in-process. See [docs/situate.md § Command line](docs/situate.md#command-line) for every flag.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/situate` | Build the packet (1-3 minutes cold; `force`, `include_memo` flags) |
+| `GET /api/situate/<ticker>` | The latest stored packet |
+| `GET /api/situate/<ticker>/summary` | Bounded agent projection |
+| `GET /api/situate/<ticker>/export?format=md\|json\|pdf` | Download the memo |
+| `POST /api/situate/<ticker>/chat` | Ask one question about a built packet |
+
+Every route is also mounted under `/api/research`, and the same capabilities are agent/MCP
+tools `situate`, `situate_get`, `situate_chat` and `situate_export`. Every top-level packet
+key is always present; a section that could not be built is `null` with a sibling
+`<section>_error` and a row in `meta.errors`. Situate reuses Prism's plumbing and stores its
+packets under a `situate/` sub-directory of `PRISM_CACHE_DIR` so it never overwrites a Prism
+packet. The only new dependency is `scipy`.
+
+Full reference: [docs/situate.md](docs/situate.md).
+
 ## Docs
 
 On-site docs: `/docs` (API section at `/docs#api`, MCP at `/docs#mcp`).
@@ -205,6 +243,8 @@ OpenAPI 3.1: `GET /api/openapi`.
 Raw markdown API reference: `/docs/api.md` and [docs/api.md](docs/api.md).
 
 Prism (`ubermemo`) engine reference: [docs/prism.md](docs/prism.md).
+
+Situate research engine reference: [docs/situate.md](docs/situate.md).
 
 MCP (no API key): [docs/mcp.md](docs/mcp.md). Streamable HTTP at `/api/mcp`, or stdio via
 `underlying-mcp` pointed at the Railway production URL by default.

@@ -14,6 +14,7 @@ dependencies = [
   "pandas>=2.2,<3",
   "reportlab>=4.2,<5",
   "requests>=2.32,<3",
+  "scipy>=1.13,<2",
   "websocket-client>=1.8,<2",
   "yfinance>=1.4.1,<2",
 ]
@@ -37,7 +38,7 @@ mcp = [
 underlying-mcp = "mcp_server.server:main"
 
 [tool.setuptools]
-packages = ["app", "app.prism", "mcp_server"]
+packages = ["app", "app.prism", "app.situate", "mcp_server"]
 
 [tool.ruff]
 line-length = 100

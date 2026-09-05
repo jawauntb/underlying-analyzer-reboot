@@ -591,6 +591,32 @@ def test_load_daily_uses_the_cache_on_the_second_call(tmp_path: Any) -> None:
     pd.testing.assert_series_equal(first.series, second.series, check_freq=False)
 
 
+def test_load_daily_refetches_when_cache_covers_a_shorter_window(tmp_path: Any) -> None:
+    """A cached short window must not be reused to satisfy a longer request.
+
+    A transient full-window failure can cache a truncated span; serving it for a
+    later, longer request silently shrinks the sample every downstream stat uses.
+    """
+    client = FakeClient(_frames())
+    cache = PrismCache(base_dir=tmp_path, supabase=None)
+
+    short = load_daily(client, "SPY", years=7, as_of=AS_OF, cache=cache)
+    assert short.requested_years == 7
+    calls_after_short = len(client.calls)
+
+    # A longer request than the cached span must fall through and re-fetch.
+    longer = load_daily(client, "SPY", years=12, as_of=AS_OF, cache=cache)
+    assert longer.cached is False
+    assert len(client.calls) > calls_after_short
+    assert longer.requested_years == 12
+    calls_after_long = len(client.calls)
+
+    # Now the cache covers 12y, so a shorter (or equal) request reuses it for free.
+    reused = load_daily(client, "SPY", years=7, as_of=AS_OF, cache=cache)
+    assert reused.cached is True
+    assert len(client.calls) == calls_after_long
+
+
 def test_load_universe_isolates_failures() -> None:
     client = FakeClient(_frames())
     data = load_universe(
