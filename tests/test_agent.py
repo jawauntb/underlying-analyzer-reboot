@@ -8,10 +8,20 @@ import pytest
 from flask import Flask
 from flask.testing import FlaskClient
 
-from app.agent import AgentError, build_system_prompt, normalize_history, select_tools
+from app.agent import (
+    TOOL_GROUP_CONFIDENCE_THRESHOLD,
+    AgentError,
+    build_system_prompt,
+    normalize_history,
+    preclassify_tool_groups,
+    run_agent_stream,
+    select_tools,
+)
 from app.articles import ArticleError, article_markdown, normalize_article
+from app.jev import ChoiceAnswer, JevError
 from app.main import create_app
 from app.tool_executor import ToolResult
+from app.tool_registry import agent_tools
 
 
 class StubAgentClient:
@@ -608,3 +618,211 @@ def test_article_route_rejects_empty_payload() -> None:
     response = app.test_client().post("/api/agent/article", json={})
     assert response.status_code == 400
     assert "title" in response.get_json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# preclassify_tool_groups (Jev tool-group pre-classification)
+# ---------------------------------------------------------------------------
+
+
+class _StubJevGroupClient:
+    """A fake Jev client exposing only the ``choice`` method the agent uses."""
+
+    def __init__(
+        self, *, answer: ChoiceAnswer | None = None, error: Exception | None = None
+    ) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def choice(self, instructions: str, criteria: dict[str, Any], *, state: Any) -> ChoiceAnswer:
+        self.calls.append({"instructions": instructions, "criteria": criteria, "state": state})
+        if self.error is not None:
+            raise self.error
+        assert self.answer is not None
+        return self.answer
+
+
+def test_preclassify_tool_groups_trims_to_the_confident_choice() -> None:
+    specs = agent_tools()
+    stub = _StubJevGroupClient(
+        answer=ChoiceAnswer(choice="charts", probabilities={"charts": 0.9}, confidence=0.9)
+    )
+
+    trimmed = preclassify_tool_groups(specs, "show me a chart of AAPL", jev_client=stub)
+
+    assert len(trimmed) < len(specs)
+    assert {spec.group for spec in trimmed} <= {"charts", "meta"}
+    assert any(spec.group == "charts" for spec in trimmed)
+    assert len(stub.calls) == 1
+
+
+def test_preclassify_tool_groups_keeps_a_secondary_group_above_threshold() -> None:
+    specs = agent_tools()
+    stub = _StubJevGroupClient(
+        answer=ChoiceAnswer(
+            choice="charts",
+            probabilities={"charts": 0.55, "research": 0.35, "signals": 0.1},
+            confidence=0.9,
+        )
+    )
+
+    trimmed = preclassify_tool_groups(
+        specs, "chart AAPL and give me the research read", jev_client=stub
+    )
+
+    groups = {spec.group for spec in trimmed}
+    assert "charts" in groups
+    assert "research" in groups
+    assert "signals" not in groups
+
+
+def test_preclassify_tool_groups_falls_back_to_full_list_below_confidence_bar() -> None:
+    specs = agent_tools()
+    stub = _StubJevGroupClient(
+        answer=ChoiceAnswer(
+            choice="charts",
+            probabilities={"charts": 0.5},
+            confidence=TOOL_GROUP_CONFIDENCE_THRESHOLD - 0.01,
+        )
+    )
+
+    trimmed = preclassify_tool_groups(specs, "show me a chart of AAPL", jev_client=stub)
+
+    assert trimmed == specs
+
+
+def test_preclassify_tool_groups_falls_back_to_full_list_on_jev_error() -> None:
+    specs = agent_tools()
+    stub = _StubJevGroupClient(error=JevError("boom"))
+
+    trimmed = preclassify_tool_groups(specs, "show me a chart of AAPL", jev_client=stub)
+
+    assert trimmed == specs
+
+
+def test_preclassify_tool_groups_skips_jev_when_there_is_no_question_text() -> None:
+    specs = agent_tools()
+    stub = _StubJevGroupClient(error=AssertionError("Jev should not be called"))
+
+    trimmed = preclassify_tool_groups(specs, "   ", jev_client=stub)
+
+    assert trimmed == specs
+    assert stub.calls == []
+
+
+def test_preclassify_tool_groups_never_trims_below_meta() -> None:
+    """An out-of-vocabulary choice (or one with no matching tools) must never
+    zero out the tool list."""
+    specs = agent_tools()
+    stub = _StubJevGroupClient(
+        answer=ChoiceAnswer(choice="not-a-real-group", probabilities={}, confidence=0.95)
+    )
+
+    trimmed = preclassify_tool_groups(specs, "show me a chart of AAPL", jev_client=stub)
+
+    assert trimmed == specs
+
+
+# ---------------------------------------------------------------------------
+# run_agent_stream wiring: preclassification only applies to the
+# unconstrained default tool list, never to an explicit selection.
+# ---------------------------------------------------------------------------
+
+
+def _end_turn_script(text: str = "Ready.") -> list[list[dict[str, Any]]]:
+    return [[{"type": "text", "text": text}, {"type": "stop", "stop_reason": "end_turn"}]]
+
+
+def test_run_agent_stream_trims_the_default_tool_list_via_jev() -> None:
+    client = StubAgentClient(_end_turn_script())
+    stub_jev = _StubJevGroupClient(
+        answer=ChoiceAnswer(choice="charts", probabilities={"charts": 0.9}, confidence=0.9)
+    )
+
+    events = list(
+        run_agent_stream(
+            client,
+            [{"role": "user", "content": "show me a chart of AAPL"}],
+            jev_client=stub_jev,
+        )
+    )
+
+    start = events[0]
+    assert start["type"] == "start"
+    assert len(start["tools"]) < len(agent_tools())
+    assert len(stub_jev.calls) == 1
+
+
+def test_run_agent_stream_keeps_full_tools_when_jev_declines() -> None:
+    client = StubAgentClient(_end_turn_script())
+    stub_jev = _StubJevGroupClient(error=JevError("timeout"))
+
+    events = list(
+        run_agent_stream(
+            client,
+            [{"role": "user", "content": "show me a chart of AAPL"}],
+            jev_client=stub_jev,
+        )
+    )
+
+    assert events[0]["tools"] == [spec.name for spec in agent_tools()]
+
+
+def test_run_agent_stream_does_not_trim_an_explicit_tool_selection() -> None:
+    client = StubAgentClient(_end_turn_script())
+    stub_jev = _StubJevGroupClient(error=AssertionError("Jev should not be called"))
+    explicit = select_tools(["render_chart"])
+
+    events = list(
+        run_agent_stream(
+            client,
+            [{"role": "user", "content": "show me a chart of AAPL"}],
+            tool_specs=explicit,
+            jev_client=stub_jev,
+        )
+    )
+
+    assert events[0]["tools"] == ["render_chart"]
+    assert stub_jev.calls == []
+
+
+def test_run_agent_stream_does_not_trim_when_a_required_first_tool_is_set() -> None:
+    client = StubAgentClient(
+        [
+            [
+                {"type": "tool_use", "id": "t1", "name": "health_check", "input": {}},
+                {"type": "stop", "stop_reason": "tool_use"},
+            ],
+            _end_turn_script()[0],
+        ]
+    )
+    stub_jev = _StubJevGroupClient(error=AssertionError("Jev should not be called"))
+
+    events = list(
+        run_agent_stream(
+            client,
+            [{"role": "user", "content": "show me a chart of AAPL"}],
+            required_first_tool="health_check",
+            jev_client=stub_jev,
+        )
+    )
+
+    assert events[0]["tools"] == [spec.name for spec in agent_tools()]
+    assert stub_jev.calls == []
+
+
+def test_agent_chat_endpoint_falls_back_to_full_tools_without_a_jev_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: with no JEV_API_KEY configured, the real JevClient fails
+    closed and the endpoint keeps serving the full, unchanged tool list."""
+    monkeypatch.delenv("JEV_API_KEY", raising=False)
+    _, client = build_client(_end_turn_script())
+
+    events = stream_events(
+        client,
+        {"messages": [{"role": "user", "content": "show me a chart of AAPL"}]},
+    )
+
+    assert events[0]["tools"] == [spec.name for spec in agent_tools()]

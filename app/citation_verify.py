@@ -28,6 +28,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.jev import JevClient, JevError
+
 __all__ = [
     "CitationCheck",
     "CitationVerificationResult",
@@ -253,11 +255,50 @@ def _strip_parens(raw: str) -> str:
     return text
 
 
-def classify_citation(raw: str) -> dict[str, Any]:
+#: Human-readable descriptions of every recognized citation kind, used only
+#: as the Jev fallback's choice criteria. Order/wording here has no effect on
+#: the regex path above.
+_CITATION_KIND_LABELS: dict[str, str] = {
+    "sec_xbrl": (
+        "An SEC XBRL company-facts citation naming a concept, an optional "
+        "period, and a value, e.g. 'SEC XBRL Revenue, Q1 FY2027: $137,237M'"
+    ),
+    "sec_filing": (
+        "An SEC 10-K/10-Q/8-K filing item citation with a filed date, e.g. "
+        "'SEC 10-K Item 1 Business, filed 2026-02-25'"
+    ),
+    "sec_trend_pack": (
+        "An SEC multi-quarter Trend Pack metric citation shaped like "
+        "'SEC Trend Pack: <metric> = <value>'"
+    ),
+    "sec_earnings_section": (
+        "An SEC 8-K earnings-section citation, e.g. 'SEC 8-K Item 2.02, "
+        "filed 2026-05-20'"
+    ),
+    "earnings_calendar": "A citation referencing the Earnings Calendar source",
+    "exa": (
+        "An Exa web/news research citation naming a domain and optional "
+        "date, e.g. 'Exa: techcrunch.com, 2025-12-03'"
+    ),
+    "unknown": "None of the above - not a recognized citation format",
+}
+
+#: Confidence floor for trusting a Jev fallback classification, per the
+#: product-wide rule for choice/score answers (SAFETY RULES #1).
+_CITATION_JEV_CONFIDENCE_THRESHOLD = 0.55
+
+
+def classify_citation(raw: str, *, jev_client: Any | None = None) -> dict[str, Any]:
     """Classify a citation string. Returns a dict with at minimum a
     ``kind`` key plus any extracted named groups. ``kind`` is one of
     ``sec_xbrl``, ``sec_filing``, ``sec_trend_pack``, ``sec_earnings_section``,
     ``earnings_calendar``, ``exa``, or ``unknown``.
+
+    The regex ladder below is authoritative: a confident regex match is
+    never second-guessed. Only when every pattern misses do we ask Jev,
+    purely as a best-effort fallback label for the "unknown" case - never a
+    stronger source of truth than the regex path (see
+    ``_classify_citation_with_jev``).
     """
 
     body = _strip_parens(raw)
@@ -289,7 +330,45 @@ def classify_citation(raw: str) -> dict[str, Any]:
     if m:
         return {"kind": "exa", **m.groupdict()}
 
-    return {"kind": "unknown"}
+    return _classify_citation_with_jev(raw, body, jev_client=jev_client)
+
+
+def _classify_citation_with_jev(
+    raw: str, body: str, *, jev_client: Any | None
+) -> dict[str, Any]:
+    """Best-effort Jev fallback for a citation the regex ladder missed.
+
+    Never raises and never returns anything but ``{"kind": "unknown"}`` on
+    any error, timeout, or low-confidence answer - the existing
+    unknown/fallback behavior is exactly what callers get in that case. On a
+    confident answer, returns a ``kind`` label only (no extracted fields);
+    downstream checkers already treat a kind with missing fields as
+    ``uncheckable`` rather than falsely ``verified``, so this can only add a
+    more informative label, never a wrong "verified" result.
+    """
+    if not body.strip():
+        return {"kind": "unknown"}
+
+    client = jev_client if jev_client is not None else JevClient()
+    try:
+        answer = client.choice(
+            "Classify this citation string from a financial research memo "
+            "into exactly one of the listed categories, or 'unknown' if none "
+            f"fit:\n\n{raw}",
+            _CITATION_KIND_LABELS,
+            state=raw,
+        )
+    except JevError:
+        return {"kind": "unknown"}
+    except Exception:  # pragma: no cover - defensive: never let this raise
+        return {"kind": "unknown"}
+
+    if answer.confidence < _CITATION_JEV_CONFIDENCE_THRESHOLD:
+        return {"kind": "unknown"}
+    if answer.choice not in _CITATION_KIND_LABELS or answer.choice == "unknown":
+        return {"kind": "unknown"}
+
+    return {"kind": answer.choice, "jev_assisted": True}
 
 
 # ---------------------------------------------------------------------------
