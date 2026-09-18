@@ -9,6 +9,25 @@ from app.citation_verify import (
     extract_citations,
     verify_citations,
 )
+from app.jev import ChoiceAnswer, JevError
+
+
+class _StubJevChoiceClient:
+    """A fake Jev client exposing only the ``choice`` method classify_citation uses."""
+
+    def __init__(
+        self, *, answer: ChoiceAnswer | None = None, error: Exception | None = None
+    ) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def choice(self, instructions: str, criteria: dict[str, Any], *, state: Any) -> ChoiceAnswer:
+        self.calls.append({"instructions": instructions, "criteria": criteria, "state": state})
+        if self.error is not None:
+            raise self.error
+        assert self.answer is not None
+        return self.answer
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +231,85 @@ def test_classify_exa() -> None:
 def test_classify_earnings_calendar() -> None:
     info = classify_citation("(Earnings Calendar, source Yahoo Finance profile)")
     assert info["kind"] == "earnings_calendar"
+
+
+# ---------------------------------------------------------------------------
+# classify_citation: Jev fallback (only reached when regex misses entirely)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_citation_confident_regex_match_never_calls_jev() -> None:
+    """A confident regex match must never be second-guessed by Jev."""
+    stub = _StubJevChoiceClient(error=AssertionError("Jev should not be called"))
+
+    info = classify_citation(
+        "(SEC XBRL Revenue, Q1 FY2027: $137,237M)", jev_client=stub
+    )
+
+    assert info["kind"] == "sec_xbrl"
+    assert stub.calls == []
+
+
+def test_classify_citation_unknown_uses_confident_jev_fallback() -> None:
+    stub = _StubJevChoiceClient(
+        answer=ChoiceAnswer(choice="exa", probabilities={"exa": 0.9}, confidence=0.9)
+    )
+
+    info = classify_citation("(some odd note nobody expected)", jev_client=stub)
+
+    assert info["kind"] == "exa"
+    assert info["jev_assisted"] is True
+    assert len(stub.calls) == 1
+
+
+def test_classify_citation_low_confidence_jev_answer_stays_unknown() -> None:
+    stub = _StubJevChoiceClient(
+        answer=ChoiceAnswer(choice="exa", probabilities={"exa": 0.5}, confidence=0.5)
+    )
+
+    info = classify_citation("(some odd note nobody expected)", jev_client=stub)
+
+    assert info["kind"] == "unknown"
+
+
+def test_classify_citation_jev_choosing_unknown_stays_unknown() -> None:
+    stub = _StubJevChoiceClient(
+        answer=ChoiceAnswer(choice="unknown", probabilities={"unknown": 0.95}, confidence=0.95)
+    )
+
+    info = classify_citation("(some odd note nobody expected)", jev_client=stub)
+
+    assert info["kind"] == "unknown"
+    assert "jev_assisted" not in info
+
+
+def test_classify_citation_jev_error_falls_back_to_unknown() -> None:
+    stub = _StubJevChoiceClient(error=JevError("boom"))
+
+    info = classify_citation("(some odd note nobody expected)", jev_client=stub)
+
+    assert info["kind"] == "unknown"
+
+
+def test_classify_citation_missing_jev_key_falls_back_to_unknown(
+    monkeypatch: Any,
+) -> None:
+    """With no client injected and no key configured, real JevClient() fails
+    closed and classify_citation degrades to the pre-existing unknown result."""
+    monkeypatch.delenv("JEV_API_KEY", raising=False)
+
+    info = classify_citation("(some odd note nobody expected)")
+
+    assert info["kind"] == "unknown"
+
+
+def test_classify_citation_empty_body_never_calls_jev() -> None:
+    stub = _StubJevChoiceClient(error=AssertionError("Jev should not be called"))
+
+    info = classify_citation("()", jev_client=stub)
+
+    assert info["kind"] == "unknown"
+    assert stub.calls == []
 
 
 # ---------------------------------------------------------------------------

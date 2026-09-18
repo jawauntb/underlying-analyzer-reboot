@@ -22,8 +22,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.anthropic import AnthropicError, MessageStreamer
+from app.jev import JevClient, JevError
 from app.tool_executor import execute_tool
 from app.tool_registry import (
+    GROUPS,
     ToolSpec,
     agent_tools,
     anthropic_tool_definitions,
@@ -33,6 +35,16 @@ DEFAULT_MAX_ITERATIONS = 8
 MAX_TOOL_CALLS = 16
 MAX_HISTORY_MESSAGES = 40
 MAX_MESSAGE_CHARS = 12000
+
+#: Jev's top-choice confidence must clear this bar before we trust it enough
+#: to trim the tool list. Below it (or on any Jev error/timeout) the full,
+#: unchanged tool list is used - never under-serve a real question.
+TOOL_GROUP_CONFIDENCE_THRESHOLD = 0.6
+
+#: A secondary group is kept alongside the top choice when Jev's own
+#: probability for it is at least this high, so a question spanning two
+#: groups (e.g. "chart AAPL and give me the research read") isn't starved.
+TOOL_GROUP_SECONDARY_THRESHOLD = 0.3
 
 SYSTEM_PROMPT = """You are the research agent inside The Underlying Analyzer \
 Terminal - a chart-led market research console.
@@ -199,6 +211,70 @@ def select_tools(names: Any, *, exact: bool = False) -> tuple[ToolSpec, ...]:
     return selected
 
 
+def _last_user_text(messages: list[dict[str, Any]]) -> str:
+    """Return the most recent user turn's text, or "" if there is none."""
+    for entry in reversed(messages):
+        if isinstance(entry, dict) and entry.get("role") == "user":
+            content = entry.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return ""
+
+
+def preclassify_tool_groups(
+    specs: tuple[ToolSpec, ...],
+    question_text: str,
+    *,
+    jev_client: Any | None = None,
+) -> tuple[ToolSpec, ...]:
+    """Best-effort: ask Jev which capability group(s) this question is about
+    and trim ``specs`` down to just those groups (plus ``meta``, always kept
+    for capability discovery).
+
+    REQUIRED SAFETY: any Jev error, timeout, or a top-choice confidence below
+    ``TOOL_GROUP_CONFIDENCE_THRESHOLD`` returns ``specs`` unchanged. This
+    function never raises - it degrades to "pass the full tool list", never
+    to "pass an empty or wrong one".
+    """
+    if not question_text.strip():
+        return specs
+
+    groups_present = sorted({spec.group for spec in specs})
+    if len(groups_present) <= 1:
+        return specs
+    criteria = {group: GROUPS.get(group, group) for group in groups_present}
+
+    client = jev_client if jev_client is not None else JevClient()
+    try:
+        answer = client.choice(
+            "A user is asking the research terminal below a question. Which "
+            "single capability group is that question most likely about?\n\n"
+            f"User question:\n{question_text[:2000]}",
+            criteria,
+            state=question_text[:4000],
+        )
+    except JevError:
+        return specs
+    except Exception:  # pragma: no cover - defensive: never let this crash a turn
+        return specs
+
+    if answer.confidence < TOOL_GROUP_CONFIDENCE_THRESHOLD:
+        return specs
+    if answer.choice not in criteria:
+        return specs
+
+    selected_groups = {answer.choice, "meta"}
+    for group, probability in answer.probabilities.items():
+        try:
+            if group in criteria and float(probability) >= TOOL_GROUP_SECONDARY_THRESHOLD:
+                selected_groups.add(group)
+        except (TypeError, ValueError):
+            continue
+
+    trimmed = tuple(spec for spec in specs if spec.group in selected_groups)
+    return trimmed or specs
+
+
 def run_agent_stream(
     client: MessageStreamer,
     messages: list[dict[str, Any]],
@@ -209,9 +285,24 @@ def run_agent_stream(
     required_first_tool: str | None = None,
     system_extra: str | None = None,
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
+    jev_client: Any | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Run one agent turn, yielding NDJSON-ready event dicts."""
     specs = tool_specs if tool_specs is not None else agent_tools()
+    # Only trim when the caller has not narrowed the tool list at all - the
+    # unconstrained "pass the full registry" default this is meant to
+    # optimize - and nothing downstream depends on a specific tool being
+    # present. An explicit caller-selected subset (exact tool_policy, or a
+    # best-effort ``tools`` allowlist that actually narrowed anything) and a
+    # required_first_tool contract must never be second-guessed here.
+    full_registry_names = {spec.name for spec in agent_tools()}
+    is_unconstrained_default = required_first_tool is None and {
+        spec.name for spec in specs
+    } == full_registry_names
+    if is_unconstrained_default:
+        specs = preclassify_tool_groups(
+            specs, _last_user_text(messages), jev_client=jev_client
+        )
     by_name = {spec.name: spec for spec in specs}
     definitions = anthropic_tool_definitions(specs)
     system = build_system_prompt(system_extra, tool_specs=specs)
