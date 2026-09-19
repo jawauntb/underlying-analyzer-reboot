@@ -376,6 +376,60 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
         },
     },
     {
+        "method": "POST",
+        "path": "/api/citations/classify",
+        "tag": "research",
+        "summary": "Classify citation strings by type (regex ladder, batched Jev fallback)",
+        "request_schema": {
+            "type": "object",
+            "properties": {
+                "citations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 200,
+                    "description": "Citation strings, with or without surrounding parens",
+                }
+            },
+            "required": ["citations"],
+        },
+        "success_schema": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "citation": {"type": "string"},
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "sec_xbrl",
+                                    "sec_filing",
+                                    "sec_trend_pack",
+                                    "sec_earnings_section",
+                                    "earnings_calendar",
+                                    "exa",
+                                    "unknown",
+                                ],
+                            },
+                            "source": {"type": "string", "enum": ["regex", "jev"]},
+                            "confidence": {
+                                "type": ["number", "null"],
+                                "minimum": 0,
+                                "maximum": 1,
+                                "description": "Jev confidence; null for regex matches",
+                            },
+                        },
+                        "required": ["citation", "type", "source", "confidence"],
+                    },
+                }
+            },
+            "required": ["results"],
+        },
+        "error_responses": {"400": "Malformed body or more than 200 citations"},
+    },
+    {
         "method": "GET",
         "path": "/api/openapi",
         "tag": "meta",

@@ -18,6 +18,7 @@ from typing import Any
 
 from flask import Blueprint, Response, current_app, jsonify, request
 
+from app.memo_citations import annotate_packet_citations
 from app.situate.contract import ENGINE_ALIAS, ENGINE_NAME, ENGINE_VERSION
 
 BUILD_CONCURRENCY_PER_PROCESS = 2
@@ -275,7 +276,7 @@ def build() -> Any:
     finally:
         _build_slots.release()
         release_client(key)
-    return jsonify(packet)
+    return jsonify(annotate_packet_citations(packet))
 
 
 @situate_blueprint.get("/<ticker>")
@@ -293,7 +294,7 @@ def read_packet(ticker: str) -> Any:
         return _error(
             f"No stored Situate packet for {symbol}. POST /api/situate to build one.", 404
         )
-    return jsonify(packet)
+    return jsonify(annotate_packet_citations(packet))
 
 
 @situate_blueprint.get("/<ticker>/summary")

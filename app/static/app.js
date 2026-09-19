@@ -80,7 +80,7 @@ const fieldRules = {
   torque: [...sharedFields, "period", "interval"],
   "torque-scan": [...sharedFields, "period", "interval"],
   cockpit: [...sharedFields, "period", "interval"],
-  alerts: [...sharedFields, "period", "interval", "max-alerts", "vol-threshold"],
+  alerts: [...sharedFields, "period", "interval", "max-alerts", "vol-threshold", "min-materiality"],
   portfolio: [...sharedFields, "start-date", "end-date", "interval", "investment", "benchmark"],
   volatility: [...sharedFields, "interval"],
   analysis: [...sharedFields],
@@ -524,6 +524,7 @@ function payloadFromForm() {
     max_results: Number(data.get("max_results") || 10),
     max_alerts: Number(data.get("max_alerts") || 12),
     volatility_threshold: Number(data.get("volatility_threshold") || 0.55),
+    min_materiality: data.get("min_materiality") || undefined,
     period: data.get("period"),
     interval: data.get("interval") || "1d",
     month: Number(data.get("month")),
@@ -1378,6 +1379,10 @@ function alertCard(alert) {
   const title = document.createElement("strong");
   title.textContent = `${alert.ticker || "N/A"} - ${alert.title || "Alert"}`;
   head.append(badge, title);
+  const materiality = materialityBadge(alert.jev_materiality);
+  if (materiality) {
+    head.append(materiality);
+  }
 
   const message = document.createElement("p");
   message.textContent = alert.message || "";
@@ -1402,6 +1407,26 @@ function alertCard(alert) {
 
   card.append(head, message, action, meta);
   return card;
+}
+
+const MATERIALITY_LEVELS = ["noise", "minor", "material", "urgent"];
+
+// Jev materiality is optional and additive: the badge only renders when the
+// backend attached a confident level, so a Jev outage changes nothing here.
+function materialityBadge(materiality) {
+  if (!materiality || typeof materiality !== "object") {
+    return null;
+  }
+  const level = String(materiality.level || "").toLowerCase();
+  const confidence = Number(materiality.confidence);
+  if (!MATERIALITY_LEVELS.includes(level) || !Number.isFinite(confidence)) {
+    return null;
+  }
+  const badge = document.createElement("span");
+  badge.className = `alert-materiality alert-materiality-${level}`;
+  badge.textContent = `${level} · ${Math.round(confidence * 100)}%`;
+  badge.title = `Jev materiality: ${level} (confidence ${Math.round(confidence * 100)}%)`;
+  return badge;
 }
 
 function cockpitTable(rows) {

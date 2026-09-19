@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from app.alert_materiality import filter_alerts_by_materiality
 from app.cockpit import float_value
 
 DEFAULT_ALERT_LIMIT = 12
@@ -18,13 +20,26 @@ def build_alert_digest(
     *,
     max_alerts: int = DEFAULT_ALERT_LIMIT,
     volatility_threshold: float = DEFAULT_VOLATILITY_THRESHOLD,
+    materiality_scorer: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    min_materiality: str | None = None,
 ) -> dict[str, Any]:
+    """Build the sorted, capped alert queue and its digest.
+
+    ``materiality_scorer`` (optional) annotates the capped page of alerts with
+    ``jev_materiality`` in one batched call; ``min_materiality`` then drops
+    alerts whose *known* level is below the floor, always keeping unscored
+    ones, so the digest counts describe exactly the alerts returned.
+    """
     alerts: list[dict[str, Any]] = []
     for row in rows:
         alerts.extend(row_alerts(row, volatility_threshold=volatility_threshold))
 
     alerts.sort(key=alert_sort_key)
     alerts = alerts[:max_alerts]
+    if materiality_scorer is not None:
+        alerts = materiality_scorer(alerts)
+    if min_materiality:
+        alerts = filter_alerts_by_materiality(alerts, min_materiality)
     digest = digest_payload(rows, alerts)
     return {"alerts": alerts, "digest": digest}
 

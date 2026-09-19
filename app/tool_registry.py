@@ -588,9 +588,20 @@ TOOLS: tuple[ToolSpec, ...] = (
                     "default": 0.55,
                     "description": "Annualized vol level that triggers a flag",
                 },
+                "min_materiality": {
+                    "type": "string",
+                    "enum": ["noise", "minor", "material", "urgent"],
+                    "description": (
+                        "Optional Jev materiality floor; alerts scored below it are "
+                        "dropped, unscored alerts are always kept"
+                    ),
+                },
             }
         ),
-        returns="Ordered alert digest with severity and reason.",
+        returns=(
+            "Ordered alert digest with severity and reason; each alert may carry an "
+            "optional jev_materiality {level, score, confidence}."
+        ),
         cost=COST_SLOW,
     ),
     ToolSpec(

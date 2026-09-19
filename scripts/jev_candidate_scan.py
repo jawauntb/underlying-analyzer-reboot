@@ -81,6 +81,40 @@ CANDIDATES: list[dict[str, str]] = [
         "status": "wired (_classify_citation_with_jev)",
     },
     {
+        "id": "alert_materiality_score",
+        "site": "app/alert_materiality.py: score_alert_materiality (alerts feed)",
+        "description": (
+            "Given one page of watchlist alerts (ticker, severity, category, "
+            "title, message, action), rate each alert on the fixed rubric "
+            "noise / minor / material / urgent - one batched systemone request "
+            "per page, one 'score' question per alert."
+        ),
+        "expected": "good_fit",
+        "status": "wired (score_alert_materiality; /api/watchlists/alerts jev_materiality)",
+    },
+    {
+        "id": "citation_batch_classify",
+        "site": "app/citation_verify.py: classify_citations (POST /api/citations/classify)",
+        "description": (
+            "Given up to 50 citation strings the regex ladder could not "
+            "classify, pick each one's citation category from the known set "
+            "in one batched systemone request."
+        ),
+        "expected": "good_fit",
+        "status": "wired (classify_citations; also memo citation_type annotations)",
+    },
+    {
+        "id": "memo_citation_type_annotation",
+        "site": "app/memo_citations.py: annotate_packet_citations (Prism/Situate memo routes)",
+        "description": (
+            "Given a memo's structured citation rows (source, claim, url), "
+            "label each row's citation category so the UI can show a type "
+            "badge - batched through classify_citations."
+        ),
+        "expected": "good_fit",
+        "status": "wired (annotate_packet_citations)",
+    },
+    {
         "id": "vision_v2_memo_writer",
         "site": "app/vision_v2.py: analyst memo writer",
         "description": (
