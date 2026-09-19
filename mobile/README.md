@@ -11,6 +11,11 @@ decision context; direct HTTP or MCP callers can obtain the full datasets. This
 is user-triggered and is intentionally outside the low-call
 production smoke check.
 
+The Ticker Lens also shows a "Peer forecast" card (TabICL v2 in-context forecast of the
+ticker's forward excess return vs its sector peers, `GET /api/tabular/peer-forecast/{ticker}`)
+whenever a depth is opened. The backend answers `503 {available: false}` when no tabular model
+is configured; the card hides itself in that case and is not part of the production smoke check.
+
 ## Run in Expo Go
 
 Use Node 22.16.0, then install the locked dependencies and start Metro.

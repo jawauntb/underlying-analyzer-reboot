@@ -3,6 +3,7 @@ import { StyleSheet } from 'react-native';
 
 import { generateStaticParams } from '@/app/ticker/[symbol]';
 import type { AuctionResponse, OptionsChainResponse, ProviderStatusResponse, WatchlistAlertsResponse } from '@/src/api/contracts';
+import { ApiError } from '@/src/api/client';
 import { API_ENDPOINTS } from '@/src/api/endpoints';
 import LensScreen from '@/src/features/lens/LensScreen';
 import { CACHE_SCHEMA_VERSION, type CacheRecord } from '@/src/state/cache';
@@ -603,6 +604,68 @@ describe('LensScreen', () => {
     expect(deps.client.auction).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole('button', { name: 'View AAPL Moneyline data' })).toBeTruthy();
   }, 15_000);
+
+  it('shows a Peer forecast card when the model answers and hides it on the 503 fail-open', async () => {
+    const probabilities = { strong_under: 0.1, under: 0.1, inline: 0.2, over: 0.4, strong_over: 0.2 };
+    const forecast = {
+      chartType: 'peer-forecast' as const,
+      available: true as const,
+      ticker: 'AAPL',
+      sector: 'technology',
+      sectorEtf: 'XLK',
+      horizonMonths: 3 as const,
+      method: 'tabicl_v2_icl',
+      asOf: '2026-08-31',
+      bucket: 'over' as const,
+      probabilities,
+      expectedExcessReturn: 0.021,
+      confidence: 0.72,
+      confidenceFloor: 0.55,
+      contextRows: 1400,
+      features: ['mom_12_1'],
+      queryDate: '2026-08-31',
+      lastLabeledDate: '2026-05-31',
+      peers: [
+        { symbol: 'AAPL', bucket: 'over' as const, expectedExcessReturn: 0.021, probabilities, confidence: 0.72, realizedExcessReturnLast: 0.01, predictedExcessReturnLast: 0.02 },
+        { symbol: 'MSFT', bucket: 'under' as const, expectedExcessReturn: -0.01, probabilities, confidence: 0.4, realizedExcessReturnLast: -0.02, predictedExcessReturnLast: -0.01 },
+      ],
+    };
+    const deps = dependencies();
+    const peerForecast = jest.fn(async () => forecast);
+    render(<LensScreen {...deps.props} client={{ ...deps.client, peerForecast } as never} />);
+    await screen.findByText('Apple Inc.');
+    fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
+
+    expect(peerForecast).toHaveBeenCalledWith({ ticker: 'AAPL', horizon: 3 }, expect.anything());
+    expect(await screen.findByRole('header', { name: 'Over · 72%' })).toBeTruthy();
+    expect(screen.getByText('tabicl_v2_icl · 1400 context rows')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View AAPL Peer forecast data' })).toBeTruthy();
+  });
+
+  it('hides the Peer forecast card entirely when the backend has no tabular model', async () => {
+    const deps = dependencies();
+    const peerForecast = jest.fn(async () => {
+      throw new ApiError('http', 'no tabular model', 503);
+    });
+    render(<LensScreen {...deps.props} client={{ ...deps.client, peerForecast } as never} />);
+    await screen.findByText('Apple Inc.');
+    fireEvent.press(screen.getByRole('button', { name: 'Open Glance' }));
+
+    expect(await screen.findByRole('button', { name: 'View AAPL Torque data' })).toBeTruthy();
+    await waitFor(() => expect(peerForecast).toHaveBeenCalled());
+    expect(screen.queryByText(/Peer forecast/)).toBeNull();
+    expect(screen.queryByText('no tabular model')).toBeNull();
+
+    // A real failure (not the fail-open 503) still surfaces with a Retry.
+    const failing = dependencies();
+    const broken = jest.fn(async () => {
+      throw new Error('Peer forecast provider unavailable');
+    });
+    render(<LensScreen {...failing.props} client={{ ...failing.client, peerForecast: broken } as never} />);
+    await screen.findByText('Apple Inc.');
+    fireEvent.press(screen.getAllByRole('button', { name: 'Open Glance' }).at(-1)!);
+    expect(await screen.findByRole('button', { name: 'Retry AAPL Peer forecast' })).toBeTruthy();
+  });
 
   it('deep dive navigates with normalized params without auto-running specialist charts', async () => {
     const deps = dependencies();

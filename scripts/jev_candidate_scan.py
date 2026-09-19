@@ -70,6 +70,19 @@ CANDIDATES: list[dict[str, str]] = [
         "status": "wired (preclassify_tool_groups)",
     },
     {
+        "id": "tabular_peer_forecast_bucket",
+        "site": "app/peer_forecast.py: sector peer forecast bucket (TabICL v2)",
+        "description": (
+            "Given ~1,500 rows of numeric cross-sectional features (12-1 "
+            "momentum, 1-month reversal, vol/trend dummies) with quintile-bucket "
+            "labels of forward excess return, assign each of ~16 peers at the "
+            "latest month-end to one of five buckets with calibrated "
+            "probabilities. Pure tabular pattern matching over numbers."
+        ),
+        "expected": "not_a_fit",
+        "status": "not wired (served by TabICL v2 in-context tabular model)",
+    },
+    {
         "id": "citation_regex_fallback",
         "site": "app/citation_verify.py: classify_citation Jev fallback",
         "description": (

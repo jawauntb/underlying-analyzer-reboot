@@ -33,6 +33,11 @@ deploy = [
 mcp = [
   "mcp>=1.27,<2",
 ]
+# TabICL v2 (BSD-3-Clause, pulls torch). Optional on purpose: production builds
+# install requirements.txt only and reach the model over TABULAR_INFERENCE_URL.
+tabular = [
+  "tabicl>=2.2,<3",
+]
 
 [project.scripts]
 underlying-mcp = "mcp_server.server:main"

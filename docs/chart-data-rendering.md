@@ -22,8 +22,10 @@ your UI will match the terminal's PNGs for the same request.
 | `POST /api/data/tools/moneyline` | Single options open-interest ladder dataset |
 
 `chart_type` is one of: `auction`, `performance`, `regression`, `ridge-growth`,
-`flow-compass`, `torque`, `portfolio`, `volatility`. Underscores are accepted
-(`ridge_growth` → `ridge-growth`).
+`flow-compass`, `torque`, `portfolio`, `volatility`, `peer-forecast`. Underscores are
+accepted (`ridge_growth` → `ridge-growth`). `peer-forecast` is the only pack that can
+answer `503 {"available": false, "reason"}` (no tabular model configured): hide the
+surface, do not show an error.
 
 Request bodies are identical to the image routes. Ticker selection (all routes):
 
@@ -327,6 +329,37 @@ Every holding is normalized to `investment_per_stock` dollars at the first bar;
 `rows` are pre-sorted by `annual_vol` descending. Vols are decimals (0.19 =
 19%); ranges are absolute dollar moves.
 
+### peer-forecast (single ticker; also `GET /api/tabular/peer-forecast/<ticker>`)
+
+```json
+{
+  "chart_type": "peer-forecast", "ticker": "NVDA", "tickers": ["NVDA", "AAPL", "INTC"],
+  "provider": "tabicl",
+  "meta": {
+    "ticker": "NVDA", "sector": "technology", "sector_etf": "XLK", "horizon_months": 3,
+    "method": "tabicl_v2_icl", "as_of": "2026-09-19",
+    "bucket": "over", "confidence": 0.35, "confidence_floor": 0.55,
+    "expected_excess_return": 0.031,
+    "probabilities": { "strong_under": 0.08, "under": 0.12, "inline": 0.2, "over": 0.35, "strong_over": 0.25 },
+    "context_rows": 1488, "features": ["mom_12_1", "rev_1m", "vol_dummy", "trend_dummy"],
+    "query_date": "2026-08-31", "last_labeled_date": "2026-05-31",
+    "bucket_means": { "strong_under": -0.11, "under": -0.03, "inline": 0.0, "over": 0.03, "strong_over": 0.12 },
+    "buckets": ["strong_under", "under", "inline", "over", "strong_over"]
+  },
+  "series": {
+    "ranked": [ { "rank": 1, "symbol": "NVDA", "bucket": "over", "expected_excess_return": 0.031,
+                  "confidence": 0.35, "probabilities": {}, "is_focus": true } ],
+    "predicted_vs_realized": [ { "symbol": "NVDA", "bucket": "over", "predicted": 0.039,
+                                 "realized": 0.064, "is_focus": true } ]
+  }
+}
+```
+
+`series.ranked` is already sorted best-first (bars); `series.predicted_vs_realized` is the
+last labelled cross-section's backtest (scatter with a `y = x` guide). Returns are decimal
+fractions. State a bucket only when `confidence >= confidence_floor`; otherwise show the
+distribution ("Mixed · top over 35%").
+
 ### moneyline (`POST /api/data/tools/moneyline`)
 
 ```json
@@ -449,6 +482,15 @@ drawdown, vol.
 labeled `19.1%  |  1w ± 5.20  |  1m ± 10.90`; x-axis annualized vol %, headroom
 ~1.35x the max.
 
+**peer-forecast** — two panels. Left: horizontal bars of expected excess return
+(%) ranked best-first, colored by predicted bucket (`strong_under` `RED`,
+`under` `ORANGE`, `inline` `MUTED`, `over` `GREEN`, `strong_over` `CYAN`), the
+requested ticker outlined `AMBER_HOT` with a bold label, a dot at each bar tip
+sized by confidence and dimmed below the 0.55 floor, label
+`+3.1%  |  over  |  35%`; bucket legend below the axis. Right: predicted vs
+realized excess return (%) for the last labelled cross-section, dashed `AMBER`
+`y = x` guide, the focus ticker enlarged and `AMBER_HOT`.
+
 **moneyline** — mirrored open-interest bars per strike: calls `GREEN` up,
 puts `RED` down (plot put OI negated), amber vertical line at spot, zero line
 `TEXT_STRONG`; alongside, a strike-ladder table (Strike / Call OI / Put OI /
@@ -461,6 +503,7 @@ In the `underlying-analyzer-reboot` repo:
 - `app/chart_data.py` — the data builders behind every payload above
 - `app/charts.py` — matplotlib renders: palette constants, panel ratios, level styling
 - `app/torque.py` — torque scoring + 4-panel dashboard render
+- `app/peer_forecast.py` — the TabICL peer forecast behind `peer-forecast` (buckets, purge, cache)
 - `app/tools.py` — moneyline data/render split (`build_moneyline_data`)
 
 ## Client tips

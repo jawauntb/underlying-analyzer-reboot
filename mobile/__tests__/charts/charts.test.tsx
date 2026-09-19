@@ -5,6 +5,7 @@ import { Path } from 'react-native-svg';
 import { AuctionChart } from '@/src/components/charts/AuctionChart';
 import { LineChart } from '@/src/components/charts/LineChart';
 import { MoneylineChart } from '@/src/components/charts/MoneylineChart';
+import { PeerForecastChart } from '@/src/components/charts/PeerForecastChart';
 import { TorqueChart } from '@/src/components/charts/TorqueChart';
 
 function finiteProps(value: unknown): boolean {
@@ -247,5 +248,53 @@ describe('financial chart surfaces', () => {
     expect(legendStyle.flexWrap).toBe('wrap');
     expect(legendStyle.gap).toBeUndefined();
     expect(view.getByRole('button', { name: `View Auction ${width} data` })).toBeTruthy();
+  });
+});
+
+describe('peer forecast chart', () => {
+  const probabilities = { strong_under: 0.1, under: 0.1, inline: 0.2, over: 0.3, strong_over: 0.3 };
+  const peers = [
+    { symbol: 'NVDA', bucket: 'strong_over', expected_excess_return: 0.041, probabilities, confidence: 0.3, realized_excess_return_last: 0.06, predicted_excess_return_last: 0.04 },
+    { symbol: 'AAPL', bucket: 'over', expected_excess_return: 0.012, probabilities, confidence: 0.3, realized_excess_return_last: 0.01, predicted_excess_return_last: 0.02 },
+    { symbol: 'INTC', bucket: 'strong_under', expected_excess_return: -0.033, probabilities, confidence: 0.3, realized_excess_return_last: -0.02, predicted_excess_return_last: -0.03 },
+  ];
+  const forecast = {
+    ticker: 'NVDA', sector: 'technology', sector_etf: 'XLK', horizon_months: 3, bucket: 'strong_over',
+    probabilities, confidence: 0.3, confidence_floor: 0.55, expected_excess_return: 0.041,
+    last_labeled_date: '2026-05-31', peers,
+  };
+
+  it('renders ranked bars, the backtest scatter, and a mixed headline below the confidence floor', () => {
+    const view = render(<PeerForecastChart dataset={forecast} title="NVDA Peer forecast" width={375} />);
+    const paths = view.UNSAFE_getAllByType(Path);
+
+    expect(view.getByRole('header', { name: 'Mixed · top strong over 30%' })).toBeTruthy();
+    expect(view.getByText('3m forward excess return vs XLK')).toBeTruthy();
+    expect(view.getByText('+4.1%')).toBeTruthy();
+    expect(view.getAllByText('NVDA', { includeHiddenElements: true }).length).toBeGreaterThanOrEqual(2);
+    expect(view.getByText('Predicted vs realized · 2026-05-31', { includeHiddenElements: true })).toBeTruthy();
+    expect(view.getByLabelText('Predicted = realized, dashed guide line')).toBeTruthy();
+    expect(paths.length).toBeLessThanOrEqual(12);
+    expect(paths.every((path) => finiteProps(path.props))).toBe(true);
+
+    fireEvent.press(view.getByRole('button', { name: 'View NVDA Peer forecast data' }));
+    expect(view.getByText('1. NVDA')).toBeTruthy();
+    expect(view.getByText('3. INTC')).toBeTruthy();
+    expect(view.getByText('Strong under')).toBeTruthy();
+    expect(view.getByText('+4.0% / +6.0%')).toBeTruthy();
+  });
+
+  it('states the bucket only above the confidence floor', () => {
+    const confident = { ...forecast, confidence: 0.72, probabilities: { ...probabilities, strong_over: 0.72 } };
+    const view = render(<PeerForecastChart dataset={confident} title="Confident" width={375} />);
+
+    expect(view.getByRole('header', { name: 'Strong over · 72%' })).toBeTruthy();
+  });
+
+  it('shows an explicit unavailable state for an empty forecast', () => {
+    render(<PeerForecastChart dataset={{ peers: [] }} title="Empty forecast" width={320} />);
+
+    expect(screen.getByText('Peer forecast is unavailable.')).toBeTruthy();
+    expect(screen.getByRole('adjustable').props.accessibilityState.disabled).toBe(true);
   });
 });

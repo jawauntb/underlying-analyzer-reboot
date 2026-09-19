@@ -274,3 +274,130 @@ export function normalizeMoneylineChart(value: unknown): MoneylineModel {
     warnings,
   };
 }
+
+export type PeerForecastBar = {
+  symbol: string;
+  bucket: string;
+  expectedExcessReturn: number;
+  confidence: number;
+  isFocus: boolean;
+  rank: number;
+};
+
+export type PeerForecastPair = {
+  symbol: string;
+  bucket: string;
+  predicted: number;
+  realized: number;
+  isFocus: boolean;
+};
+
+export type PeerForecastData = {
+  ticker: string;
+  sector: string | null;
+  sectorEtf: string | null;
+  horizonMonths: number | null;
+  bucket: string | null;
+  confidence: number | null;
+  confidenceFloor: number;
+  expectedExcessReturn: number | null;
+  lastLabeledDate: string | null;
+  /** Peers ranked by expected excess return, best first. */
+  ranked: PeerForecastBar[];
+  /** Predicted vs realized for the last labelled cross-section. */
+  pairs: PeerForecastPair[];
+  /** True only when the top bucket clears the backend's confidence floor. */
+  statesBucket: boolean;
+};
+
+export type PeerForecastModel = NormalizedResult<PeerForecastData> & PeerForecastData;
+
+function peerRecords(payload: Record<string, unknown>): unknown[] {
+  // Accept the normalized `PeerForecastResponse`, the raw SHARED CONTRACT, or the
+  // `/api/data/charts/peer-forecast` dataset (`series.ranked`).
+  const series = childRecord(payload, 'series');
+  if (array(series.ranked).length) return array(series.ranked);
+  return array(payload.peers);
+}
+
+function focusTicker(payload: Record<string, unknown>): string {
+  const meta = childRecord(payload, 'meta');
+  return nonemptyString(payload.ticker) ?? nonemptyString(meta.ticker) ?? '';
+}
+
+export function normalizePeerForecastChart(value: unknown): PeerForecastModel {
+  const payload = isRecord(value) ? value : {};
+  const meta = { ...childRecord(payload, 'meta'), ...payload } as Record<string, unknown>;
+  const ticker = focusTicker(payload).toUpperCase();
+  let droppedPointCount = 0;
+  const bars = peerRecords(payload).flatMap((candidate) => {
+    if (!isRecord(candidate)) {
+      droppedPointCount += 1;
+      return [];
+    }
+    const symbol = nonemptyString(candidate.symbol);
+    const expected = finiteNumber(keyed(candidate, 'expectedExcessReturn', 'expected_excess_return'));
+    const confidence = finiteNumber(candidate.confidence);
+    if (!symbol || expected === null || confidence === null) {
+      droppedPointCount += 1;
+      return [];
+    }
+    return [{
+      symbol: symbol.toUpperCase(),
+      bucket: nonemptyString(candidate.bucket) ?? 'inline',
+      expectedExcessReturn: expected,
+      confidence: Math.max(0, Math.min(1, confidence)),
+      isFocus: symbol.toUpperCase() === ticker,
+      rank: 0,
+    }];
+  });
+  bars.sort((left, right) => right.expectedExcessReturn - left.expectedExcessReturn);
+  bars.forEach((bar, index) => {
+    bar.rank = index + 1;
+  });
+
+  const pairSource = array(childRecord(payload, 'series').predicted_vs_realized);
+  const pairs = (pairSource.length ? pairSource : peerRecords(payload)).flatMap((candidate) => {
+    if (!isRecord(candidate)) return [];
+    const symbol = nonemptyString(candidate.symbol);
+    const predicted = finiteNumber(
+      candidate.predicted ?? keyed(candidate, 'predictedExcessReturnLast', 'predicted_excess_return_last'),
+    );
+    const realized = finiteNumber(
+      candidate.realized ?? keyed(candidate, 'realizedExcessReturnLast', 'realized_excess_return_last'),
+    );
+    if (!symbol || predicted === null || realized === null) return [];
+    return [{
+      symbol: symbol.toUpperCase(),
+      bucket: nonemptyString(candidate.bucket) ?? 'inline',
+      predicted,
+      realized,
+      isFocus: symbol.toUpperCase() === ticker,
+    }];
+  });
+
+  const confidence = finiteNumber(meta.confidence);
+  const confidenceFloor = finiteNumber(keyed(meta, 'confidenceFloor', 'confidence_floor')) ?? 0.55;
+  const bucket = nonemptyString(meta.bucket);
+  const warnings: string[] = [];
+  if (!bars.length) warnings.push('Peer forecast is unavailable.');
+  if (droppedPointCount) warnings.push(`${droppedPointCount} peer forecast rows were dropped.`);
+  if (bars.length && !pairs.length) warnings.push('No labelled cross-section to compare against yet.');
+
+  const data: PeerForecastData = {
+    ticker,
+    sector: nonemptyString(meta.sector),
+    sectorEtf: nonemptyString(keyed(meta, 'sectorEtf', 'sector_etf')),
+    horizonMonths: finiteNumber(keyed(meta, 'horizonMonths', 'horizon_months')),
+    bucket,
+    confidence,
+    confidenceFloor,
+    expectedExcessReturn: finiteNumber(keyed(meta, 'expectedExcessReturn', 'expected_excess_return')),
+    lastLabeledDate: nonemptyString(keyed(meta, 'lastLabeledDate', 'last_labeled_date')),
+    ranked: bars,
+    pairs,
+    statesBucket: bucket !== null && confidence !== null && confidence >= confidenceFloor,
+  };
+
+  return { ...data, data, droppedPointCount, warnings };
+}

@@ -516,6 +516,16 @@ depends on it. VIX comes from FRED `VIXCLS` because Massive returns 403 on `I:VI
 
 ---
 
+## Tabular cross-check (additive)
+
+`packet["tabular"]` carries the same TabICL v2 peer forecast Situate uses
+(`GET /api/tabular/peer-forecast/<ticker>`, 3-month horizon), memoised per sector for 12
+hours so a Prism and a Situate build on the same day share one model call. The briefing
+(`project_packet`) adds a "Quantitative cross-check (TabICL peer forecast)" block after the
+factors with the RULE that it is a cross-check on the scenario mixture, never the
+recommendation. With no tabular model the section is `null` (reason in `meta.unavailable`)
+and the briefing is unchanged. It does not enter `derive_recommendation`.
+
 ## Agent and MCP tools
 
 | Tool | Method + path | Cost | Notes |

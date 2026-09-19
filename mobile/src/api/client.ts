@@ -8,6 +8,8 @@ import type {
   MoneylineRequest,
   MoneylineResponse,
   OptionsChainResponse,
+  PeerForecastRequest,
+  PeerForecastResponse,
   ProviderStatusResponse,
   ResolveWatchlistRequest,
   ResolveWatchlistResponse,
@@ -30,6 +32,7 @@ import {
   normalizeMarketSnapshot,
   normalizeMoneyline,
   normalizeOptionsChain,
+  normalizePeerForecast,
   normalizeProviderStatus,
   normalizeResolvedWatchlist,
   normalizeSecuritySearch,
@@ -107,7 +110,11 @@ function createLinkedController(signal?: AbortSignal): { controller: AbortContro
 }
 
 function errorMessageFrom(value: unknown): string | null {
-  return isRecord(value) && typeof value.error === 'string' && value.error ? value.error : null;
+  if (!isRecord(value)) return null;
+  if (typeof value.error === 'string' && value.error) return value.error;
+  // Fail-open services answer `{available: false, reason}`; the reason is the message.
+  if (value.available === false && typeof value.reason === 'string' && value.reason) return value.reason;
+  return null;
 }
 
 async function readFailure(response: Response): Promise<ApiError> {
@@ -270,6 +277,18 @@ export class ApiClient {
         ticker: normalizeSymbol(request.ticker),
         ...(request.expiry ? { expiry: request.expiry } : {}),
       },
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * TabICL peer forecast. Rejects with an `ApiError` whose `status` is 503 when the
+   * backend has no tabular model; callers hide the surface rather than show an error.
+   */
+  peerForecast(request: PeerForecastRequest, options: { signal?: AbortSignal } = {}): Promise<PeerForecastResponse> {
+    const symbol = normalizeSymbol(request.ticker);
+    return this.getJson(API_ENDPOINTS.peerForecast.replace('{ticker}', encodeURIComponent(symbol)), normalizePeerForecast, {
+      query: request.horizon === undefined ? undefined : { horizon: String(request.horizon) },
       signal: options.signal,
     });
   }
