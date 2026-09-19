@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RequestCoordinator, type ApiClient } from '@/src/api/client';
-import type { AlertItem, AlertRow, WatchlistAlertsResponse } from '@/src/api/contracts';
+import { MATERIALITY_LEVELS, type AlertItem, type AlertMateriality, type AlertRow, type WatchlistAlertsResponse } from '@/src/api/contracts';
 import { API_ENDPOINTS } from '@/src/api/endpoints';
 import AsyncState from '@/src/components/ui/AsyncState';
 import { AsyncCache, TTL_MS, type CacheRecord, type CacheRequestDescriptor } from '@/src/state/cache';
@@ -171,6 +171,28 @@ function valueLocation(row: AlertRow): { value: string; detail: string } {
   return { value: sentenceCase(location), detail: detail || 'No additional auction evidence reported.' };
 }
 
+const MATERIAL_FLOOR = MATERIALITY_LEVELS.indexOf('material');
+
+/** "Material only" keeps unscored alerts: a Jev outage must never hide anything. */
+export function isMaterialOrUnscored(alert: Pick<AlertItem, 'materiality'>): boolean {
+  return alert.materiality === null || MATERIALITY_LEVELS.indexOf(alert.materiality.level) >= MATERIAL_FLOOR;
+}
+
+export function materialityLabel(materiality: AlertMateriality): string {
+  return `${titleCase(materiality.level)} · ${Math.round(materiality.confidence * 100)}%`;
+}
+
+function MaterialityBadge({ materiality }: { materiality: AlertMateriality }) {
+  const emphasized = MATERIALITY_LEVELS.indexOf(materiality.level) >= MATERIAL_FLOOR;
+  return (
+    <Text
+      accessibilityLabel={`Jev materiality ${materiality.level}, ${Math.round(materiality.confidence * 100)} percent confidence`}
+      style={[styles.materiality, emphasized && styles.materialityEmphasized]}>
+      {materialityLabel(materiality)}
+    </Text>
+  );
+}
+
 function EvidenceCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <View style={styles.evidenceCard}>
@@ -183,11 +205,14 @@ function EvidenceCard({ label, value, detail }: { label: string; value: string; 
 
 function OverviewContent({ data, fetchedAt }: { data: OverviewData; fetchedAt: number }) {
   const { row, alerts, response } = data;
+  const [materialOnly, setMaterialOnly] = useState(false);
   const priceEvidence = priceRegime(row);
   const participationEvidence = participation(row);
   const valueEvidence = valueLocation(row);
   const fundamentals = row.fundamentals;
   const providerNote = row.providerNote ?? response.providerNote;
+  const scored = alerts.some((alert) => alert.materiality !== null);
+  const visibleAlerts = materialOnly ? alerts.filter(isMaterialOrUnscored) : alerts;
 
   return (
     <View style={styles.overviewContent}>
@@ -212,17 +237,34 @@ function OverviewContent({ data, fetchedAt }: { data: OverviewData; fetchedAt: n
       </View>
 
       <View style={styles.section}>
-        <Text accessibilityRole="header" style={styles.sectionTitle}>Current alerts</Text>
-        {alerts.length ? alerts.map((alert) => (
+        <View style={styles.sectionHeading}>
+          <Text accessibilityRole="header" style={styles.sectionTitle}>Current alerts</Text>
+          {scored ? (
+            <Pressable
+              accessibilityLabel="Material only"
+              accessibilityRole="switch"
+              accessibilityState={{ checked: materialOnly }}
+              onPress={() => setMaterialOnly((value) => !value)}
+              style={({ pressed }) => [styles.toggle, materialOnly && styles.toggleOn, pressed && styles.pressed]}>
+              <Text style={[styles.toggleText, materialOnly && styles.toggleTextOn]}>MATERIAL ONLY</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {visibleAlerts.length ? visibleAlerts.map((alert) => (
           <View key={alert.id} style={styles.alertCard}>
             <View style={styles.alertTopline}>
               <Text style={styles.alertTitle}>{alert.title}</Text>
               <Text style={styles.alertSeverity}>{alert.severity} · {alert.category}</Text>
             </View>
+            {alert.materiality ? <MaterialityBadge materiality={alert.materiality} /> : null}
             <Text style={styles.cardDetail}>{alert.message}</Text>
             <Text style={styles.alertAction}>{alert.action}</Text>
           </View>
-        )) : <Text style={styles.cardDetail}>No current alert rules fired for this security.</Text>}
+        )) : (
+          <Text style={styles.cardDetail}>
+            {alerts.length ? 'No material alerts right now; turn off Material only to see the rest.' : 'No current alert rules fired for this security.'}
+          </Text>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -423,7 +465,23 @@ const styles = StyleSheet.create({
   lane: { ...typography.caption, color: colors.cyan },
   setup: { ...typography.body, color: colors.ink },
   section: { gap: spacing.sm },
+  sectionHeading: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' },
   sectionTitle: { ...typography.title, color: colors.ink },
+  toggle: { alignItems: 'center', borderColor: colors.mineral, borderRadius: radii.pill, borderWidth: 1, justifyContent: 'center', minHeight: layout.minimumTouchTarget, paddingHorizontal: spacing.md },
+  toggleOn: { backgroundColor: colors.mineralSoft, borderColor: colors.cyan },
+  toggleText: { ...typography.micro, color: colors.inkMuted },
+  toggleTextOn: { color: colors.cyan },
+  materiality: {
+    ...typography.micro,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.graphiteSoft,
+    borderRadius: radii.pill,
+    color: colors.inkSecondary,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  materialityEmphasized: { color: colors.cyan },
   alertCard: { borderColor: colors.mineral, borderRadius: radii.lg, borderWidth: 1, gap: spacing.xs, padding: spacing.md },
   alertTopline: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' },
   alertTitle: { ...typography.label, color: colors.ink },

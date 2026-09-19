@@ -188,6 +188,18 @@ export type AlertRow = {
   raw: Record<string, unknown>;
 };
 
+export const MATERIALITY_LEVELS = ['noise', 'minor', 'material', 'urgent'] as const;
+export type MaterialityLevel = (typeof MATERIALITY_LEVELS)[number];
+
+/** Optional Jev materiality attached by the backend; absent (null) whenever Jev was unavailable or unsure. */
+export type AlertMateriality = {
+  level: MaterialityLevel;
+  /** Probability-weighted 0..1 position on the noise..urgent scale. */
+  score: number;
+  /** Jev's 0..1 confidence; the backend only attaches levels at or above 0.55. */
+  confidence: number;
+};
+
 export type AlertItem = {
   id: string;
   ticker: string;
@@ -199,6 +211,7 @@ export type AlertItem = {
   title: string;
   message: string;
   action: string;
+  materiality: AlertMateriality | null;
 };
 
 export type AlertDigest = {
