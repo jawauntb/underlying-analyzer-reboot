@@ -183,6 +183,7 @@ Supported `chart_type` values:
 | `torque` | Torque inflection chart | `period` (default `2y`), `interval` |
 | `portfolio` | Multi-ticker portfolio | `investment_per_stock`, `benchmark`, `start_date`, `end_date` |
 | `volatility` | Cross-ticker vol compare | ticker/watchlist only |
+| `peer-forecast` | TabICL v2 sector peer forecast (ranked bars + predicted-vs-realized) | `horizon` (1/2/3/6/12, default 3), `as_of`; single ticker; `503 {available:false, reason}` when no tabular model |
 
 Underscores are accepted (`ridge_growth` → `ridge-growth`).
 
@@ -478,6 +479,90 @@ always keeps unscored alerts; `meta.min_materiality` echoes the floor applied (o
 
 ---
 
+## Tabular (TabICL v2)
+
+The service hosts one tabular in-context model, TabICL v2 (`pip install tabicl`, BSD-3-Clause
+code and checkpoints). It is an **optional** dependency: production installs
+`requirements.txt` only and reaches the model over `TABULAR_INFERENCE_URL` (the Modal
+function in `modal_tabular.py`), a workstation can install the `tabular` extra for in-process
+inference, and with neither every consumer fails open — `503 {"available": false, "reason"}`
+here, an omitted `tabular` section in Situate/Prism packets, a hidden card in the iPhone app.
+
+### `GET /api/tabular/`
+
+Descriptor: routes, accepted horizons.
+
+### `POST /api/tabular/predict`
+
+The GENERIC CONTRACT: one in-context classification or regression over caller-supplied rows.
+Pandas-style mixed columns; `categorical` names the string columns. Hard caps: 100 features,
+20 000 context rows, 2 000 query rows, 10 classes. `options.max_context_rows` keeps the
+**last** N context rows (order oldest-first).
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/tabular/predict \
+  -H 'Content-Type: application/json' \
+  -d '{"task":"classification","columns":["mom_12_1","sector"],"categorical":["sector"],
+       "context":{"rows":[[0.12,"tech"],[-0.05,"energy"],[0.3,"tech"]],"target":["over","under","over"]},
+       "query":{"rows":[[0.2,"tech"]]},
+       "options":{"max_context_rows":8000,"n_estimators":4}}'
+```
+
+```json
+{"method": "tabicl_v2", "task": "classification", "context_rows_used": 3,
+ "predictions": ["over"], "classes": ["over", "under"], "probabilities": [[0.81, 0.19]]}
+```
+
+Regression omits `classes`/`probabilities`. `400 {"error"}` on malformed input or a cap
+breach; `503 {"available": false, "reason"}` when no model can answer.
+
+### `GET /api/tabular/peer-forecast/<ticker>`
+
+The SHARED CONTRACT consumed by Mapvest. Sector and peers come from the curated S&P 100
+universe (`app/situate/peers.py`); the context is the same (date, symbol) feature panel the
+Situate stack uses (`mom_12_1`, `rev_1m`, `vol_dummy`, `trend_dummy`), labels are
+**quintiles** of the forward `h`-month excess return vs the sector ETF computed on the
+context, purged so no context label window overlaps the query month, capped at the 8 000
+most recent rows. `confidence` is the top bucket probability; `expected_excess_return` is
+the probability-weighted bucket mean. The whole sector/horizon result is cached in-process
+for 12 hours, so peers share one model call.
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `horizon` | `3` | `1`, `2`, `3`, `6` or `12` months |
+| `as_of` | today | ISO date; pins the panel end |
+
+```bash
+curl -s 'http://127.0.0.1:5050/api/tabular/peer-forecast/NVDA?horizon=3'
+```
+
+```json
+{"available": true, "ticker": "NVDA", "sector": "technology", "sector_etf": "XLK",
+ "horizon_months": 3, "method": "tabicl_v2_icl", "as_of": "2026-09-19",
+ "bucket": "over",
+ "probabilities": {"strong_under": 0.08, "under": 0.12, "inline": 0.2, "over": 0.35, "strong_over": 0.25},
+ "expected_excess_return": 0.031, "confidence": 0.35, "confidence_floor": 0.55,
+ "context_rows": 1488, "features": ["mom_12_1", "rev_1m", "vol_dummy", "trend_dummy"],
+ "query_date": "2026-08-31", "last_labeled_date": "2026-05-31",
+ "peers": [{"symbol": "AAPL", "bucket": "over", "expected_excess_return": 0.021,
+            "probabilities": {"strong_under": 0.1, "under": 0.1, "inline": 0.2, "over": 0.4, "strong_over": 0.2},
+            "confidence": 0.4, "realized_excess_return_last": 0.064,
+            "predicted_excess_return_last": 0.039}]}
+```
+
+`bucket`, `probabilities` and `confidence` are always returned together so a UI can show
+"Over · 35%". `confidence_floor` (0.55) is the bar a **point call** must clear before the
+memo headline or a UI chip states the bucket; below it the distribution alone is shown.
+`realized_excess_return_last` / `predicted_excess_return_last` back the predicted-vs-realized
+view for the last labelled cross-section (a second, stricter model pass). `400` on a bad
+ticker/horizon; `503 {"available": false, "reason"}` when the ticker is outside the curated
+universe, the history is too thin, or no model is configured. Never an error for the caller.
+
+Same forecast, as a chart: `POST /api/charts/peer-forecast` (PNG, two panels) and
+`POST /api/data/charts/peer-forecast` (JSON series), body `{"ticker": "NVDA", "horizon": 3}`.
+
+---
+
 ## Citations
 
 ### `POST /api/citations/classify`
@@ -752,6 +837,11 @@ while waiting. Without `force`, a packet already stored for the same `as_of` ret
 immediately with `meta.cache.packet: "hit"`. Admission is bounded exactly like Prism: `503`
 (process) or `429` (client) with `Retry-After: 30`; `400` for a malformed ticker/`as_of`/body;
 `500` carries a build failure.
+
+`packet["tabular"]` (additive) carries the TabICL peer forecast for the ticker at 3 months
+(the `GET /api/tabular/peer-forecast/<ticker>` shape) and the memo renders it as a
+"Quantitative cross-check (TabICL peer forecast)" section; both are absent — `null` with a
+reason in `tabular_error` / `meta.unavailable` — when no tabular model is configured.
 
 ### `GET /api/situate/<ticker>`
 
@@ -1062,6 +1152,9 @@ the route returns `ok: false` with `status: "not configured"` rather than failin
 | `SUPABASE_SERVICE_ROLE_KEY` | Scheduled alert runs |
 | `ALERT_SCHEDULER_TOKEN` | Cron/Function → scheduled run |
 | `EXA_API_KEY` | Vision v2 enrichment and `/api/news` (optional) |
+| `TABULAR_INFERENCE_URL` | TabICL v2 inference service (`modal deploy modal_tabular.py`); unset and without the `tabular` extra every tabular consumer fails open |
+| `TABULAR_INFERENCE_TOKEN` | Bearer token for that service (optional) |
+| `TABULAR_DEVICE` | In-process TabICL device when the `tabular` extra is installed (default `cpu`) |
 
 ### Massive Doppler variables
 

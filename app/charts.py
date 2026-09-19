@@ -1447,3 +1447,218 @@ def render_flow_compass_chart(
         )
         meta = {**meta, "period": period}
         return image_from_figure(fig, f"{history.ticker.lower()}-flow-compass-{period}.png"), meta
+
+
+# --------------------------------------------------------------------------
+# Peer forecast (TabICL v2 in-context sector cross-section)
+# --------------------------------------------------------------------------
+
+#: Bucket -> terminal colour, bottom quintile first.
+PEER_FORECAST_BUCKET_COLORS: dict[str, str] = {
+    "strong_under": RED,
+    "under": ORANGE,
+    "inline": MUTED,
+    "over": GREEN,
+    "strong_over": CYAN,
+}
+
+
+def _bucket_color(bucket: Any) -> str:
+    return PEER_FORECAST_BUCKET_COLORS.get(str(bucket or ""), MUTED)
+
+
+def render_peer_forecast_chart(forecast: dict[str, Any]) -> tuple[RenderedImage, dict[str, Any]]:
+    """Two panels from a SHARED CONTRACT peer-forecast payload.
+
+    Left: peers ranked by expected excess return (vs the sector ETF) over the
+    horizon, bars coloured by predicted bucket, the requested ticker highlighted
+    and each bar annotated with its confidence (the top bucket probability).
+    Right: predicted vs realized excess return for the last labelled
+    cross-section with a ``y = x`` guide, so the reader can see how the model's
+    previous call landed before trusting the current one.
+    """
+    from app.peer_forecast import BUCKETS, CONFIDENCE_FLOOR
+
+    apply_terminal_style()
+    ticker = str(forecast.get("ticker") or "").upper()
+    horizon = int(forecast.get("horizon_months") or 0)
+    sector = str(forecast.get("sector") or "sector")
+    sector_etf = str(forecast.get("sector_etf") or "ETF")
+    peers = [p for p in forecast.get("peers") or [] if isinstance(p, dict)]
+    ranked = [p for p in peers if safe_float(p.get("expected_excess_return")) is not None]
+    ranked.sort(key=lambda p: float(p["expected_excess_return"]), reverse=True)
+    pairs = [
+        p
+        for p in peers
+        if safe_float(p.get("predicted_excess_return_last")) is not None
+        and safe_float(p.get("realized_excess_return_last")) is not None
+    ]
+
+    fig, (rank_ax, scatter_ax) = plt.subplots(
+        1, 2, figsize=(15, 8), gridspec_kw={"width_ratios": [1.7, 1.0]}
+    )
+    with managed_figure(fig):
+        labels = [str(p["symbol"]) for p in ranked]
+        values = [float(p["expected_excess_return"]) * 100.0 for p in ranked]
+        colors = [_bucket_color(p.get("bucket")) for p in ranked]
+        y_positions = np.arange(len(labels))
+        style_axis(
+            rank_ax,
+            title=f"{ticker} peer forecast",
+            subtitle=(
+                f"{sector.upper()} vs {sector_etf} | {horizon}m forward excess return | "
+                f"TabICL v2 in-context, {forecast.get('context_rows') or 0} context rows"
+            ),
+            grid_axis="x",
+        )
+        bars = rank_ax.barh(
+            y_positions,
+            values,
+            color=colors,
+            alpha=0.88,
+            edgecolor=TEXT,
+            linewidth=0.35,
+        )
+        rank_ax.set_yticks(y_positions, labels=labels)
+        rank_ax.invert_yaxis()
+        rank_ax.axvline(0.0, color=AMBER, alpha=0.5, linewidth=0.9)
+        rank_ax.set_xlabel(f"Expected excess return vs {sector_etf} over {horizon}m (%)")
+        span = max((abs(v) for v in values), default=1.0) or 1.0
+        for bar, peer, value in zip(bars, ranked, values, strict=False):
+            confidence = safe_float(peer.get("confidence")) or 0.0
+            is_focus = str(peer.get("symbol")) == ticker
+            if is_focus:
+                bar.set_edgecolor(AMBER_HOT)
+                bar.set_linewidth(2.0)
+            # Confidence marker: a dot at the bar tip sized by the top probability.
+            x_tip = bar.get_width()
+            y_mid = bar.get_y() + bar.get_height() / 2
+            rank_ax.scatter(
+                [x_tip],
+                [y_mid],
+                s=40 + 220 * confidence,
+                color=AMBER_HOT if is_focus else _bucket_color(peer.get("bucket")),
+                edgecolor=CHART_BG,
+                linewidth=0.8,
+                zorder=4,
+                alpha=0.95 if confidence >= CONFIDENCE_FLOOR else 0.55,
+            )
+            offset = span * 0.03
+            rank_ax.text(
+                x_tip + (offset if value >= 0 else -offset),
+                y_mid,
+                f"{value:+.1f}%  |  {str(peer.get('bucket') or '').replace('_', ' ')}  |  "
+                f"{confidence * 100:.0f}%",
+                ha="left" if value >= 0 else "right",
+                va="center",
+                color=TEXT_STRONG if is_focus else TEXT,
+                fontsize=8.5,
+                fontweight="bold" if is_focus else "normal",
+            )
+        for tick, peer in zip(rank_ax.get_yticklabels(), ranked, strict=False):
+            if str(peer.get("symbol")) == ticker:
+                tick.set_color(AMBER_HOT)
+                tick.set_fontweight("bold")
+        rank_ax.set_xlim(-span * 1.9, span * 1.9)
+
+        # Bucket legend (colour key) — one proxy patch per bucket.
+        from matplotlib.patches import Patch
+
+        legend = rank_ax.legend(
+            handles=[
+                Patch(facecolor=_bucket_color(b), edgecolor=TEXT, label=b.replace("_", " "))
+                for b in BUCKETS
+            ],
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.09),
+            ncols=len(BUCKETS),
+            fontsize=8,
+            title="predicted bucket (context quintile)",
+            title_fontsize=8,
+            facecolor=PANEL,
+            edgecolor=AMBER,
+            labelcolor=TEXT,
+        )
+        legend.get_title().set_color(TEXT)
+
+        # Right: predicted vs realized for the last labelled cross-section.
+        style_axis(
+            scatter_ax,
+            title="predicted vs realized",
+            subtitle=(
+                f"last labelled cross-section {forecast.get('last_labeled_date') or 'n/a'} "
+                f"| {len(pairs)} peers"
+            ),
+        )
+        if pairs:
+            xs = [float(p["predicted_excess_return_last"]) * 100.0 for p in pairs]
+            ys = [float(p["realized_excess_return_last"]) * 100.0 for p in pairs]
+            lim = max((abs(v) for v in xs + ys), default=1.0) * 1.15 or 1.0
+            scatter_ax.plot([-lim, lim], [-lim, lim], color=AMBER, alpha=0.55, linewidth=1.0,
+                            linestyle="--", label="y = x")
+            scatter_ax.axhline(0.0, color=GRID, linewidth=0.7)
+            scatter_ax.axvline(0.0, color=GRID, linewidth=0.7)
+            for peer, x_value, y_value in zip(pairs, xs, ys, strict=True):
+                is_focus = str(peer.get("symbol")) == ticker
+                scatter_ax.scatter(
+                    [x_value],
+                    [y_value],
+                    s=110 if is_focus else 46,
+                    color=AMBER_HOT if is_focus else _bucket_color(peer.get("bucket")),
+                    edgecolor=CHART_BG,
+                    linewidth=0.8,
+                    zorder=4 if is_focus else 3,
+                )
+                scatter_ax.annotate(
+                    str(peer.get("symbol")),
+                    (x_value, y_value),
+                    xytext=(5, 4),
+                    textcoords="offset points",
+                    fontsize=7.5,
+                    color=TEXT_STRONG if is_focus else MUTED,
+                    fontweight="bold" if is_focus else "normal",
+                )
+            scatter_ax.set_xlim(-lim, lim)
+            scatter_ax.set_ylim(-lim, lim)
+            scatter_ax.set_xlabel("Predicted excess return (%)")
+            scatter_ax.set_ylabel("Realized excess return (%)")
+            style_legend(scatter_ax, loc="upper left")
+        else:
+            scatter_ax.text(
+                0.5,
+                0.5,
+                "No labelled cross-section to compare yet",
+                transform=scatter_ax.transAxes,
+                ha="center",
+                va="center",
+                color=MUTED,
+                fontsize=10,
+            )
+
+        fig.tight_layout(rect=(0, 0.09, 1, 0.96))
+        own_confidence = safe_float(forecast.get("confidence")) or 0.0
+        add_terminal_footer(
+            fig,
+            left=(
+                f"{ticker} {str(forecast.get('bucket') or '').replace('_', ' ')} | "
+                f"{own_confidence * 100:.0f}% confidence | as of {forecast.get('as_of')}"
+            ),
+            right="tabicl v2 peer forecast",
+        )
+        meta = {
+            "ticker": ticker,
+            "sector": forecast.get("sector"),
+            "sector_etf": forecast.get("sector_etf"),
+            "horizon_months": horizon,
+            "method": forecast.get("method"),
+            "as_of": forecast.get("as_of"),
+            "bucket": forecast.get("bucket"),
+            "confidence": forecast.get("confidence"),
+            "expected_excess_return": forecast.get("expected_excess_return"),
+            "probabilities": dict(forecast.get("probabilities") or {}),
+            "context_rows": forecast.get("context_rows"),
+            "features": list(forecast.get("features") or []),
+            "ranked": [str(p["symbol"]) for p in ranked],
+            "pairs": len(pairs),
+        }
+        return image_from_figure(fig, f"{ticker.lower()}-peer-forecast-{horizon}m.png"), meta

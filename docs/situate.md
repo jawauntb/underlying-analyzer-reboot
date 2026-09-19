@@ -29,6 +29,7 @@ response.
 | `text` | 5.6 | Filing-diff change scores with quoted new/removed risks, and dated news events with sentiment |
 | `levels` | 5.8 | Auction value area + moving averages, and cheap/rich **zones** from the implied quantiles |
 | `stack` | 5.7 | The cross-sectional model — published **only** when its walk-forward gates pass, else `null` with a reason (the odds then fall back to base rates + implied) |
+| `tabular` | — | TabICL v2 peer forecast (additive cross-check): the ticker's forward 3-month excess-return quintile bucket vs its sector peers with probabilities and confidence (`GET /api/tabular/peer-forecast/<ticker>` shape). `null` with a reason in `meta.unavailable` when no tabular model is configured; it never feeds `odds` |
 | `odds` | — | The single forward-return distribution the memo reads, per horizon: `source`, `quantiles`, `p_up`, `base_rate_q50`, `shrink_w` |
 | `scenarios` | 6.6 | bull / neutral / bear at 3/6/12m, each a state + the matching odds quantile + the top-two exposure drivers |
 | `memo` | 6 | The posture memo (see below) |
@@ -49,6 +50,12 @@ With no `ANTHROPIC_API_KEY` the deterministic template stands on its own — the
 is never empty. With a key, a model may rewrite the prose from the same briefing, but the
 posture, falsifiers, determinants, zones and citations are always the engine's own; a memo
 whose citation ids do not resolve against the engine catalogue falls back to the template.
+
+When `tabular` is present the memo adds a **Quantitative cross-check (TabICL peer forecast)**
+section after the odds table and a `[Cn]` citation for it. A bucket is *stated* only when its
+confidence clears the 0.55 floor; below it the section shows the bucket distribution and
+leaves the call open. The section is absent, and the memo byte-identical to a build without
+the model, when the forecast is unavailable.
 
 ## Odds merge
 

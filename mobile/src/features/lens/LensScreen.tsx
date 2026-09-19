@@ -5,11 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ApiClient, RequestCoordinator } from '@/src/api/client';
-import type { AuctionResponse, ChartDataset, MoneylineResponse, OptionsChainResponse, TorqueResponse } from '@/src/api/contracts';
+import { ApiClient, ApiError, RequestCoordinator } from '@/src/api/client';
+import type { AuctionResponse, ChartDataset, MoneylineResponse, OptionsChainResponse, PeerForecastResponse, TorqueResponse } from '@/src/api/contracts';
 import { isRecord } from '@/src/api/guards';
 import { AuctionChart } from '@/src/components/charts/AuctionChart';
 import { MoneylineChart } from '@/src/components/charts/MoneylineChart';
+import { PeerForecastChart } from '@/src/components/charts/PeerForecastChart';
 import { TorqueChart } from '@/src/components/charts/TorqueChart';
 import AsyncState from '@/src/components/ui/AsyncState';
 import MetricCard from '@/src/components/ui/MetricCard';
@@ -38,14 +39,16 @@ import ResearchDepthDial from './ResearchDepthDial';
 const LENS_PERIOD = LENS_AUCTION_PERIODS[0];
 const defaultClient = new ApiClient();
 
-type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & Partial<Pick<ApiClient, 'marketSnapshot' | 'providers' | 'optionsChain'>> & LensOverviewClient;
+type LensClient = Pick<ApiClient, 'torque' | 'auction' | 'moneyline'> & Partial<Pick<ApiClient, 'marketSnapshot' | 'providers' | 'optionsChain' | 'peerForecast'>> & LensOverviewClient;
 type LensRouter = { push(href: Href): void };
 type HapticsLike = Pick<typeof Haptics, 'selectionAsync'>;
 
 type PanelState<T> =
   | { status: 'idle' | 'loading'; data: null; source: null; fetchedAt: null }
   | { status: 'ready'; data: T; source: string; fetchedAt: number; notice?: string }
-  | { status: 'unavailable' | 'error'; data: null; source: string | null; fetchedAt: number | null; message: string };
+  | { status: 'unavailable' | 'error'; data: null; source: string | null; fetchedAt: number | null; message: string }
+  /** The backend said the optional signal is off (503 fail-open): the panel hides itself. */
+  | { status: 'hidden'; data: null; source: null; fetchedAt: number; message: string };
 
 const idlePanel = <T,>(): PanelState<T> => ({ status: 'idle', data: null, source: null, fetchedAt: null });
 
@@ -72,6 +75,15 @@ function auctionSource(data: AuctionResponse): string {
 
 function moneylineSource(data: MoneylineResponse): string {
   return explicitProvider(data.meta.provider);
+}
+
+function peerForecastSource(data: PeerForecastResponse): string {
+  return `${data.method} · ${data.contextRows} context rows`;
+}
+
+/** Fail-open contract: a 503 means "no model right now", never an error to surface. */
+export function isPeerForecastHidden(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503;
 }
 
 function ConnectedLensScreen(props: LensScreenProps) {
@@ -111,24 +123,29 @@ function LensController({
   const [auctionState, setAuctionState] = useState<PanelState<ChartDataset>>(idlePanel);
   const [moneylineState, setMoneylineState] = useState<PanelState<MoneylineResponse>>(idlePanel);
   const [optionsState, setOptionsState] = useState<PanelState<OptionsChainResponse>>(idlePanel);
+  const [peerForecastState, setPeerForecastState] = useState<PanelState<PeerForecastResponse>>(idlePanel);
   const torqueCoordinator = useRef(new RequestCoordinator<TorqueResponse>());
   const auctionCoordinator = useRef(new RequestCoordinator<AuctionResponse>());
   const moneylineCoordinator = useRef(new RequestCoordinator<MoneylineResponse>());
   const optionsCoordinator = useRef(new RequestCoordinator<OptionsChainResponse>());
+  const peerForecastCoordinator = useRef(new RequestCoordinator<PeerForecastResponse>());
   const torqueGeneration = useRef(0);
   const auctionGeneration = useRef(0);
   const moneylineGeneration = useRef(0);
   const optionsGeneration = useRef(0);
+  const peerForecastGeneration = useRef(0);
 
   useEffect(() => () => {
     torqueGeneration.current += 1;
     auctionGeneration.current += 1;
     moneylineGeneration.current += 1;
     optionsGeneration.current += 1;
+    peerForecastGeneration.current += 1;
     torqueCoordinator.current.cancel();
     auctionCoordinator.current.cancel();
     moneylineCoordinator.current.cancel();
     optionsCoordinator.current.cancel();
+    peerForecastCoordinator.current.cancel();
   }, []);
 
   async function loadTorque(force = false, interval: ChartInterval = chartInterval) {
@@ -280,6 +297,53 @@ function LensController({
     }
   }
 
+  async function loadPeerForecast(force = false) {
+    if (!symbol || !client.peerForecast || (!force && ['loading', 'ready', 'hidden'].includes(peerForecastState.status))) return;
+    const generation = ++peerForecastGeneration.current;
+    setPeerForecastState({ status: 'loading', data: null, source: null, fetchedAt: null });
+    try {
+      const result = await peerForecastCoordinator.current.run((signal) =>
+        client.peerForecast!({ ticker: symbol, horizon: 3 }, { signal }),
+      );
+      if (!result.accepted || generation !== peerForecastGeneration.current) return;
+      if (result.value.ticker !== symbol) {
+        setPeerForecastState({
+          status: 'unavailable',
+          data: null,
+          source: peerForecastSource(result.value),
+          fetchedAt: now(),
+          message: `Peer forecast response did not match ${symbol}.`,
+        });
+        return;
+      }
+      setPeerForecastState({
+        status: 'ready',
+        data: result.value,
+        source: peerForecastSource(result.value),
+        fetchedAt: now(),
+      });
+    } catch (error) {
+      if (generation !== peerForecastGeneration.current) return;
+      if (isPeerForecastHidden(error)) {
+        setPeerForecastState({
+          status: 'hidden',
+          data: null,
+          source: null,
+          fetchedAt: now(),
+          message: errorMessage(error, 'Peer forecast is not available.'),
+        });
+        return;
+      }
+      setPeerForecastState({
+        status: 'error',
+        data: null,
+        source: null,
+        fetchedAt: null,
+        message: errorMessage(error, 'Peer forecast could not be loaded.'),
+      });
+    }
+  }
+
   function openSelectedDepth() {
     if (!symbol) return;
     setOpenedDepth(selectedDepth);
@@ -293,6 +357,7 @@ function LensController({
     const force = openedDepth === selectedDepth;
     void loadTorque(force);
     void loadAuction(force);
+    void loadPeerForecast(force);
     if (selectedDepth === 'diagnose') {
       void loadMoneyline(force);
       void loadOptions(force);
@@ -404,6 +469,11 @@ function LensController({
             <LensPanel title={`${symbol} Auction`} state={auctionState} onRetry={() => void loadAuction(true)}>
               {auctionState.status === 'ready' ? <AuctionChart dataset={auctionState.data} fontScale={fontScale} title={`${symbol} 5d Auction`} width={chartWidth} /> : null}
             </LensPanel>
+            {client.peerForecast && peerForecastState.status !== 'hidden' ? (
+              <LensPanel title={`${symbol} Peer forecast`} state={peerForecastState} onRetry={() => void loadPeerForecast(true)}>
+                {peerForecastState.status === 'ready' ? <PeerForecastChart dataset={peerForecastState.data} fontScale={fontScale} title={`${symbol} Peer forecast`} width={chartWidth} /> : null}
+              </LensPanel>
+            ) : null}
             {openedDepth === 'diagnose' ? (
               <LensPanel title={`${symbol} Moneyline`} state={moneylineState} onRetry={() => void loadMoneyline(true)}>
                 {moneylineState.status === 'ready' ? <MoneylineChart dataset={moneylineState.data} fontScale={fontScale} title={`${symbol} Moneyline`} width={chartWidth} /> : null}

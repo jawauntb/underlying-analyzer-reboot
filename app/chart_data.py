@@ -493,3 +493,97 @@ def build_torque_chart_data(
             "fundamentals": fundamentals,
         },
     }
+
+
+def build_peer_forecast_chart_data(forecast: dict[str, Any]) -> dict[str, Any]:
+    """The JSON twin of :func:`app.charts.render_peer_forecast_chart`.
+
+    ``series.ranked`` is the peers-by-expected-excess-return bar series (the
+    requested ticker flagged with ``is_focus``); ``series.predicted_vs_realized``
+    is the last labelled cross-section's scatter, one point per peer that has
+    both values. Returns are decimal fractions, as everywhere else.
+    """
+    from app.peer_forecast import BUCKETS, CONFIDENCE_FLOOR
+
+    ticker = str(forecast.get("ticker") or "").upper()
+    peers = [p for p in forecast.get("peers") or [] if isinstance(p, dict)]
+
+    def _num(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if np.isfinite(number) else None
+
+    ranked: list[dict[str, Any]] = []
+    for peer in peers:
+        expected = _num(peer.get("expected_excess_return"))
+        if expected is None:
+            continue
+        raw_probabilities = peer.get("probabilities")
+        probabilities: dict[str, Any] = (
+            raw_probabilities if isinstance(raw_probabilities, dict) else {}
+        )
+        ranked.append(
+            {
+                "symbol": str(peer.get("symbol") or ""),
+                "bucket": str(peer.get("bucket") or ""),
+                "expected_excess_return": expected,
+                "confidence": _num(peer.get("confidence")) or 0.0,
+                "probabilities": {b: _num(probabilities.get(b)) or 0.0 for b in BUCKETS},
+                "is_focus": str(peer.get("symbol") or "") == ticker,
+            }
+        )
+    ranked.sort(key=lambda row: float(row["expected_excess_return"]), reverse=True)
+    for rank, row in enumerate(ranked, start=1):
+        row["rank"] = rank
+
+    pairs: list[dict[str, Any]] = []
+    for peer in peers:
+        predicted = _num(peer.get("predicted_excess_return_last"))
+        realized = _num(peer.get("realized_excess_return_last"))
+        if predicted is None or realized is None:
+            continue
+        pairs.append(
+            {
+                "symbol": str(peer.get("symbol") or ""),
+                "bucket": str(peer.get("bucket") or ""),
+                "predicted": predicted,
+                "realized": realized,
+                "is_focus": str(peer.get("symbol") or "") == ticker,
+            }
+        )
+
+    meta = {
+        "ticker": ticker,
+        "sector": forecast.get("sector"),
+        "sector_etf": forecast.get("sector_etf"),
+        "horizon_months": forecast.get("horizon_months"),
+        "method": forecast.get("method"),
+        "as_of": forecast.get("as_of"),
+        "bucket": forecast.get("bucket"),
+        "confidence": _num(forecast.get("confidence")),
+        "confidence_floor": CONFIDENCE_FLOOR,
+        "expected_excess_return": _num(forecast.get("expected_excess_return")),
+        "probabilities": {
+            b: _num((forecast.get("probabilities") or {}).get(b)) or 0.0 for b in BUCKETS
+        },
+        "context_rows": forecast.get("context_rows"),
+        "features": list(forecast.get("features") or []),
+        "query_date": forecast.get("query_date"),
+        "last_labeled_date": forecast.get("last_labeled_date"),
+        "bucket_means": dict(forecast.get("bucket_means") or {}),
+        "buckets": list(BUCKETS),
+    }
+    return {
+        "chart_type": "peer-forecast",
+        "ticker": ticker,
+        "tickers": [row["symbol"] for row in ranked],
+        "provider": "tabicl",
+        "provider_note": "TabICL v2 in-context peer forecast",
+        "meta": meta,
+        "series": {
+            "ranked": ranked,
+            "predicted_vs_realized": pairs,
+        },
+    }

@@ -232,6 +232,46 @@ packet. The only new dependency is `scipy`.
 
 Full reference: [docs/situate.md](docs/situate.md).
 
+## Tabular model (TabICL v2)
+
+This service hosts the tabular in-context model for the whole stack: **TabICL v2**
+(`tabicl` on PyPI, BSD-3-Clause code *and* checkpoints, so commercial use is fine; Google's
+TabFM weights are non-commercial and are not used). It learns nothing at fit time — it reads
+a context table and answers a query table in one forward pass — which is what makes it safe
+to run walk-forward with the same purge/embargo rules as the Situate stack.
+
+- `POST /api/tabular/predict` — the generic classification/regression contract (caps: 100
+  features, 20 000 context rows, 2 000 query rows, 10 classes).
+- `GET /api/tabular/peer-forecast/<ticker>?horizon=3` — the ticker's forward excess-return
+  quintile bucket vs its curated sector peers, with probabilities and confidence; cached per
+  sector/horizon for 12 hours. The same forecast is the `peer-forecast` chart pack
+  (`/api/charts` and `/api/data/charts`), the `tabular` section + "Quantitative cross-check"
+  memo block in Situate and Prism packets, and the "Peer forecast" card in the iPhone Lens.
+
+`tabicl` pulls `torch`, so it is an **optional** dependency and is never in
+`requirements.txt`. Three ways to run it, all read at call time so nothing restarts:
+
+| Mode | How | Notes |
+| --- | --- | --- |
+| Remote (production) | `modal deploy modal_tabular.py`, then set `TABULAR_INFERENCE_URL` (and `TABULAR_INFERENCE_TOKEN` if you created the `jawaun-tabular-icl-token` secret) in the service env | CPU-only torch image with the v2 checkpoints baked in; `cpu=4`, 8 GB |
+| Local | `python -m pip install -e '.[tabular]'` or `-r requirements-tabular.txt` (CPU torch: `pip install torch --index-url https://download.pytorch.org/whl/cpu` first) | checkpoints auto-download from Hugging Face on first use; `TABULAR_DEVICE=cpu` by default |
+| Off | neither configured | every consumer fails open: `503 {"available": false, "reason"}`, a `null` packet section, a hidden card |
+
+Resolution order is remote → local → unavailable (`app/tabular.py::get_predictor`).
+
+Offline evaluation against the ridge stack, on the stack's own walk-forward harness (OOS IC
+with a block-bootstrap CI, deflated Sharpe, publish gates), writes JSON + Markdown under
+`reports/tabicl-eval/` and is never run in CI:
+
+```bash
+python scripts/eval_tabicl_stack.py --fake-predictor            # harness smoke, no model
+python scripts/eval_tabicl_stack.py                              # synthetic panel, needs tabicl
+python scripts/eval_tabicl_stack.py --live --sector technology   # cached Massive panel
+```
+
+Tests use an injected fake predictor and never download a checkpoint; the one real-model
+smoke test skips unless `tabicl` is importable.
+
 ## Docs
 
 On-site docs: `/docs` (API section at `/docs#api`, MCP at `/docs#mcp`).
@@ -363,6 +403,24 @@ python -m pip install -e ".[deploy]"
 modal secret create underlying-analyzer-env --from-dotenv .env --force
 modal deploy modal_app.py
 ```
+
+### Tabular model (separate app)
+
+`modal_tabular.py` is its own `modal.App("jawaun-tabular-icl")` so the terminal image stays
+small. It pip-installs `tabicl` with CPU-only `torch`, warms both v2 checkpoints at image
+build, and exposes the generic `POST /api/tabular/predict` contract as a web endpoint
+(`cpu=4`, 8 GB, label `jawaun-tabular-icl`).
+
+```bash
+python -m pip install -e ".[deploy]"
+modal secret create jawaun-tabular-icl-token TABULAR_INFERENCE_TOKEN=<random>   # optional
+modal deploy modal_tabular.py
+```
+
+Then set `TABULAR_INFERENCE_URL` to the printed endpoint URL (and `TABULAR_INFERENCE_TOKEN`
+to the same secret value if you created one) in the service's environment. Nothing else
+changes: `app/tabular.py::RemotePredictor` speaks this contract and every consumer keeps
+failing open until the variables are present.
 
 ## Supabase Research Library
 

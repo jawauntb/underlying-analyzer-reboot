@@ -23,6 +23,7 @@ const modeTitles = {
   alerts: "Alert Digest",
   portfolio: "Portfolio",
   volatility: "Volatility",
+  "peer-forecast": "Peer Forecast",
   analysis: "Stock Brief",
   "ticker-research": "Research Packet",
 };
@@ -50,6 +51,8 @@ const modeContracts = {
     "Builds a watchlist portfolio run; compare return, drawdown, volatility, and benchmark alpha before sizing ideas.",
   volatility:
     "Ranks realized volatility and expected range; use it to size risk and spot regime changes across the list.",
+  "peer-forecast":
+    "TabICL v2 in-context forecast of the ticker's forward excess return vs its sector ETF, ranked against curated sector peers with a predicted-vs-realized check. Unavailable (not an error) when no tabular model is configured.",
   analysis:
     "Generates an equity brief and scanner pass; use ranks, sector context, and data gaps as diligence starters.",
   "ticker-research":
@@ -83,6 +86,7 @@ const fieldRules = {
   alerts: [...sharedFields, "period", "interval", "max-alerts", "vol-threshold", "min-materiality"],
   portfolio: [...sharedFields, "start-date", "end-date", "interval", "investment", "benchmark"],
   volatility: [...sharedFields, "interval"],
+  "peer-forecast": [],
   analysis: [...sharedFields],
   "ticker-research": [],
 };
@@ -477,6 +481,7 @@ function commandLabel(mode) {
       alerts: "alerts",
       portfolio: "portfolio",
       volatility: "volatility",
+      "peer-forecast": "peers",
       analysis: "brief",
       "ticker-research": "research-packet",
     }[mode] || mode
@@ -545,7 +550,8 @@ async function fetchChart(payload, run = null) {
   const data = await response.json();
   ensureRunIsActive(run);
   if (!response.ok) {
-    throw new Error(data.error || "Could not generate chart");
+    // Fail-open packs (peer-forecast) answer 503 {available:false, reason}.
+    throw new Error(data.error || data.reason || "Could not generate chart");
   }
   sourceChip.textContent = data.provider || "provider";
   state.lastExport = data.export || data;

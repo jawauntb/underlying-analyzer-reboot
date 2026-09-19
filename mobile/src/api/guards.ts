@@ -1,4 +1,4 @@
-import { MATERIALITY_LEVELS } from './contracts';
+import { MATERIALITY_LEVELS, PEER_FORECAST_BUCKETS, PEER_FORECAST_HORIZONS } from './contracts';
 import type {
   AgentChatResponse,
   AlertMateriality,
@@ -12,6 +12,10 @@ import type {
   OptionChainRow,
   ProviderStatusResponse,
   MoneylineResponse,
+  PeerForecastBucket,
+  PeerForecastHorizon,
+  PeerForecastPeer,
+  PeerForecastResponse,
   ResolveWatchlistResponse,
   SecurityAssetType,
   SecuritySearchResponse,
@@ -501,6 +505,81 @@ export function normalizeMoneyline(value: unknown): MoneylineResponse {
     ticker,
     meta: isRecord(payload.meta) ? payload.meta : {},
     rows,
+  };
+}
+
+function isPeerForecastBucket(value: unknown): value is PeerForecastBucket {
+  return typeof value === 'string' && (PEER_FORECAST_BUCKETS as readonly string[]).includes(value);
+}
+
+function bucketProbabilities(value: unknown): Record<PeerForecastBucket, number> | null {
+  if (!isRecord(value)) return null;
+  const out = {} as Record<PeerForecastBucket, number>;
+  for (const bucket of PEER_FORECAST_BUCKETS) {
+    const probability = optionalNumber(value[bucket]);
+    if (probability === null || probability < 0 || probability > 1) return null;
+    out[bucket] = probability;
+  }
+  return out;
+}
+
+function peerForecastPeer(value: unknown): PeerForecastPeer | null {
+  if (!isRecord(value)) return null;
+  const symbol = safeSymbol(value.symbol);
+  const probabilities = bucketProbabilities(value.probabilities);
+  const confidence = optionalNumber(value.confidence);
+  if (!symbol || !isPeerForecastBucket(value.bucket) || !probabilities || confidence === null) return null;
+  return {
+    symbol,
+    bucket: value.bucket,
+    expectedExcessReturn: optionalNumber(value.expected_excess_return),
+    probabilities,
+    confidence: Math.max(0, Math.min(1, confidence)),
+    realizedExcessReturnLast: optionalNumber(value.realized_excess_return_last),
+    predictedExcessReturnLast: optionalNumber(value.predicted_excess_return_last),
+  };
+}
+
+/** SHARED CONTRACT for the TabICL peer forecast. A 503 never reaches this: the client maps it first. */
+export function normalizePeerForecast(value: unknown): PeerForecastResponse {
+  const payload = record(value, 'Peer forecast response');
+  if (payload.available !== true) throw new ContractError('Peer forecast response is not available.');
+  const ticker = safeSymbol(payload.ticker);
+  const sector = string(payload.sector).trim();
+  const sectorEtf = safeSymbol(payload.sector_etf);
+  const horizon = optionalNumber(payload.horizon_months);
+  const probabilities = bucketProbabilities(payload.probabilities);
+  const confidence = optionalNumber(payload.confidence);
+  if (
+    !ticker || !sector || !sectorEtf || !isPeerForecastBucket(payload.bucket) || !probabilities
+    || confidence === null || horizon === null
+    || !(PEER_FORECAST_HORIZONS as readonly number[]).includes(horizon)
+  ) {
+    throw new ContractError('Peer forecast response is missing ticker/sector/bucket/probabilities.');
+  }
+  const peers = array(payload.peers).flatMap((item) => {
+    const peer = peerForecastPeer(item);
+    return peer ? [peer] : [];
+  });
+  return {
+    chartType: 'peer-forecast',
+    available: true,
+    ticker,
+    sector,
+    sectorEtf,
+    horizonMonths: horizon as PeerForecastHorizon,
+    method: string(payload.method, 'tabicl_v2_icl'),
+    asOf: string(payload.as_of),
+    bucket: payload.bucket,
+    probabilities,
+    expectedExcessReturn: optionalNumber(payload.expected_excess_return),
+    confidence: Math.max(0, Math.min(1, confidence)),
+    confidenceFloor: optionalNumber(payload.confidence_floor) ?? 0.55,
+    contextRows: optionalNumber(payload.context_rows) ?? 0,
+    features: stringArray(payload.features),
+    queryDate: string(payload.query_date) || null,
+    lastLabeledDate: string(payload.last_labeled_date) || null,
+    peers,
   };
 }
 

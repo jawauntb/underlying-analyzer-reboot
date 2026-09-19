@@ -1,0 +1,11 @@
+# Optional: the in-process TabICL v2 tabular model (BSD-3-Clause code + checkpoints).
+# NOT part of requirements.txt on purpose - it pulls torch. Install only where you
+# want local inference (a workstation, the eval script, or the Modal image in
+# modal_tabular.py). Production reaches the model over TABULAR_INFERENCE_URL instead.
+#
+#   python -m pip install -r requirements-tabular.txt
+#   # or: python -m pip install -e '.[tabular]'
+#
+# For a CPU-only torch wheel, install torch first:
+#   python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+tabicl>=2.2,<3

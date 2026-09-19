@@ -12,6 +12,7 @@ export const API_ENDPOINTS = {
   auction: '/api/data/charts/auction',
   torque: '/api/data/tools/torque',
   moneyline: '/api/data/tools/moneyline',
+  peerForecast: '/api/tabular/peer-forecast/{ticker}',
   agentChat: '/api/agent/chat',
   agentStream: '/api/agent/chat/stream',
 } as const;

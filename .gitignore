@@ -16,3 +16,7 @@ stock_analysis.log
 
 # Prism engine local cache
 .prism-cache/
+
+# Offline evaluation output (scripts/eval_tabicl_stack.py)
+reports/*
+!reports/README.md

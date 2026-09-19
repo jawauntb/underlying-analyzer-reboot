@@ -17,7 +17,7 @@ is never an empty section.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -327,6 +327,17 @@ def build_citations(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
         else:
             add("stack", f"stack not published: {stack.get('reason') or 'gates not met'}")
 
+    tabular = _section(packet, "tabular")
+    if tabular:
+        add(
+            "tabular",
+            f"TabICL peer forecast {str(tabular.get('bucket') or '').replace('_', ' ')} "
+            f"at {tabular.get('horizon_months')}m (confidence "
+            f"{_pct(tabular.get('confidence'), digits=0)}, expected excess "
+            f"{_pct(tabular.get('expected_excess_return'), sign=True)} vs "
+            f"{tabular.get('sector_etf') or 'sector ETF'})",
+        )
+
     return citations
 
 
@@ -580,6 +591,9 @@ def render_markdown(
         lines.append("Odds unavailable: no base-rate or implied distribution was built.")
     lines.append("")
 
+    # 4b. Quantitative cross-check (TabICL peer forecast) — only when built.
+    lines.extend(_project_tabular(packet, cite=cite))
+
     # 5. The business -------------------------------------------------------
     lines.append("## The business")
     fundamentals = _section(packet, "fundamentals")
@@ -721,6 +735,81 @@ def render_markdown(
     lines.append("")
     lines.append(DISCLAIMER)
     return "\n".join(lines)
+
+
+#: Section heading for the TabICL cross-check (additive; absent when unavailable).
+TABULAR_SECTION_TITLE = "## Quantitative cross-check (TabICL peer forecast)"
+
+
+def _project_tabular(
+    packet: Mapping[str, Any], *, cite: Callable[[str], str] | None = None
+) -> list[str]:
+    """The TabICL peer-forecast cross-check as memo lines.
+
+    Returns ``[]`` when the section is absent so the memo is byte-identical to a
+    build without the model. A bucket is *stated* only when its confidence
+    clears the floor; below it the distribution is shown and the call is left
+    open, so a weak read never masquerades as a strong one. Never buy/sell.
+    """
+    tabular = _section(packet, "tabular")
+    if not tabular:
+        return []
+    from app.peer_forecast import BUCKETS, CONFIDENCE_FLOOR
+
+    ref = cite("tabular") if cite is not None else ""
+    horizon = tabular.get("horizon_months")
+    etf = tabular.get("sector_etf") or "the sector ETF"
+    confidence = _finite(tabular.get("confidence")) or 0.0
+    floor = _finite(tabular.get("confidence_floor"))
+    floor = floor if floor is not None else CONFIDENCE_FLOOR
+    bucket = str(tabular.get("bucket") or "").replace("_", " ")
+    raw_probs = tabular.get("probabilities")
+    probs: Mapping[str, Any] = raw_probs if isinstance(raw_probs, Mapping) else {}
+    lines = [TABULAR_SECTION_TITLE]
+    if confidence >= floor and bucket:
+        lines.append(
+            f"The in-context tabular model reads {packet.get('ticker')} as **{bucket}** its "
+            f"{tabular.get('sector') or 'sector'} peers over {horizon} months "
+            f"({_pct(confidence, digits=0)} confidence), a probability-weighted excess return "
+            f"of {_pct(tabular.get('expected_excess_return'), sign=True)} vs {etf} {ref}."
+        )
+    else:
+        lines.append(
+            f"No single bucket clears the {_pct(floor, digits=0)} confidence floor for "
+            f"{packet.get('ticker')} over {horizon} months (top bucket '{bucket}' at "
+            f"{_pct(confidence, digits=0)}); the probability-weighted excess return is "
+            f"{_pct(tabular.get('expected_excess_return'), sign=True)} vs {etf} {ref}."
+        )
+    dist = ", ".join(
+        f"{b.replace('_', ' ')} {_pct(probs.get(b), digits=0)}" for b in BUCKETS if b in probs
+    )
+    if dist:
+        lines.append(f"Bucket probabilities (context quintiles): {dist}.")
+    raw_peers = tabular.get("peers")
+    peers: list[Any] = raw_peers if isinstance(raw_peers, list) else []
+    ranked = [
+        p for p in peers
+        if isinstance(p, Mapping) and _finite(p.get("expected_excess_return")) is not None
+    ]
+    if ranked:
+        ranked.sort(key=lambda p: float(p["expected_excess_return"]), reverse=True)
+        position = next(
+            (i for i, p in enumerate(ranked, start=1) if p.get("symbol") == packet.get("ticker")),
+            None,
+        )
+        top = ", ".join(
+            f"{p.get('symbol')} {_pct(p.get('expected_excess_return'), sign=True)}"
+            for p in ranked[:3]
+        )
+        rank_bit = f"ranks {position} of {len(ranked)}" if position else "is not ranked"
+        lines.append(f"{packet.get('ticker')} {rank_bit} in the sector cross-section; top: {top}.")
+    lines.append(
+        f"Method: {tabular.get('method') or 'tabicl_v2_icl'} on {tabular.get('context_rows')} "
+        f"purged context rows ({', '.join(str(f) for f in tabular.get('features') or [])}); "
+        "a cross-check on the stack and the odds, not a forecast on its own."
+    )
+    lines.append("")
+    return lines
 
 
 def _implied_history_disagreements(packet: Mapping[str, Any]) -> list[str]:

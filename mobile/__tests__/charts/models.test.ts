@@ -1,6 +1,7 @@
 import {
   normalizeAuctionChart,
   normalizeMoneylineChart,
+  normalizePeerForecastChart,
   normalizeTorqueChart,
 } from '@/src/components/charts/models';
 
@@ -125,5 +126,73 @@ describe('moneyline chart model', () => {
     expect(result.data[0].putCallRatio).toBeNull();
     expect(result.positioningAvailable).toBe(false);
     expect(result.warnings).toContain('Options positioning is unavailable.');
+  });
+});
+
+describe('peer forecast chart model', () => {
+  const peer = (symbol: string, expected: number, extra: Record<string, unknown> = {}) => ({
+    symbol,
+    bucket: expected >= 0 ? 'over' : 'under',
+    expected_excess_return: expected,
+    probabilities: { strong_under: 0.1, under: 0.1, inline: 0.2, over: 0.3, strong_over: 0.3 },
+    confidence: 0.3,
+    realized_excess_return_last: expected / 2,
+    predicted_excess_return_last: expected / 3,
+    ...extra,
+  });
+
+  it('ranks peers by expected excess return, flags the focus ticker, and pairs the backtest', () => {
+    const result = normalizePeerForecastChart({
+      ticker: 'nvda',
+      sector_etf: 'XLK',
+      horizon_months: 3,
+      bucket: 'over',
+      confidence: 0.72,
+      confidence_floor: 0.55,
+      expected_excess_return: 0.031,
+      last_labeled_date: '2026-05-31',
+      peers: [peer('AAPL', 0.01), peer('NVDA', 0.031), peer('AMD', -0.02)],
+    });
+
+    expect(result.ranked.map((bar) => [bar.rank, bar.symbol, bar.isFocus])).toEqual([
+      [1, 'NVDA', true],
+      [2, 'AAPL', false],
+      [3, 'AMD', false],
+    ]);
+    expect(result.pairs.map((pair) => pair.symbol)).toEqual(['AAPL', 'NVDA', 'AMD']);
+    expect(result.statesBucket).toBe(true);
+    expect(result.sectorEtf).toBe('XLK');
+    expect(result.horizonMonths).toBe(3);
+    expect(result.lastLabeledDate).toBe('2026-05-31');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('reads the /api/data/charts dataset shape and drops malformed rows without inventing pairs', () => {
+    const result = normalizePeerForecastChart({
+      chart_type: 'peer-forecast',
+      meta: { ticker: 'NVDA', bucket: 'inline', confidence: 0.4, confidence_floor: 0.55 },
+      series: {
+        ranked: [
+          { symbol: 'NVDA', bucket: 'inline', expected_excess_return: 0.004, confidence: 0.4 },
+          { symbol: 'AAPL', bucket: 'over', expected_excess_return: Number.NaN, confidence: 0.4 },
+          'junk',
+        ],
+        predicted_vs_realized: [],
+      },
+    });
+
+    expect(result.ranked).toHaveLength(1);
+    expect(result.ranked[0].isFocus).toBe(true);
+    expect(result.pairs).toEqual([]);
+    expect(result.statesBucket).toBe(false);
+    expect(result.droppedPointCount).toBe(2);
+    expect(result.warnings).toContain('2 peer forecast rows were dropped.');
+    expect(result.warnings).toContain('No labelled cross-section to compare against yet.');
+  });
+
+  it('reports an unavailable model for an empty payload', () => {
+    const result = normalizePeerForecastChart(null);
+    expect(result.ranked).toEqual([]);
+    expect(result.warnings).toEqual(['Peer forecast is unavailable.']);
   });
 });

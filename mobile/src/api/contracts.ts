@@ -286,6 +286,52 @@ export type TorqueResponse = ChartDataset & {
   torque: Record<string, unknown>;
 };
 
+export const PEER_FORECAST_BUCKETS = ['strong_under', 'under', 'inline', 'over', 'strong_over'] as const;
+export type PeerForecastBucket = (typeof PEER_FORECAST_BUCKETS)[number];
+export const PEER_FORECAST_HORIZONS = [1, 2, 3, 6, 12] as const;
+export type PeerForecastHorizon = (typeof PEER_FORECAST_HORIZONS)[number];
+
+export type PeerForecastPeer = {
+  symbol: string;
+  bucket: PeerForecastBucket;
+  /** Decimal forward excess return vs the sector ETF; null when the model gave no expectation. */
+  expectedExcessReturn: number | null;
+  probabilities: Record<PeerForecastBucket, number>;
+  /** Top bucket probability, 0..1. */
+  confidence: number;
+  realizedExcessReturnLast: number | null;
+  predictedExcessReturnLast: number | null;
+};
+
+/**
+ * `GET /api/tabular/peer-forecast/{ticker}` (TabICL v2 in-context sector cross-section).
+ * The backend answers 503 `{available: false, reason}` whenever the model is off; the
+ * Lens hides its card in that case instead of showing an error.
+ */
+export type PeerForecastResponse = {
+  chartType: 'peer-forecast';
+  available: true;
+  ticker: string;
+  sector: string;
+  sectorEtf: string;
+  horizonMonths: PeerForecastHorizon;
+  method: string;
+  asOf: string;
+  bucket: PeerForecastBucket;
+  probabilities: Record<PeerForecastBucket, number>;
+  expectedExcessReturn: number | null;
+  confidence: number;
+  /** The bar a point call must clear before the UI states the bucket (backend-owned). */
+  confidenceFloor: number;
+  contextRows: number;
+  features: string[];
+  queryDate: string | null;
+  lastLabeledDate: string | null;
+  peers: PeerForecastPeer[];
+};
+
+export type PeerForecastRequest = { ticker: string; horizon?: PeerForecastHorizon };
+
 export type MoneylineRequest = { ticker: string; expiry?: string };
 
 export type MoneylineRow = {

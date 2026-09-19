@@ -75,6 +75,7 @@ describe('endpoint and configuration safety', () => {
       auction: '/api/data/charts/auction',
       torque: '/api/data/tools/torque',
       moneyline: '/api/data/tools/moneyline',
+      peerForecast: '/api/tabular/peer-forecast/{ticker}',
       agentChat: '/api/agent/chat',
       agentStream: '/api/agent/chat/stream',
     });
@@ -392,6 +393,47 @@ describe('ApiClient', () => {
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]).toMatchObject({ strike: 100, callOpenInterest: 2, putOpenInterest: 1 });
     expect(result).not.toHaveProperty('series');
+  });
+
+  it('fetches the peer forecast with a horizon query and surfaces the 503 fail-open as a typed status', async () => {
+    const fetchMock = jest.fn().mockResolvedValueOnce(response({
+      body: {
+        available: true,
+        ticker: 'NVDA',
+        sector: 'technology',
+        sector_etf: 'XLK',
+        horizon_months: 3,
+        method: 'tabicl_v2_icl',
+        as_of: '2026-08-31',
+        bucket: 'over',
+        probabilities: { strong_under: 0.1, under: 0.1, inline: 0.2, over: 0.4, strong_over: 0.2 },
+        expected_excess_return: 0.021,
+        confidence: 0.4,
+        confidence_floor: 0.55,
+        context_rows: 1400,
+        features: ['mom_12_1'],
+        peers: [
+          { symbol: 'NVDA', bucket: 'over', expected_excess_return: 0.021, probabilities: { strong_under: 0.1, under: 0.1, inline: 0.2, over: 0.4, strong_over: 0.2 }, confidence: 0.4, realized_excess_return_last: 0.01 },
+          { symbol: 'BAD', bucket: 'sideways', expected_excess_return: 0.0, probabilities: {}, confidence: 0.5 },
+        ],
+      },
+    })).mockResolvedValueOnce(response({ status: 503, body: { available: false, reason: 'no tabular model' } }));
+    const client = new ApiClient({ baseUrl: 'https://api.test', fetchImpl: fetchMock });
+
+    const forecast = await client.peerForecast({ ticker: 'nvda', horizon: 3 });
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/tabular/peer-forecast/NVDA?horizon=3');
+    expect(forecast.chartType).toBe('peer-forecast');
+    expect(forecast.bucket).toBe('over');
+    expect(forecast.confidence).toBe(0.4);
+    expect(forecast.peers.map((peer) => peer.symbol)).toEqual(['NVDA']);
+    expect(forecast.peers[0].realizedExcessReturnLast).toBe(0.01);
+    expect(forecast.peers[0].predictedExcessReturnLast).toBeNull();
+
+    await expect(client.peerForecast({ ticker: 'NVDA' })).rejects.toMatchObject({
+      kind: 'http',
+      status: 503,
+      message: 'no tabular model',
+    });
   });
 
   it('turns HTML and JSON failures into typed ApiError values', async () => {

@@ -30,6 +30,7 @@ CHART_TYPES: tuple[str, ...] = (
     "torque",
     "portfolio",
     "volatility",
+    "peer-forecast",
 )
 
 GROUPS: dict[str, str] = {
@@ -218,12 +219,13 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="render_chart",
         title="Render chart pack",
         group="charts",
-        summary="Render one of eight chart packs for a ticker, list, or watchlist",
+        summary="Render one of nine chart packs for a ticker, list, or watchlist",
         when_to_use=(
             "Use whenever a visual would answer the question faster than prose: "
             "auction for value/acceptance, regression for trend health, "
             "performance for seasonality, volatility for regime, portfolio for "
-            "a basket, ridge-growth / flow-compass / torque for signal state."
+            "a basket, ridge-growth / flow-compass / torque for signal state, "
+            "peer-forecast for the TabICL sector cross-section (503 when the model is off)."
         ),
         method="POST",
         path="/api/charts/{chart_type}",
@@ -255,6 +257,11 @@ TOOLS: tuple[ToolSpec, ...] = (
                     "type": "number",
                     "description": "Portfolio sizing per name",
                 },
+                "horizon": {
+                    "type": "integer",
+                    "enum": [1, 2, 3, 6, 12],
+                    "description": "Forward horizon in months, peer-forecast pack only (default 3)",
+                },
             },
             required=["chart_type"],
         ),
@@ -266,7 +273,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="chart_data",
         title="Chart data pack",
         group="data",
-        summary=("Return chartable JSON series for one of eight chart packs (no rendered images)"),
+        summary=("Return chartable JSON series for one of nine chart packs (no rendered images)"),
         when_to_use=(
             "Prefer this over render_chart when an upstream UI will draw its own "
             "charts. Same inputs and math as render_chart; response carries "
@@ -301,6 +308,11 @@ TOOLS: tuple[ToolSpec, ...] = (
                 "investment_per_stock": {
                     "type": "number",
                     "description": "Portfolio sizing per name",
+                },
+                "horizon": {
+                    "type": "integer",
+                    "enum": [1, 2, 3, 6, 12],
+                    "description": "Forward horizon in months, peer-forecast pack only (default 3)",
                 },
             },
             required=["chart_type"],

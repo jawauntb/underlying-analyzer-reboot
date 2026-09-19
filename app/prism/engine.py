@@ -390,6 +390,8 @@ def build_prism_packet(
     text_model: str | None = None,
     persist: bool = True,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    include_tabular: bool = True,
+    tabular_predictor: Any | None = None,
 ) -> dict[str, Any]:
     """Build one full packet for ``ticker``.
 
@@ -560,6 +562,13 @@ def build_prism_packet(
         "eigen",
         lambda: _build_eigen(packet, symbol, series_map, regime_labels),
     )
+
+    # TabICL v2 peer forecast: a cross-check the memo reads beside the factors.
+    # The model is optional, so "not installed" is unavailable, never an error.
+    if include_tabular:
+        _build_tabular(packet, client, symbol, as_of=resolved_as_of, predictor=tabular_predictor)
+    else:
+        set_section(packet, "tabular", None, error="tabular disabled for this build")
     _guard(
         packet,
         "recent",
@@ -1084,6 +1093,50 @@ def _build_eigen(
     return section
 
 
+#: Horizon (months) of the TabICL peer-forecast cross-check.
+TABULAR_HORIZON = 3
+
+
+def _build_tabular(
+    packet: dict[str, Any],
+    client: Any,
+    symbol: str,
+    *,
+    as_of: str,
+    predictor: Any | None,
+    horizon: int = TABULAR_HORIZON,
+) -> Any:
+    """Fill ``packet["tabular"]`` with the same peer forecast Situate carries.
+
+    The forecast is memoised per sector/horizon/as-of inside
+    :mod:`app.peer_forecast`, so Prism and Situate builds on the same day share
+    one model call. Unavailable (no model, thin data, ticker outside the curated
+    universe) leaves the section ``None`` with the reason in ``meta.unavailable``.
+    """
+    from app.tabular import TabularUnavailable
+
+    with _timed(packet, "tabular"):
+        try:
+            from app.peer_forecast import peer_forecast_for_ticker
+            from app.tabular import get_predictor
+
+            resolved = predictor if predictor is not None else get_predictor()
+            value = peer_forecast_for_ticker(
+                symbol, horizon=horizon, predictor=resolved, client=client, as_of=as_of
+            )
+        except TabularUnavailable as exc:
+            packet["tabular"] = None
+            packet["tabular_error"] = exc.reason
+            record_unavailable(packet, "tabular", exc.reason)
+            return None
+        except Exception as exc:  # noqa: BLE001 - one section must never sink the build
+            set_section(packet, "tabular", None, error=f"{type(exc).__name__}: {exc}")
+            return None
+    set_section(packet, "tabular", dict(value))
+    packet["meta"].setdefault("source_status", {})["tabular"] = "available"
+    return value
+
+
 def _build_memo(
     packet: Mapping[str, Any],
     text_generator: Any | None,
@@ -1225,6 +1278,7 @@ def prism_summary(packet: Mapping[str, Any], *, max_news: int = 5) -> dict[str, 
                 "volatility",
                 "levels",
                 "news",
+                "tabular",
                 "scenarios",
                 "recent",
                 "memo",
