@@ -42,6 +42,108 @@ AGENT_REQUEST_SCHEMA: dict[str, Any] = {
     "required": ["messages"],
 }
 
+_PEER_FORECAST_BUCKETS = ["strong_under", "under", "inline", "over", "strong_over"]
+_PROBABILITIES_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        bucket: {"type": "number", "minimum": 0, "maximum": 1} for bucket in _PEER_FORECAST_BUCKETS
+    },
+    "required": list(_PEER_FORECAST_BUCKETS),
+}
+
+TABULAR_PREDICT_REQUEST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "task": {"type": "string", "enum": ["classification", "regression"]},
+        "columns": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100},
+        "categorical": {"type": "array", "items": {"type": "string"}},
+        "context": {
+            "type": "object",
+            "properties": {
+                "rows": {"type": "array", "items": {"type": "array"}, "maxItems": 20000},
+                "target": {"type": "array"},
+            },
+            "required": ["rows", "target"],
+        },
+        "query": {
+            "type": "object",
+            "properties": {
+                "rows": {"type": "array", "items": {"type": "array"}, "maxItems": 2000},
+            },
+            "required": ["rows"],
+        },
+        "options": {
+            "type": "object",
+            "properties": {
+                "max_context_rows": {
+                    "type": "integer", "minimum": 1, "maximum": 20000, "default": 8000
+                },
+                "n_estimators": {"type": "integer", "minimum": 1, "maximum": 32, "default": 4},
+            },
+        },
+    },
+    "required": ["task", "columns", "context", "query"],
+}
+
+TABULAR_PREDICT_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "method": {"type": "string", "const": "tabicl_v2"},
+        "task": {"type": "string", "enum": ["classification", "regression"]},
+        "context_rows_used": {"type": "integer"},
+        "predictions": {"type": "array"},
+        "classes": {"type": "array", "description": "classification only"},
+        "probabilities": {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "number"}},
+            "description": "classification only; one row per query row, aligned with classes",
+        },
+    },
+    "required": ["method", "context_rows_used", "predictions"],
+}
+
+PEER_FORECAST_PEER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "symbol": {"type": "string"},
+        "bucket": {"type": "string", "enum": _PEER_FORECAST_BUCKETS},
+        "expected_excess_return": {"type": ["number", "null"]},
+        "probabilities": _PROBABILITIES_SCHEMA,
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "realized_excess_return_last": {"type": ["number", "null"]},
+        "predicted_excess_return_last": {"type": ["number", "null"]},
+    },
+    "required": ["symbol", "bucket", "expected_excess_return", "probabilities", "confidence"],
+}
+
+PEER_FORECAST_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "available": {"type": "boolean", "const": True},
+        "ticker": {"type": "string"},
+        "sector": {"type": "string"},
+        "sector_etf": {"type": "string"},
+        "horizon_months": {"type": "integer", "enum": [1, 2, 3, 6, 12]},
+        "method": {"type": "string", "const": "tabicl_v2_icl"},
+        "as_of": {"type": "string"},
+        "bucket": {"type": "string", "enum": _PEER_FORECAST_BUCKETS},
+        "probabilities": _PROBABILITIES_SCHEMA,
+        "expected_excess_return": {
+            "type": ["number", "null"],
+            "description": "Decimal excess return vs the sector ETF over the horizon",
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "context_rows": {"type": "integer"},
+        "features": {"type": "array", "items": {"type": "string"}},
+        "peers": {"type": "array", "items": PEER_FORECAST_PEER_SCHEMA},
+    },
+    "required": [
+        "available", "ticker", "sector", "sector_etf", "horizon_months", "method", "as_of",
+        "bucket", "probabilities", "expected_excess_return", "confidence", "context_rows",
+        "features", "peers",
+    ],
+}
+
 # Routes that exist for humans and infrastructure rather than as agent tools.
 SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     {
@@ -431,6 +533,51 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "method": "GET",
+        "path": "/api/tabular/",
+        "tag": "tabular",
+        "summary": "Tabular model (TabICL v2) descriptor and routes",
+    },
+    {
+        "method": "POST",
+        "path": "/api/tabular/predict",
+        "tag": "tabular",
+        "summary": "Generic in-context tabular inference (classification or regression)",
+        "request_schema": TABULAR_PREDICT_REQUEST_SCHEMA,
+        "success_schema": TABULAR_PREDICT_RESPONSE_SCHEMA,
+        "error_responses": {
+            "400": "Malformed request or a contract cap exceeded",
+            "503": "No tabular model available (fail-open: {available: false, reason})",
+        },
+    },
+    {
+        "method": "GET",
+        "path": "/api/tabular/peer-forecast/{ticker}",
+        "tag": "tabular",
+        "summary": "Forward excess-return bucket vs sector peers (TabICL v2, quintile classes)",
+        "parameters": [
+            {"name": "ticker", "in": "path", "required": True, "schema": {"type": "string"}},
+            {
+                "name": "horizon",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "integer", "enum": [1, 2, 3, 6, 12], "default": 3},
+                "description": "Forward horizon in months",
+            },
+            {
+                "name": "as_of",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "format": "date"},
+            },
+        ],
+        "success_schema": PEER_FORECAST_RESPONSE_SCHEMA,
+        "error_responses": {
+            "400": "Malformed ticker or horizon",
+            "503": "Forecast unavailable (fail-open: {available: false, reason})",
+        },
+    },
+    {
+        "method": "GET",
         "path": "/api/openapi",
         "tag": "meta",
         "summary": "This document",
@@ -567,6 +714,7 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
             {"name": "mcp", "description": "Model Context Protocol transport"},
             {"name": "agent", "description": "The in-product research agent"},
             {"name": "alerts", "description": "Saved alert rules and delivery"},
+            {"name": "tabular", "description": "TabICL v2 in-context tabular model (optional)"},
         ],
         "paths": paths,
         "components": {

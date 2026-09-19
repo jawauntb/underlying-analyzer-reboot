@@ -49,6 +49,8 @@ MACRO_SERIES: tuple[str, ...] = ("DGS10", "DGS2", "BAMLH0A0HYM2", "VIXCLS")
 
 #: Cap on the cross-sectional stack universe so the extra panel load stays bounded.
 STACK_UNIVERSE_LIMIT = 60
+#: Horizon (months) of the TabICL peer-forecast cross-check carried in ``tabular``.
+TABULAR_HORIZON = 3
 
 
 class SituateEngineError(RuntimeError):
@@ -350,6 +352,8 @@ def build_situate_packet(
     text_model: str | None = None,
     persist: bool = True,
     include_stack: bool = True,
+    include_tabular: bool = True,
+    tabular_predictor: Any | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> dict[str, Any]:
     """Build one full Situate packet for ``ticker``.
@@ -357,6 +361,9 @@ def build_situate_packet(
     ``force`` bypasses today's stored packet and rebuilds. ``include_memo=False``
     returns everything except the narrative. The build never raises for a data
     outage: every gap is recorded in ``meta`` and the packet still validates.
+    ``tabular_predictor`` injects the tabular model (tests); by default the
+    TabICL peer forecast resolves one from the environment and the ``tabular``
+    section is simply ``null`` with a reason when none is available.
     """
     from app.prism.data import resolve_as_of
 
@@ -588,6 +595,8 @@ def build_situate_packet(
     _guard(packet, "levels", _build_levels)
 
     # --------------------------------------------------------------- stack
+    stack_panels: dict[str, Any] = {}
+
     if include_stack:
 
         def _build_stack() -> Any:
@@ -601,6 +610,7 @@ def build_situate_packet(
             stack_panel = _load_panel(
                 client, wanted, as_of=resolved_as_of, years=years, cache=prism_cache
             )
+            stack_panels["panel"] = stack_panel
             return build_stack(
                 stack_panel, symbol, universe=universe, etf_of=etf_of, as_of=resolved_as_of
             )
@@ -608,6 +618,21 @@ def build_situate_packet(
         _guard(packet, "stack", _build_stack)
     else:
         set_section(packet, "stack", None, error="stack disabled for this build")
+
+    # ------------------------------------------------------------- tabular
+    # TabICL v2 peer forecast: the quantitative cross-check the memo reads
+    # beside the stack. Optional model, so it is honest about being absent.
+    if include_tabular:
+        _build_tabular_section(
+            packet,
+            client,
+            symbol,
+            as_of=resolved_as_of,
+            predictor=tabular_predictor,
+            panel=stack_panels.get("panel"),
+        )
+    else:
+        set_section(packet, "tabular", None, error="tabular disabled for this build")
 
     # ------------------------------------------------- odds + scenarios
     def _build_odds() -> Any:
@@ -664,7 +689,7 @@ def build_situate_packet(
     if prism_cache is not None:
         _modules = (
             "exposure", "state", "base_rates", "implied",
-            "fundamentals", "text", "levels", "stack",
+            "fundamentals", "text", "levels", "stack", "tabular",
         )
         for module in _modules:
             _persist_module(prism_cache, symbol, resolved_as_of, module, packet.get(module))
@@ -681,6 +706,59 @@ def build_situate_packet(
             record_error(packet, "store", f"could not persist packet: {exc}")
 
     return packet
+
+
+def _build_tabular_section(
+    packet: dict[str, Any],
+    client: Any,
+    symbol: str,
+    *,
+    as_of: str,
+    predictor: Any | None,
+    panel: Any | None,
+    horizon: int = TABULAR_HORIZON,
+) -> Any:
+    """Fill ``packet["tabular"]`` with the TabICL peer forecast, or say why not.
+
+    A missing model (``tabicl`` not installed and no ``TABULAR_INFERENCE_URL``)
+    or too little data is *unavailable*, not an error: the section stays ``None``
+    with the reason beside it and in ``meta.unavailable``. Only an unexpected
+    exception lands in ``meta.errors``.
+    """
+    from app.tabular import TabularUnavailable
+
+    with _timed(packet, "tabular"):
+        try:
+            from app.peer_forecast import peer_forecast_for_ticker
+            from app.tabular import get_predictor
+
+            resolved_predictor = predictor if predictor is not None else get_predictor()
+            value = peer_forecast_for_ticker(
+                symbol,
+                horizon=horizon,
+                predictor=resolved_predictor,
+                client=client,
+                panel=panel,
+                as_of=as_of,
+            )
+        except TabularUnavailable as exc:
+            packet["tabular"] = None
+            packet["tabular_error"] = exc.reason
+            record_unavailable(packet, "tabular", exc.reason)
+            return None
+        except Exception as exc:  # noqa: BLE001 - one section must never sink the build
+            set_section(packet, "tabular", None, error=f"{type(exc).__name__}: {exc}")
+            return None
+    value = dict(value)
+    value.setdefault("version", TABULAR_VERSION)
+    set_section(packet, "tabular", value)
+    packet["meta"].setdefault("source_status", {})["tabular"] = "available"
+    record_version(packet, "tabular", TABULAR_VERSION)
+    return value
+
+
+#: Version stamped into ``meta.versions`` for the tabular cross-check citations.
+TABULAR_VERSION = "1.0.0"
 
 
 # --------------------------------------------------------------------------
@@ -747,6 +825,16 @@ def situate_summary(packet: Mapping[str, Any], *, max_events: int = 5) -> dict[s
         },
         "odds": odds_view,
         "stack_published": bool(_sec("stack").get("published")),
+        "tabular": (
+            {
+                "bucket": _sec("tabular").get("bucket"),
+                "confidence": _sec("tabular").get("confidence"),
+                "expected_excess_return": _sec("tabular").get("expected_excess_return"),
+                "horizon_months": _sec("tabular").get("horizon_months"),
+            }
+            if _sec("tabular")
+            else None
+        ),
         "events": [
             {"date": e.get("date"), "headline": e.get("headline"), "sentiment": e.get("sentiment")}
             for e in events[: max(1, int(max_events))]
@@ -757,7 +845,8 @@ def situate_summary(packet: Mapping[str, Any], *, max_events: int = 5) -> dict[s
             name
             for name in (
                 "profile", "exposure", "state", "base_rates", "implied",
-                "fundamentals", "text", "levels", "stack", "odds", "scenarios", "memo",
+                "fundamentals", "text", "levels", "stack", "tabular", "odds", "scenarios",
+                "memo",
             )
             if packet.get(name) is None
         ],

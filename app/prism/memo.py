@@ -645,6 +645,7 @@ def project_packet(packet: Mapping[str, Any], *, max_chars: int = DEFAULT_PROJEC
     head += _project_macro(packet)
     head += _project_relational(packet)
     head += _project_factors(packet)
+    head += _project_tabular(packet)
     head += _project_regimes(packet)
     head += _project_entropy_spectral(packet)
     head += _project_eigen(packet)
@@ -888,6 +889,65 @@ def _project_factors(packet: Mapping[str, Any]) -> list[str]:
             f"60d {_pct(residuals.get('last_60d_cum'))}, "
             f"z {_num(residuals.get('z_score'), digits=2)}"
         )
+    lines.append("")
+    return lines
+
+
+def _project_tabular(packet: Mapping[str, Any]) -> list[str]:
+    """The TabICL peer-forecast cross-check (``packet["tabular"]``).
+
+    Additive: returns ``[]`` when the section is absent so an existing briefing
+    is unchanged. A point bucket is stated only above the confidence floor.
+    """
+    section = _section(packet, "tabular")
+    if not section:
+        return []
+    from app.peer_forecast import BUCKETS, CONFIDENCE_FLOOR
+
+    confidence = _finite(section.get("confidence")) or 0.0
+    floor = _finite(section.get("confidence_floor"))
+    floor = floor if floor is not None else CONFIDENCE_FLOOR
+    bucket = str(section.get("bucket") or "").replace("_", " ")
+    raw_probs = section.get("probabilities")
+    probs: Mapping[str, Any] = raw_probs if isinstance(raw_probs, Mapping) else {}
+    lines = ["## Quantitative cross-check (TabICL peer forecast)"]
+    lines.append(
+        f"- method: {section.get('method') or 'tabicl_v2_icl'} | sector "
+        f"{section.get('sector')} vs {section.get('sector_etf')} | horizon "
+        f"{section.get('horizon_months')}m | {section.get('context_rows')} purged context rows"
+    )
+    if confidence >= floor and bucket:
+        lines.append(
+            f"- call: {bucket} ({_pct(confidence)} confidence); probability-weighted excess "
+            f"return {_pct(section.get('expected_excess_return'))}"
+        )
+    else:
+        lines.append(
+            f"- no bucket clears the {_pct(floor)} confidence floor (top '{bucket}' at "
+            f"{_pct(confidence)}); probability-weighted excess return "
+            f"{_pct(section.get('expected_excess_return'))} — treat as a distribution, not a call"
+        )
+    lines.append(
+        "- bucket probabilities: "
+        + ", ".join(f"{b.replace('_', ' ')} {_pct(probs.get(b))}" for b in BUCKETS if b in probs)
+    )
+    raw_peers = section.get("peers")
+    peers: list[Any] = raw_peers if isinstance(raw_peers, list) else []
+    ranked = [
+        p for p in peers
+        if isinstance(p, Mapping) and _finite(p.get("expected_excess_return")) is not None
+    ]
+    if ranked:
+        ranked.sort(key=lambda p: float(p["expected_excess_return"]), reverse=True)
+        lines.append(
+            "- sector ranking (expected excess): "
+            + ", ".join(
+                f"{p.get('symbol')} {_pct(p.get('expected_excess_return'))}" for p in ranked[:8]
+            )
+        )
+    lines.append(
+        "- RULE: this is a cross-check on the scenario mixture, never the recommendation itself."
+    )
     lines.append("")
     return lines
 

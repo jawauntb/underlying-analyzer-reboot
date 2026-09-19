@@ -337,6 +337,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
                 "torque",
                 "portfolio",
                 "volatility",
+                "peer-forecast",
             ]
         },
         "body": {
@@ -350,6 +351,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
             "end_date": "YYYY-MM-DD",
             "investment_per_stock": "number",
             "benchmark": "string",
+            "horizon": "int (peer-forecast only: 1|2|3|6|12, default 3)",
         },
     },
     {
@@ -368,6 +370,7 @@ API_ENDPOINTS: list[dict[str, Any]] = [
                 "torque",
                 "portfolio",
                 "volatility",
+                "peer-forecast",
             ]
         },
         "body": {
@@ -381,7 +384,44 @@ API_ENDPOINTS: list[dict[str, Any]] = [
             "end_date": "YYYY-MM-DD",
             "investment_per_stock": "number",
             "benchmark": "string",
+            "horizon": "int (peer-forecast only: 1|2|3|6|12, default 3)",
         },
+    },
+    {
+        "method": "GET",
+        "path": "/api/tabular/",
+        "group": "tabular",
+        "summary": "Tabular model (TabICL v2) descriptor and routes",
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/api/tabular/predict",
+        "group": "tabular",
+        "summary": (
+            "Generic in-context tabular inference (classification or regression); "
+            "503 when no model"
+        ),
+        "auth": "none",
+        "body": {
+            "task": "'classification'|'regression'",
+            "columns": "string[] (max 100)",
+            "categorical": "string[]?",
+            "context": "{rows: any[][] (max 20000), target: any[]}",
+            "query": "{rows: any[][] (max 2000)}",
+            "options": "{max_context_rows?: int (default 8000), n_estimators?: int (default 4)}",
+        },
+    },
+    {
+        "method": "GET",
+        "path": "/api/tabular/peer-forecast/{ticker}",
+        "group": "tabular",
+        "summary": (
+            "Forward excess-return bucket vs sector peers (TabICL v2); "
+            "503 fail-open when unavailable"
+        ),
+        "auth": "none",
+        "query": {"horizon": "1|2|3|6|12 (default 3)", "as_of": "YYYY-MM-DD?"},
     },
     {
         "method": "POST",

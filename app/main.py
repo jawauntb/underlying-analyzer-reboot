@@ -65,6 +65,7 @@ from app.articles import (
 from app.chart_data import (
     build_auction_chart_data,
     build_flow_compass_chart_data,
+    build_peer_forecast_chart_data,
     build_performance_chart_data,
     build_portfolio_chart_data,
     build_regression_chart_data,
@@ -77,6 +78,7 @@ from app.charts import (
     build_ridge_growth_memo,
     render_auction_chart,
     render_flow_compass_chart,
+    render_peer_forecast_chart,
     render_performance_chart,
     render_portfolio_chart,
     render_regression_chart,
@@ -116,6 +118,8 @@ from app.openapi import build_openapi_document
 from app.prism.routes import register_prism_routes
 from app.sec import SecClient, SecDataError
 from app.situate.routes import register_situate_routes
+from app.tabular import TabularUnavailable
+from app.tabular_routes import register_tabular_routes, resolve_predictor
 from app.ticker_research import (
     TickerResearchBusyError,
     build_ticker_research_bundle,
@@ -637,6 +641,9 @@ def create_app() -> Flask:
             return jsonify(response)
         except (ValueError, MarketDataError, WatchlistError) as exc:
             return jsonify({"error": str(exc)}), 400
+        except TabularUnavailable as exc:
+            # The peer-forecast pack depends on an optional model: fail open.
+            return jsonify({"available": False, "reason": exc.reason}), 503
         except Exception as exc:
             app.logger.exception("Unexpected chart error")
             return jsonify({"error": f"Unexpected chart error: {exc}"}), 500
@@ -652,6 +659,8 @@ def create_app() -> Flask:
             return jsonify(response)
         except (ValueError, MarketDataError, WatchlistError) as exc:
             return jsonify({"error": str(exc)}), 400
+        except TabularUnavailable as exc:
+            return jsonify({"available": False, "reason": exc.reason}), 503
         except Exception as exc:
             app.logger.exception("Unexpected chart data error")
             return jsonify({"error": f"Unexpected chart data error: {exc}"}), 500
@@ -1293,6 +1302,7 @@ def create_app() -> Flask:
     register_compat_routes(app)
     register_prism_routes(app)
     register_situate_routes(app)
+    register_tabular_routes(app)
     return app
 
 
@@ -2606,7 +2616,54 @@ def build_chart_response(
             watchlist=selection.watchlist,
         )
 
+    if chart_key == "peer-forecast":
+        forecast = peer_forecast_payload(client, payload)
+        image, meta = render_peer_forecast_chart(forecast)
+        return response_payload(
+            [image],
+            PEER_FORECAST_PROVIDER,
+            PEER_FORECAST_NOTE,
+            meta,
+            mode=chart_key,
+            tickers=[str(forecast["ticker"])],
+            watchlist=None,
+        )
+
     raise ValueError(f"Unsupported chart type: {chart_type}")
+
+
+#: Provider label for the peer-forecast pack (the model, not a quote vendor).
+PEER_FORECAST_PROVIDER = "tabicl"
+PEER_FORECAST_NOTE = "TabICL v2 in-context peer forecast over the curated sector universe"
+
+
+def peer_forecast_payload(client: MarketDataClient, payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the SHARED CONTRACT payload behind the ``peer-forecast`` chart pack.
+
+    Raises :class:`TabularUnavailable` (routes answer ``503``) when the model or
+    the data cannot serve, and ``ValueError`` (``400``) on a bad ticker/horizon.
+    """
+    from app.peer_forecast import parse_horizon, peer_forecast_for_ticker
+
+    ticker = clean_ticker(first_ticker(payload))
+    horizon = parse_horizon(payload.get("horizon"))
+    return peer_forecast_for_ticker(
+        ticker,
+        horizon=horizon,
+        predictor=resolve_predictor(),
+        client=peer_forecast_client(client),
+        as_of=str(payload.get("as_of") or "") or None,
+    )
+
+
+def peer_forecast_client(client: MarketDataClient) -> Any:
+    """Prefer the Situate/Prism market client (point-in-time panels) when configured."""
+    try:
+        from app.situate.routes import market_client
+
+        return market_client()
+    except Exception:  # noqa: BLE001 - outside a request/app context fall back to the caller's
+        return client
 
 
 def build_chart_data_response(
@@ -2975,6 +3032,19 @@ def build_chart_data_response(
             mode=f"{chart_key}-data",
             tickers=[history.ticker for history in histories],
             watchlist=selection.watchlist,
+        )
+
+    if chart_key == "peer-forecast":
+        forecast = peer_forecast_payload(client, payload)
+        dataset = build_peer_forecast_chart_data(forecast)
+        return data_response_payload(
+            [dataset],
+            PEER_FORECAST_PROVIDER,
+            PEER_FORECAST_NOTE,
+            dict(dataset["meta"]),
+            mode=f"{chart_key}-data",
+            tickers=[str(forecast["ticker"])],
+            watchlist=None,
         )
 
     raise ValueError(f"Unsupported chart type: {chart_type}")
