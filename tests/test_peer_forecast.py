@@ -569,3 +569,27 @@ def test_situate_engine_carries_the_tabular_section(
     assert not any(row["source"] == "tabular" for row in packet["meta"]["errors"])
     assert "Quantitative cross-check" not in packet["memo"]["text"]
     assert "tabular" in situate_summary(packet)["unavailable_sections"]
+
+
+def test_prism_engine_guarded_tabular_section() -> None:
+    from app.prism.contract import empty_packet, validate_packet
+    from app.prism.engine import _build_tabular
+
+    packet = empty_packet("NVDA", as_of="2026-08-31")
+    value = _build_tabular(
+        packet, FakeClient(), "NVDA", as_of="2026-08-31", predictor=RecordingPredictor()
+    )
+    assert value is not None and packet["tabular"]["ticker"] == "NVDA"
+    assert packet["tabular_error"] is None
+    assert packet["meta"]["source_status"]["tabular"] == "available"
+    assert validate_packet(packet) == []
+
+    pf.clear_peer_forecast_cache()
+    packet = empty_packet("NVDA", as_of="2026-08-31")
+    _build_tabular(
+        packet, FakeClient(), "NVDA", as_of="2026-08-31", predictor=RecordingPredictor(fail=True)
+    )
+    assert packet["tabular"] is None and packet["tabular_error"] == "fake model is down"
+    assert any(row["source"] == "tabular" for row in packet["meta"]["unavailable"])
+    assert not packet["meta"]["errors"]
+    assert validate_packet(packet) == []
