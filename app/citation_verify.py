@@ -21,19 +21,23 @@ sections produce ``concept_missing``, unrecognized formats become
 
 from __future__ import annotations
 
+import hashlib
 import re
+import threading
 import time
 import traceback
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.jev import JevClient, JevError
+from app.jev import JevClient, JevError, parse_choice_answer
 
 __all__ = [
     "CitationCheck",
     "CitationVerificationResult",
     "classify_citation",
+    "classify_citation_regex",
+    "classify_citations",
     "extract_citations",
     "verify_citations",
 ]
@@ -302,6 +306,20 @@ def classify_citation(raw: str, *, jev_client: Any | None = None) -> dict[str, A
     """
 
     body = _strip_parens(raw)
+    matched = classify_citation_regex(raw)
+    if matched is not None:
+        return matched
+    return _classify_citation_with_jev(raw, body, jev_client=jev_client)
+
+
+def classify_citation_regex(raw: str) -> dict[str, Any] | None:
+    """The authoritative regex ladder alone: a ``kind`` dict, or ``None`` on no match.
+
+    Never consults Jev. Shared by :func:`classify_citation` (single, with the
+    per-call Jev fallback) and :func:`classify_citations` (batched fallback).
+    """
+
+    body = _strip_parens(raw)
 
     # SEC 8-K earnings sections must be classified *before* the generic
     # filing pattern, otherwise the filing pattern would swallow them.
@@ -330,7 +348,158 @@ def classify_citation(raw: str, *, jev_client: Any | None = None) -> dict[str, A
     if m:
         return {"kind": "exa", **m.groupdict()}
 
-    return _classify_citation_with_jev(raw, body, jev_client=jev_client)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Batched classification (product endpoint + memo annotations)
+# ---------------------------------------------------------------------------
+
+
+#: Hard cap on one ``POST /api/citations/classify`` request.
+MAX_CLASSIFY_CITATIONS = 200
+#: One Jev ``systemone`` request carries at most this many citation questions.
+_CLASSIFY_BATCH_ITEMS = 50
+#: Jev fallback verdicts are memoized in-process for this long.
+_CLASSIFY_CACHE_TTL_SECONDS = 15 * 60
+#: A failed Jev batch is remembered only briefly so polling does not hammer it.
+_CLASSIFY_FAILURE_TTL_SECONDS = 60
+
+_JEV_QUESTION_INSTRUCTIONS = (
+    "Classify the citation string with id '{qid}' in state.citations, taken "
+    "from a financial research memo, into exactly one of the listed "
+    "categories, or 'unknown' if none fit."
+)
+
+_classify_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_classify_cache_lock = threading.Lock()
+
+
+def clear_classify_cache() -> None:
+    """Drop every memoized Jev citation verdict (tests only)."""
+    with _classify_cache_lock:
+        _classify_cache.clear()
+
+
+def _classify_cache_key(raw: str) -> str:
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _regex_result(citation: str, kind: str) -> dict[str, Any]:
+    return {"citation": citation, "type": kind, "source": "regex", "confidence": None}
+
+
+def classify_citations(
+    citations: Sequence[str],
+    *,
+    jev_client: Any | None = None,
+    now: Any = time.monotonic,
+) -> list[dict[str, Any]]:
+    """Classify many citation strings with ONE batched Jev fallback call.
+
+    Each result is ``{"citation", "type", "source", "confidence"}`` where
+    ``type`` is one of the known kinds or ``"unknown"``, ``source`` is
+    ``"regex"`` when the authoritative ladder matched (``confidence`` is then
+    ``None``) or ``"jev"`` when Jev supplied a confident label, and
+    ``confidence`` is Jev's 0..1 confidence in that case.
+
+    Regex matches are never second-guessed. Every citation the ladder misses
+    is sent to Jev in one ``systemone`` request per 50 items (sharing one
+    ``state``), and any error, missing key, or low-confidence answer leaves
+    that citation as ``{"type": "unknown", "source": "regex"}`` - the exact
+    pre-Jev behavior. This function never raises for Jev reasons.
+    """
+    results: list[dict[str, Any] | None] = [None] * len(citations)
+    pending: list[int] = []
+    started = now()
+
+    with _classify_cache_lock:
+        for index, raw in enumerate(citations):
+            matched = classify_citation_regex(raw)
+            if matched is not None:
+                results[index] = _regex_result(raw, str(matched.get("kind", "unknown")))
+                continue
+            if not _strip_parens(raw).strip():
+                results[index] = _regex_result(raw, "unknown")
+                continue
+            hit = _classify_cache.get(_classify_cache_key(raw))
+            if hit is not None and hit[0] > started:
+                results[index] = {**hit[1], "citation": raw}
+            else:
+                pending.append(index)
+
+    if pending:
+        scored = _classify_pending_with_jev(
+            [citations[index] for index in pending], jev_client=jev_client
+        )
+        with _classify_cache_lock:
+            for index, (verdict, ttl) in zip(pending, scored, strict=True):
+                raw = citations[index]
+                _classify_cache[_classify_cache_key(raw)] = (started + ttl, verdict)
+                results[index] = {**verdict, "citation": raw}
+
+    return [result if result is not None else _regex_result("", "unknown") for result in results]
+
+
+def _classify_pending_with_jev(
+    raws: list[str], *, jev_client: Any | None
+) -> list[tuple[dict[str, Any], float]]:
+    """Batched Jev verdicts; each entry is ``(result_without_citation, cache_ttl)``."""
+    unknown = {"type": "unknown", "source": "regex", "confidence": None}
+    client = jev_client if jev_client is not None else JevClient()
+    if jev_client is None and not getattr(client, "api_key", None):
+        return [(dict(unknown), _CLASSIFY_FAILURE_TTL_SECONDS)] * len(raws)
+
+    out: list[tuple[dict[str, Any], float]] = []
+    for start in range(0, len(raws), _CLASSIFY_BATCH_ITEMS):
+        chunk = raws[start : start + _CLASSIFY_BATCH_ITEMS]
+        ids = [f"c{index}" for index in range(len(chunk))]
+        state = {
+            "citations": [
+                {"id": qid, "citation": raw} for qid, raw in zip(ids, chunk, strict=True)
+            ]
+        }
+        questions = {
+            qid: {
+                "type": "choice",
+                "instructions": _JEV_QUESTION_INSTRUCTIONS.format(qid=qid),
+                "criteria": _CITATION_KIND_LABELS,
+            }
+            for qid in ids
+        }
+        try:
+            answers = client.ask(state, questions)
+        except JevError:
+            out.extend((dict(unknown), _CLASSIFY_FAILURE_TTL_SECONDS) for _ in chunk)
+            continue
+        except Exception:  # noqa: BLE001 - defensive: classification must never raise
+            out.extend((dict(unknown), _CLASSIFY_FAILURE_TTL_SECONDS) for _ in chunk)
+            continue
+
+        for qid in ids:
+            try:
+                answer = parse_choice_answer(answers.get(qid))
+            except JevError:
+                out.append((dict(unknown), _CLASSIFY_FAILURE_TTL_SECONDS))
+                continue
+            if (
+                answer.confidence < _CITATION_JEV_CONFIDENCE_THRESHOLD
+                or answer.choice not in _CITATION_KIND_LABELS
+                or answer.choice == "unknown"
+            ):
+                out.append((dict(unknown), _CLASSIFY_CACHE_TTL_SECONDS))
+                continue
+            out.append(
+                (
+                    {
+                        "type": answer.choice,
+                        "source": "jev",
+                        "confidence": round(min(max(answer.confidence, 0.0), 1.0), 4),
+                    },
+                    _CLASSIFY_CACHE_TTL_SECONDS,
+                )
+            )
+    return out
 
 
 def _classify_citation_with_jev(

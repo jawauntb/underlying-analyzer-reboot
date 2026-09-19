@@ -31,6 +31,7 @@ from app.agent import (
     run_agent_stream,
     select_tools,
 )
+from app.alert_materiality import parse_min_materiality, score_alert_materiality
 from app.alert_scheduler import (
     DEFAULT_SCHEDULED_RULE_LIMIT,
     MAX_SCHEDULED_RULE_LIMIT,
@@ -82,6 +83,7 @@ from app.charts import (
     render_ridge_growth_chart,
     render_volatility_chart,
 )
+from app.citation_verify import MAX_CLASSIFY_CITATIONS, classify_citations
 from app.cockpit import build_cockpit_row
 from app.exa import ExaClient
 from app.market_context import build_market_context, collect_market_context
@@ -762,6 +764,11 @@ def create_app() -> Flask:
     @app.post("/api/watchlists/alerts")
     def watchlist_alerts() -> Any:
         payload = request.get_json(silent=True) or {}
+        # ``?min_materiality=material`` is the documented query form; a body
+        # field of the same name wins when both are present.
+        query_floor = request.args.get("min_materiality")
+        if query_floor is not None and "min_materiality" not in payload:
+            payload = {**payload, "min_materiality": query_floor}
         try:
             response = build_alerts_response(get_market_client(), get_watchlist_client(), payload)
             return jsonify(response)
@@ -1189,6 +1196,26 @@ def create_app() -> Flask:
             return jsonify(build_news_response(get_exa_client(), payload))
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/citations/classify")
+    def citations_classify() -> Any:
+        """Classify citation strings by type (regex ladder first, one batched Jev fallback)."""
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Request body must be a JSON object"}), 400
+        citations = payload.get("citations")
+        if not isinstance(citations, list) or not all(
+            isinstance(item, str) for item in citations
+        ):
+            return jsonify({"error": "citations must be a list of strings"}), 400
+        if len(citations) > MAX_CLASSIFY_CITATIONS:
+            return (
+                jsonify(
+                    {"error": f"citations must contain at most {MAX_CLASSIFY_CITATIONS} items"}
+                ),
+                400,
+            )
+        return jsonify({"results": classify_citations(citations)})
 
     @app.get("/api/openapi")
     def openapi_document() -> Any:
@@ -3099,10 +3126,13 @@ def build_alerts_response(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     cockpit = build_cockpit_response(client, watchlist_client, payload)
+    min_materiality = parse_min_materiality(payload.get("min_materiality"))
     alert_digest = build_alert_digest(
         cockpit["rows"],
         max_alerts=max_alerts(payload),
         volatility_threshold=alert_volatility_threshold(payload),
+        materiality_scorer=score_alert_materiality,
+        min_materiality=min_materiality,
     )
     alerts = alert_digest["alerts"]
     digest = alert_digest["digest"]
@@ -3113,6 +3143,7 @@ def build_alerts_response(
         "medium_alert_count": digest["severity_counts"].get("Medium", 0),
         "info_alert_count": digest["severity_counts"].get("Info", 0),
         "volatility_threshold": alert_volatility_threshold(payload),
+        "min_materiality": min_materiality,
     }
     export = {
         **cockpit["export"],

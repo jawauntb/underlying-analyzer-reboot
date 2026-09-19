@@ -453,6 +453,7 @@ Alert digest over a ticker set or watchlist.
 | `max_alerts` | int | Default `12` |
 | `volatility_threshold` | float | Optional severity threshold |
 | `period` | string | History window when applicable |
+| `min_materiality` | string | Optional `noise`/`minor`/`material`/`urgent` floor (body or `?min_materiality=`) |
 
 ```bash
 curl -s -X POST http://127.0.0.1:5050/api/watchlists/alerts \
@@ -461,6 +462,58 @@ curl -s -X POST http://127.0.0.1:5050/api/watchlists/alerts \
 ```
 
 Response includes `alerts`, `digest`, `rows`, `meta`, and `export`.
+
+Each alert may additionally carry an optional `jev_materiality` object, scored by Jev
+(TypeSafe System 1) in one batched call per page and cached in-process for 15 minutes:
+
+```json
+{"jev_materiality": {"level": "material", "score": 0.71, "confidence": 0.82}}
+```
+
+`level` is one of `noise`, `minor`, `material`, `urgent`; `score` is the
+probability-weighted position on that 0..1 scale; `confidence` is Jev's confidence.
+The field is omitted when Jev is unavailable, `JEV_API_KEY` is unset, or confidence is
+below `0.55`. `min_materiality` drops alerts whose *known* level is below the floor and
+always keeps unscored alerts; `meta.min_materiality` echoes the floor applied (or `null`).
+
+---
+
+## Citations
+
+### `POST /api/citations/classify`
+
+Classify citation strings by type. The regex ladder in `app/citation_verify.py` is
+authoritative; only strings it misses go to Jev, in ONE batched request per 50 citations,
+cached in-process for 15 minutes. Any Jev failure leaves those rows as `unknown`.
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/api/citations/classify \
+  -H 'Content-Type: application/json' \
+  -d '{"citations":["(SEC XBRL Revenue, Q1 FY2027: $137,237M)","(Bloomberg terminal, 2026-05-01)"]}'
+```
+
+```json
+{
+  "results": [
+    {"citation": "(SEC XBRL Revenue, Q1 FY2027: $137,237M)", "type": "sec_xbrl", "source": "regex", "confidence": null},
+    {"citation": "(Bloomberg terminal, 2026-05-01)", "type": "exa", "source": "jev", "confidence": 0.71}
+  ]
+}
+```
+
+`type` is one of `sec_xbrl`, `sec_filing`, `sec_trend_pack`, `sec_earnings_section`,
+`earnings_calendar`, `exa`, `unknown`. `source` is `regex` (confidence `null`) or `jev`
+(confidence `0..1`, always `>= 0.55`). At most 200 citations per request; `400` otherwise.
+
+Prism and Situate packet responses (`POST /api/prism`, `GET /api/prism/{ticker}`,
+`POST /api/situate`, `GET /api/situate/{ticker}` and their aliases) attach the same
+annotation to each `memo.citations[]` row as an additive `citation_type` field, present
+only when the type is known:
+
+```json
+{"id": "C7", "claim": "10-K filed 2026-02-25 ...", "source": "SEC EDGAR", "url": "https://...",
+ "citation_type": {"type": "sec_filing", "source": "jev", "confidence": 0.78}}
+```
 
 ---
 

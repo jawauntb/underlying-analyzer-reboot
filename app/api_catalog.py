@@ -423,8 +423,19 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "method": "POST",
         "path": "/api/watchlists/alerts",
         "group": "watchlists",
-        "summary": "Watchlist alert digest",
+        "summary": "Watchlist alert digest (optional Jev materiality per alert)",
         "auth": "none",
+        "body": {
+            "min_materiality": "'noise'|'minor'|'material'|'urgent'? (also ?min_materiality=)",
+        },
+    },
+    {
+        "method": "POST",
+        "path": "/api/citations/classify",
+        "group": "research",
+        "summary": "Classify citation strings by type (regex ladder, batched Jev fallback)",
+        "auth": "none",
+        "body": {"citations": "string[] (required, max 200)"},
     },
     {
         "method": "GET",

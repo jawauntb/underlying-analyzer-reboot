@@ -1741,6 +1741,31 @@ textarea {
   color: #ffe7a8;
 }
 
+.alert-materiality {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  margin-left: auto;
+  border: 1px solid var(--cyan-line);
+  background: rgba(5, 11, 15, 0.74);
+  color: var(--muted);
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.alert-materiality-material {
+  border-color: rgba(255, 201, 74, 0.58);
+  color: #ffe7a8;
+}
+
+.alert-materiality-urgent {
+  border-color: rgba(255, 105, 93, 0.56);
+  color: #ffd5d0;
+}
+
 .alert-card p {
   margin: 0;
   color: var(--muted);

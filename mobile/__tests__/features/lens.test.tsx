@@ -121,6 +121,7 @@ const overview = (overrides: Partial<WatchlistAlertsResponse> = {}): WatchlistAl
     title: 'Fresh long flow',
     message: 'AAPL printed a fresh long Flow Compass shift.',
     action: 'Compare entry quality against auction value and Ridge state.',
+    materiality: null,
   }],
   digest: {
     generatedAt: '2026-08-19T12:00:00Z',
@@ -258,6 +259,75 @@ describe('LensScreen', () => {
     expect(screen.getByText('31.0%')).toBeTruthy();
     expect(screen.getByText('0.58')).toBeTruthy();
     expect(screen.getByText('$5.00 / $5.40')).toBeTruthy();
+  });
+
+  it('shows Jev materiality badges and a Material only toggle that never hides unscored alerts', async () => {
+    const scoredOverview = overview({
+      alerts: [
+        {
+          id: 'aapl-fresh-long',
+          ticker: 'AAPL',
+          rank: 1,
+          lane: 'Priority',
+          score: 92,
+          severity: 'Medium',
+          category: 'Flow',
+          title: 'Fresh long flow',
+          message: 'AAPL printed a fresh long Flow Compass shift.',
+          action: 'Compare entry quality against auction value and Ridge state.',
+          materiality: { level: 'material', score: 0.71, confidence: 0.82 },
+        },
+        {
+          id: 'aapl-high-volatility',
+          ticker: 'AAPL',
+          rank: 1,
+          lane: 'Priority',
+          score: 92,
+          severity: 'Medium',
+          category: 'Volatility',
+          title: 'High volatility',
+          message: 'AAPL is running at 61.0% annualized volatility.',
+          action: 'Size risk with wider expected range in mind.',
+          materiality: { level: 'minor', score: 0.3, confidence: 0.77 },
+        },
+        {
+          id: 'aapl-ridge-buy',
+          ticker: 'AAPL',
+          rank: 1,
+          lane: 'Priority',
+          score: 92,
+          severity: 'High',
+          category: 'Ridge',
+          title: 'Ridge buy',
+          message: 'AAPL has a Ridge BUY recommendation.',
+          action: 'Confirm flow, auction location, and current price before entry.',
+          materiality: null,
+        },
+      ],
+    });
+    const deps = dependencies({ live: Promise.resolve(scoredOverview) });
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Material · 82%')).toBeTruthy();
+    expect(screen.getByText('Minor · 77%')).toBeTruthy();
+    expect(screen.getByText('High volatility')).toBeTruthy();
+    expect(screen.getByText('Ridge buy')).toBeTruthy();
+
+    fireEvent.press(screen.getByRole('switch', { name: 'Material only' }));
+    expect(screen.getByText('Fresh long flow')).toBeTruthy();
+    expect(screen.queryByText('High volatility')).toBeNull();
+    expect(screen.getByText('Ridge buy')).toBeTruthy();
+
+    fireEvent.press(screen.getByRole('switch', { name: 'Material only' }));
+    expect(screen.getByText('High volatility')).toBeTruthy();
+  });
+
+  it('hides the Material only toggle when no alert carries a Jev score', async () => {
+    const deps = dependencies();
+    render(<LensScreen {...deps.props} />);
+
+    expect(await screen.findByText('Fresh long flow')).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: 'Material only' })).toBeNull();
   });
 
   it('auto-loads the overview and a visible 3-month price chart while deeper research stays explicit', async () => {

@@ -1,6 +1,9 @@
+import { MATERIALITY_LEVELS } from './contracts';
 import type {
   AgentChatResponse,
+  AlertMateriality,
   AlertRow,
+  MaterialityLevel,
   AuctionResponse,
   ChartDataset,
   HealthResponse,
@@ -291,6 +294,16 @@ function normalizeErrors(meta: Record<string, unknown>): { ticker: string; error
   });
 }
 
+/** Jev materiality is optional and fail-open: anything malformed simply becomes "unscored". */
+export function normalizeMateriality(value: unknown): AlertMateriality | null {
+  if (!isRecord(value)) return null;
+  const level = string(value.level).toLowerCase();
+  const score = optionalNumber(value.score);
+  const confidence = optionalNumber(value.confidence);
+  if (!(MATERIALITY_LEVELS as readonly string[]).includes(level) || score === null || confidence === null) return null;
+  return { level: level as MaterialityLevel, score, confidence };
+}
+
 export function normalizeWatchlistAlerts(value: unknown): WatchlistAlertsResponse {
   const payload = record(value, 'Alerts response');
   const meta = isRecord(payload.meta) ? payload.meta : {};
@@ -365,6 +378,7 @@ export function normalizeWatchlistAlerts(value: unknown): WatchlistAlertsRespons
       title: string(item.title),
       message: string(item.message),
       action: string(item.action),
+      materiality: normalizeMateriality(item.jev_materiality),
     }];
   });
   const digest = isRecord(payload.digest) ? payload.digest : {};
