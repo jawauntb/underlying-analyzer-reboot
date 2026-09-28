@@ -133,7 +133,7 @@ the lattice animals can call as tools, and a tool for asking them back.
 
 | Route | What it is |
 | --- | --- |
-| `POST /mcp` | This site's tools. Stateless JSON-RPC 2.0 over streamable HTTP: `initialize`, `ping`, `tools/list`, `tools/call`. A notification gets `202`, a batch gets `400`, and `GET` or `DELETE` get `405` with `Allow: POST`. Registered exactly, because the lattice client refuses redirects. |
+| `POST /mcp` | This site's tools. Stateless JSON-RPC 2.0 over streamable HTTP: `initialize`, `ping`, `tools/list`, `tools/call`. A notification gets `202`, a batch gets `400`, so does an `id` that is not a string or a number (it is never echoed), and `GET` or `DELETE` get `405` with `Allow: POST`. Registered exactly, because the lattice client refuses redirects. |
 | `POST /mcp/lattice` | The lattice animals' own MCP, relayed one hop deeper. A name that is not in this site's peer registry is `404`. |
 | `GET /.well-known/mcp.json` | The manifest: endpoint, tools with `readOnly`, peers, and the hop limit. Also at `/.well-known/mcp/server-card.json`. |
 

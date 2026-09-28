@@ -32,7 +32,7 @@ _MISSING = object()
 # Both files are vendored: compared byte for byte with lattice-animal's, so not reformatted here.
 # When lattice-animal changes either one, copy it again and update the digest.
 VENDORED_SHA256 = {
-    "app/mcp_lite.py": "bde4462ad32e0b03087e979351e81d35a56986f2d99645fb28ad1744951e4e6c",
+    "app/mcp_lite.py": "4cb714cc78a35a5e00d08c0194fc9f406e6f052f1836ddc6a6d483b24e590a67",
     "tests/fixtures/constellation-vectors.json": (
         "b3c1be73321a194c801e2e451f119fcc8294944d35e7a1912630bc0ddc1462fa"
     ),

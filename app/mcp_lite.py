@@ -36,6 +36,7 @@ counter, and nothing here signs it.
 import asyncio
 import inspect
 import json
+import math
 import re
 import socket
 import time
@@ -72,12 +73,31 @@ def _text(t, is_error=False):
     return out
 
 
+def _valid_id(id_):
+    """A JSON-RPC id is a string or a number (not a bool, not NaN or infinity)."""
+    if isinstance(id_, bool):
+        return False
+    if isinstance(id_, str):
+        return True
+    return isinstance(id_, (int, float)) and math.isfinite(id_)
+
+
+def _id_given(m):
+    return isinstance(m, dict) and m.get("id") is not None
+
+
 def _ok(id_, result):
     return {"jsonrpc": "2.0", "id": id_, "result": result}
 
 
 def _fail(id_, code, message):
-    return {"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}}
+    # An error reply never echoes a value that is not a valid id: a deeply nested
+    # one would overflow the reply's own json.dumps.
+    return {
+        "jsonrpc": "2.0",
+        "id": id_ if _valid_id(id_) else None,
+        "error": {"code": code, "message": message},
+    }
 
 
 def dumps(value):
@@ -520,6 +540,10 @@ class Peers:
         Returns (status, body) where body is the peer's own JSON-RPC reply."""
         ctx = ctx or {}
         p = self.get(name)
+        if _id_given(message) and not _valid_id(message.get("id")):
+            return 400, _fail(
+                None, -32600, "invalid request: id must be a string or a number"
+            )
         id_ = message.get("id") if isinstance(message, dict) else None
         if not p:
             return 404, _fail(id_, -32000, "no such peer")
@@ -800,6 +824,10 @@ class Mcp:
         ):
             return 400, _fail(
                 m.get("id") if isinstance(m, dict) else None, -32600, "invalid request"
+            )
+        if _id_given(m) and not _valid_id(m.get("id")):
+            return 400, _fail(
+                None, -32600, "invalid request: id must be a string or a number"
             )
         if m.get("id") is None:
             return 202, None  # a notification
