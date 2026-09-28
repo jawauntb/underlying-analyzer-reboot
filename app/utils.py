@@ -101,15 +101,31 @@ def cache_key(*parts: str) -> str:
 
 def error_response(message: str, status: int = 400) -> tuple[dict[str, Any], int]:
     """Create a standardized error response.
-    
+
     Args:
         message: Error message.
         status: HTTP status code.
-        
+
     Returns:
         Tuple of (response dict, status code).
     """
     return {"error": message}, status
+
+
+def trim(text: Any, *, limit: int = 256) -> str:
+    """Trim text to limit, cleaning whitespace and truncating with ellipsis.
+
+    Args:
+        text: Text to trim.
+        limit: Maximum length.
+
+    Returns:
+        Trimmed text.
+    """
+    cleaned = " ".join(str(text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3].rstrip()}..."
 
 
 __all__ = [
@@ -120,4 +136,5 @@ __all__ = [
     "normal_pdf",
     "cache_key",
     "error_response",
+    "trim",
 ]

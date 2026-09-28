@@ -21,6 +21,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
+from app.utils import trim
+
 SECTION_LABELS: tuple[str, ...] = ("Business", "Risk Factors", "MD&A")
 
 #: Packet key for each SEC section label.
@@ -99,11 +101,8 @@ SYNTHESIS_SYSTEM = (
 )
 
 
-def _trim(text: Any, *, limit: int) -> str:
-    cleaned = " ".join(str(text or "").split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[: limit - 3].rstrip()}..."
+# _trim is now trim from app.utils
+_trim = trim
 
 
 def collect_filings(
