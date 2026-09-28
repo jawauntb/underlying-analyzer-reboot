@@ -5,7 +5,7 @@ Production: `https://underlying-terminal-production.up.railway.app`
 
 Public access: research and tool endpoints require **no API key**. CORS is open.  
 Machine-readable catalog: `GET /api/docs` · OpenAPI 3.1: `GET /api/openapi` · Site docs: `/docs`
-MCP: [mcp.md](mcp.md) (streamable HTTP at `POST /api/mcp`) · Agent: [agent.md](agent.md)
+MCP: [mcp.md](mcp.md) (streamable HTTP at `POST /api/mcp`; the constellation's smaller allowlist at `POST /mcp`) · Agent: [agent.md](agent.md)
 
 Every agent/MCP tool is a thin binding over one of the routes below, declared once in
 `app/tool_registry.py`. The catalog, the OpenAPI document, both MCP transports, and the
@@ -1111,6 +1111,36 @@ curl -s -X POST http://127.0.0.1:5050/api/mcp \
 Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`,
 `resources/read`, `prompts/list`. Send `Accept: text/event-stream` to receive the response
 as a single SSE frame. Notifications return `202` with no body.
+
+### `POST /mcp`
+
+The constellation's MCP: a separate, smaller allowlist of read-only, cheap tools
+(`list_capabilities`, `health_check`, `provider_status`, `sec_source_pack`, `chart_data`,
+`torque_data`, `moneyline_data`, `situate_get`, `prism_get`, `peer_forecast`) and
+`ask_lattice_animals`, which asks the lattice animals a question. Stateless JSON-RPC 2.0 over
+streamable HTTP: one message per POST, a notification gets `202`, a batch gets `400`, and `GET`
+or `DELETE` get `405` with `Allow: POST`. No API key. It is not `/api/mcp`, which serves the
+whole registry; see [mcp.md](mcp.md#constellation-mcp-post-mcp) for why, the tool table, the hop
+rule and the environment variables (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN`, `MCP_ALLOW_LOCAL`,
+`MCP_PEER_FORECAST_DAILY_CAP`).
+
+```bash
+curl -s -X POST http://127.0.0.1:5050/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### `POST /mcp/{peer}`
+
+A peer's own MCP, on this site: the message goes to that member as it is, one hop deeper
+(`x-mcp-hop`, `x-mcp-path`), and its reply comes back. The only peer is `lattice`; any other name
+is `404`, and a relay at the hop limit is JSON-RPC error `-32001`.
+
+### `GET /.well-known/mcp.json`
+
+The constellation manifest (also at `/.well-known/mcp/server-card.json`): `name`, `title`,
+`description`, `version`, `endpoint`, `transport`, `stateless`, `auth`, `protocolVersions`,
+`tools` (`name`, `description`, `readOnly`), `peers` and `hop`.
 
 ---
 

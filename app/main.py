@@ -87,6 +87,7 @@ from app.charts import (
 )
 from app.citation_verify import MAX_CLASSIFY_CITATIONS, classify_citations
 from app.cockpit import build_cockpit_row
+from app.constellation_mcp import mount_constellation_mcp
 from app.exa import ExaClient
 from app.market_context import build_market_context, collect_market_context
 from app.market_data import (
@@ -1303,6 +1304,9 @@ def create_app() -> Flask:
     register_prism_routes(app)
     register_situate_routes(app)
     register_tabular_routes(app)
+    # The constellation's MCP: POST /mcp, POST /mcp/lattice, GET /.well-known/mcp.json. A
+    # separate allowlist from /api/mcp above, which serves the whole registry.
+    mount_constellation_mcp(app)
     return app
 
 

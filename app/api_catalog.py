@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.constellation_mcp import CONSTELLATION_TOOLS
 from app.market_data import MAX_SEARCH_QUERY_LENGTH
 from app.mcp_http import PROTOCOL_VERSION, SERVER_VERSION
 from app.tool_registry import TOOLS, tool_catalog_payload
@@ -245,6 +246,30 @@ API_ENDPOINTS: list[dict[str, Any]] = [
         "path": "/api/mcp",
         "group": "mcp",
         "summary": "MCP streamable HTTP endpoint (JSON-RPC 2.0)",
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/mcp",
+        "group": "mcp",
+        "summary": (
+            "Constellation MCP: a separate, smaller read-only allowlist (JSON-RPC 2.0, "
+            "stateless; GET is 405)"
+        ),
+        "auth": "none",
+    },
+    {
+        "method": "POST",
+        "path": "/mcp/{peer}",
+        "group": "mcp",
+        "summary": "A peer's own MCP (lattice), relayed one hop deeper",
+        "auth": "none",
+    },
+    {
+        "method": "GET",
+        "path": "/.well-known/mcp.json",
+        "group": "mcp",
+        "summary": "Constellation MCP manifest: endpoint, tools, peers and the hop limit",
         "auth": "none",
     },
     {
@@ -645,6 +670,18 @@ def build_api_docs_payload(*, base_url: str | None = None) -> dict[str, Any]:
             "authentication": "none",
             "stdio_command": "underlying-mcp",
             "tool_count": len(TOOLS),
+            "constellation": {
+                "endpoint": "/mcp",
+                "manifest": "/.well-known/mcp.json",
+                "relay": "/mcp/{peer}",
+                "transport": "streamable-http",
+                "authentication": "none",
+                "tools": list(CONSTELLATION_TOOLS),
+                "note": (
+                    "A separate allowlist of read-only, cheap tools, not the registry. "
+                    "See docs/mcp.md."
+                ),
+            },
         },
         "agent": {
             "chat": "/chat",

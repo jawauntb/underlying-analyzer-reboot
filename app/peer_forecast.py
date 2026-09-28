@@ -28,6 +28,11 @@ Honesty rules, in order of importance:
 The whole sector/horizon result is memoised in-process for 12 hours, keyed by
 sector, horizon, as-of date, universe version and predictor, so every peer's
 lookup, the chart and the memo cross-check share one model call.
+
+A caller that pays for cold computations can count them, or refuse them: set
+:data:`cold_build_guard` for the duration of a request and it is called when a lookup
+misses the cache, before a panel is loaded or a model is asked (the constellation MCP
+does this to cap what it spends). Unset, which is the default, nothing changes.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from datetime import date
 from typing import Any
 
@@ -72,6 +78,7 @@ __all__ = [
     "project_ticker",
     "peer_forecast_for_ticker",
     "clear_peer_forecast_cache",
+    "cold_build_guard",
     "parse_horizon",
 ]
 
@@ -94,6 +101,16 @@ PANEL_YEARS = 12
 _QUINTILE_LEVELS: tuple[float, ...] = (0.2, 0.4, 0.6, 0.8)
 
 _cache = TTLCache(CACHE_TTL_SECONDS, max_entries=128)
+
+#: Set for one request by a caller that wants to count, or refuse, the computations that miss
+#: the cache. It is called with no arguments when a computation (a panel load, then the model
+#: calls) is about to start, and raising from it (``TabularUnavailable``, so a route answers
+#: ``503`` with the reason) stops the computation before a provider or the model is asked. A
+#: cache hit does not call it (``tests/test_constellation_mcp.py`` checks that a hit is not
+#: counted). The default, ``None``, leaves every caller as it was.
+cold_build_guard: ContextVar[Callable[[], None] | None] = ContextVar(
+    "peer_forecast_cold_build_guard", default=None
+)
 
 
 def clear_peer_forecast_cache() -> None:
@@ -476,9 +493,12 @@ def peer_forecast_for_ticker(
     key = _cache_key(sector, horizon, resolved_as_of, universe, predictor)
     sector_result = _cache.get(key) if use_cache else None
     if sector_result is None:
+        if panel is None and client is None:
+            raise TabularUnavailable("no market data client available to load the sector panel")
+        guard = cold_build_guard.get()
+        if guard is not None:
+            guard()
         if panel is None:
-            if client is None:
-                raise TabularUnavailable("no market data client available to load the sector panel")
             loader = panel_loader or _default_panel_loader
             wanted = sorted({*universe, *(etf for etf in etf_of.values() if etf)})
             panel = loader(client, wanted, resolved_as_of)

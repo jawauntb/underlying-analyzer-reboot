@@ -130,6 +130,10 @@ Five surfaces are generated from that single declaration, so they cannot drift a
 | MCP over stdio | `underlying-mcp` |
 | The agent | `/chat`, `POST /api/agent/chat/stream` |
 
+The constellation's MCP is separate from these: `POST /mcp` serves a smaller, explicit allowlist of
+read-only, cheap tools (and `ask_lattice_animals`), not the registry. See
+[docs/mcp.md](docs/mcp.md#constellation-mcp-post-mcp).
+
 Tools execute in-process against the app's own public HTTP routes, so there is exactly one
 implementation of each capability and no network hop between the agent and the API.
 Rendered charts are lifted out of tool results as artifacts: the model reads a cheap
@@ -287,7 +291,9 @@ Prism (`ubermemo`) engine reference: [docs/prism.md](docs/prism.md).
 Situate research engine reference: [docs/situate.md](docs/situate.md).
 
 MCP (no API key): [docs/mcp.md](docs/mcp.md). Streamable HTTP at `/api/mcp`, or stdio via
-`underlying-mcp` pointed at the Railway production URL by default.
+`underlying-mcp` pointed at the Railway production URL by default. The constellation's smaller
+allowlist is at `/mcp` (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN`, `MCP_ALLOW_LOCAL` and
+`MCP_PEER_FORECAST_DAILY_CAP`, the daily cap on uncached peer forecasts, configure it).
 
 ## Local Setup
 

@@ -1,0 +1,153 @@
+{
+  "about": "Conformance vectors for the constellation contract (docs/constellation.md). Every member (JS: lib/mcp-lite.mjs, Python: mcp_lite.py) builds this fixture and must answer every case the same way. A case's expect maps a dotted path into { status, headers, json, outbound } to an exact value, or to { startsWith: s } or { absent: true }. outbound is what the site sent to its peer.",
+  "fixture": {
+    "name": "fixture",
+    "title": "Fixture",
+    "origin": "https://fixture.example",
+    "tools": [
+      { "name": "echo", "kind": "echo", "description": "Say back what you were given." },
+      { "name": "ask_other", "kind": "relay", "peer": "other", "tool": "echo", "description": "Ask the other site to echo." },
+      { "name": "ask_missing", "kind": "relay", "peer": "missing", "tool": "echo", "description": "Ask a peer that has no address." }
+    ],
+    "peers": {
+      "other": { "url": "https://other.example/mcp", "about": "the other site" },
+      "missing": { "about": "a peer with no address yet" }
+    },
+    "peerReplies": {
+      "tools/list": { "tools": [{ "name": "echo", "description": "echo", "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] } }] },
+      "tools/call": { "content": [{ "type": "text", "text": "pong" }] }
+    }
+  },
+  "cases": [
+    {
+      "name": "initialize echoes a version it knows",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18" } } },
+      "expect": { "status": 200, "json.result.protocolVersion": "2025-06-18", "json.result.serverInfo.name": "fixture", "json.result.capabilities.tools.listChanged": false, "json.id": 1 }
+    },
+    {
+      "name": "initialize with an unknown version gets the newest",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": { "protocolVersion": "2099-01-01" } } },
+      "expect": { "status": 200, "json.result.protocolVersion": "2025-11-25" }
+    },
+    {
+      "name": "a notification gets 202 and no body",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "method": "notifications/initialized" } },
+      "expect": { "status": 202, "json": null }
+    },
+    {
+      "name": "ping",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 3, "method": "ping" } },
+      "expect": { "status": 200, "json.result": {} }
+    },
+    {
+      "name": "tools/list names every tool and marks the ones that call out",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 4, "method": "tools/list" } },
+      "expect": { "status": 200, "json.result.tools.0.name": "echo", "json.result.tools.1.name": "ask_other", "json.result.tools.0.annotations.openWorldHint": false, "json.result.tools.1.annotations.openWorldHint": true, "json.result.tools.0.inputSchema.type": "object" }
+    },
+    {
+      "name": "a pure tool answers, and says where it sat on the chain",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "hello" } } } },
+      "expect": { "status": 200, "json.result.content.0.text": "hello", "json.result._meta.constellation.server": "fixture", "json.result._meta.constellation.hop": 0, "json.result._meta.constellation.path.0": "fixture", "outbound.length": 0 }
+    },
+    {
+      "name": "an unknown tool is a JSON-RPC error",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": { "name": "rm_rf" } } },
+      "expect": { "status": 200, "json.error.code": -32602 }
+    },
+    {
+      "name": "an unknown method is a JSON-RPC error",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 7, "method": "resources/list" } },
+      "expect": { "status": 200, "json.error.code": -32601 }
+    },
+    {
+      "name": "batches are refused",
+      "request": { "method": "POST", "path": "/mcp", "body": [{ "jsonrpc": "2.0", "id": 1, "method": "ping" }] },
+      "expect": { "status": 400, "json.error.code": -32600 }
+    },
+    {
+      "name": "not JSON-RPC is refused",
+      "request": { "method": "POST", "path": "/mcp", "body": { "hello": 1 } },
+      "expect": { "status": 400, "json.error.code": -32600 }
+    },
+    {
+      "name": "GET is not a stream here",
+      "request": { "method": "GET", "path": "/mcp" },
+      "expect": { "status": 405, "headers.allow": "POST", "json.error.code": -32000 }
+    },
+    {
+      "name": "a tool that calls a peer sends hop 1 and its own name",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": { "name": "ask_other", "arguments": { "text": "ping" } } } },
+      "expect": { "status": 200, "json.result.content.0.text": "pong", "outbound.length": 1, "outbound.0.url": "https://other.example/mcp", "outbound.0.headers.x-mcp-hop": "1", "outbound.0.headers.x-lattice-hop": "1", "outbound.0.headers.x-mcp-path": "fixture", "outbound.0.body.method": "tools/call", "outbound.0.body.params.name": "echo", "outbound.0.body.params.arguments.text": "ping" }
+    },
+    {
+      "name": "one hop in, the next call is hop 2 and the path grows",
+      "request": { "method": "POST", "path": "/mcp", "headers": { "x-mcp-hop": "1", "x-mcp-path": "lattice" }, "body": { "jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": { "name": "ask_other", "arguments": { "text": "ping" } } } },
+      "expect": { "status": 200, "json.result.content.0.text": "pong", "outbound.0.headers.x-mcp-hop": "2", "outbound.0.headers.x-mcp-path": "lattice>fixture", "json.result._meta.constellation.hop": 1, "json.result._meta.constellation.path.0": "lattice", "json.result._meta.constellation.path.1": "fixture" }
+    },
+    {
+      "name": "at the hop limit a tool that calls out is refused before it runs",
+      "request": { "method": "POST", "path": "/mcp", "headers": { "x-mcp-hop": "2", "x-mcp-path": "lattice>other" }, "body": { "jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": { "name": "ask_other", "arguments": { "text": "ping" } } } },
+      "expect": { "status": 200, "json.result.isError": true, "json.result.content.0.text": { "startsWith": "too-deep" }, "outbound.length": 0 }
+    },
+    {
+      "name": "at the hop limit a pure tool still answers",
+      "request": { "method": "POST", "path": "/mcp", "headers": { "x-mcp-hop": "2" }, "body": { "jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "still here" } } } },
+      "expect": { "status": 200, "json.result.content.0.text": "still here", "json.result.isError": { "absent": true } }
+    },
+    {
+      "name": "the older x-lattice-hop header counts as a hop too",
+      "request": { "method": "POST", "path": "/mcp", "headers": { "x-lattice-hop": "2" }, "body": { "jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": { "name": "ask_other", "arguments": { "text": "ping" } } } },
+      "expect": { "json.result.isError": true, "outbound.length": 0 }
+    },
+    {
+      "name": "a hop count is capped, a negative or junk one is zero",
+      "request": { "method": "POST", "path": "/mcp", "headers": { "x-mcp-hop": "-5", "x-mcp-path": "bad name>ok" }, "body": { "jsonrpc": "2.0", "id": 13, "method": "tools/call", "params": { "name": "echo", "arguments": { "text": "x" } } } },
+      "expect": { "json.result._meta.constellation.hop": 0, "json.result._meta.constellation.path.0": "ok", "json.result._meta.constellation.path.1": "fixture" }
+    },
+    {
+      "name": "a peer with no address is said to be missing, never guessed",
+      "request": { "method": "POST", "path": "/mcp", "body": { "jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": { "name": "ask_missing", "arguments": { "text": "x" } } } },
+      "expect": { "json.result.isError": true, "json.result.content.0.text": { "startsWith": "the other site did not answer (not-configured)" }, "outbound.length": 0 }
+    },
+    {
+      "name": "the peer's own MCP, on this site: tools/list relayed one hop deeper",
+      "request": { "method": "POST", "path": "/mcp/other", "body": { "jsonrpc": "2.0", "id": 15, "method": "tools/list" } },
+      "expect": { "status": 200, "json.result.tools.0.name": "echo", "outbound.length": 1, "outbound.0.headers.x-mcp-hop": "1", "outbound.0.headers.x-mcp-path": "fixture", "outbound.0.body.method": "tools/list" }
+    },
+    {
+      "name": "a relayed notification is forwarded and answered 202",
+      "request": { "method": "POST", "path": "/mcp/other", "body": { "jsonrpc": "2.0", "method": "notifications/initialized" } },
+      "expect": { "status": 202, "outbound.length": 1 }
+    },
+    {
+      "name": "a relay at the hop limit is a JSON-RPC error and goes nowhere",
+      "request": { "method": "POST", "path": "/mcp/other", "headers": { "x-mcp-hop": "2" }, "body": { "jsonrpc": "2.0", "id": 16, "method": "tools/list" } },
+      "expect": { "status": 200, "json.error.code": -32001, "outbound.length": 0 }
+    },
+    {
+      "name": "a relay to a name this site does not know is a 404",
+      "request": { "method": "POST", "path": "/mcp/stranger", "body": { "jsonrpc": "2.0", "id": 17, "method": "tools/list" } },
+      "expect": { "status": 404, "json.error.code": -32000, "outbound.length": 0 }
+    },
+    {
+      "name": "a relay to a peer with no address says so",
+      "request": { "method": "POST", "path": "/mcp/missing", "body": { "jsonrpc": "2.0", "id": 18, "method": "tools/list" } },
+      "expect": { "status": 200, "json.error.code": -32000, "outbound.length": 0 }
+    },
+    {
+      "name": "GET on a relay path is 405",
+      "request": { "method": "GET", "path": "/mcp/other" },
+      "expect": { "status": 405, "headers.allow": "POST" }
+    },
+    {
+      "name": "the manifest tells a client the address, the tools, the peers and the hop limit",
+      "request": { "method": "GET", "path": "/.well-known/mcp.json" },
+      "expect": { "status": 200, "json.name": "fixture", "json.endpoint": "https://fixture.example/mcp", "json.transport": "streamable-http", "json.auth": "none", "json.tools.0.name": "echo", "json.tools.1.readOnly": true, "json.peers.0.name": "other", "json.peers.0.endpoint": "https://fixture.example/mcp/other", "json.peers.1": { "absent": true }, "json.hop.max": 2, "headers.access-control-allow-origin": "*" }
+    },
+    {
+      "name": "the manifest is also at the server-card path",
+      "request": { "method": "GET", "path": "/.well-known/mcp/server-card.json" },
+      "expect": { "status": 200, "json.name": "fixture" }
+    }
+  ]
+}

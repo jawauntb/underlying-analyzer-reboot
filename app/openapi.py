@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.constellation_mcp import CONSTELLATION_TOOLS
 from app.market_data import (
     MAX_SEARCH_QUERY_LENGTH,
     MAX_SECURITY_SYMBOL_LENGTH,
@@ -17,8 +18,20 @@ API_VERSION = "1.0.0"
 API_DESCRIPTION = (
     "Chart-led market research API. Every endpoint is publicly callable "
     "without an API key. The same capabilities are exposed as agent tools "
-    "over MCP at POST /api/mcp and inside the product at /chat."
+    "over MCP at POST /api/mcp and inside the product at /chat. A separate, smaller "
+    "read-only allowlist is served at POST /mcp for the constellation."
 )
+
+JSON_RPC_REQUEST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "jsonrpc": {"type": "string", "enum": ["2.0"]},
+        "id": {"type": ["string", "integer"]},
+        "method": {"type": "string"},
+        "params": {"type": "object"},
+    },
+    "required": ["jsonrpc", "method"],
+}
 
 AGENT_REQUEST_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -596,6 +609,38 @@ SUPPORTING_ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "method": "POST",
+        "path": "/mcp",
+        "tag": "mcp",
+        "summary": (
+            "Constellation MCP: a separate, smaller read-only allowlist (JSON-RPC 2.0, "
+            "stateless; GET is 405)"
+        ),
+        "request_schema": JSON_RPC_REQUEST_SCHEMA,
+    },
+    {
+        "method": "POST",
+        "path": "/mcp/{peer}",
+        "tag": "mcp",
+        "summary": "A peer's own MCP (lattice), relayed one hop deeper",
+        "parameters": [
+            {
+                "name": "peer",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string", "enum": ["lattice"]},
+                "description": "A name in this site's peer registry; any other name is 404",
+            }
+        ],
+        "request_schema": JSON_RPC_REQUEST_SCHEMA,
+    },
+    {
+        "method": "GET",
+        "path": "/.well-known/mcp.json",
+        "tag": "mcp",
+        "summary": "Constellation MCP manifest: endpoint, tools, peers and the hop limit",
+    },
+    {
+        "method": "POST",
         "path": "/api/agent/chat",
         "tag": "agent",
         "summary": "Run one agent turn and return the final message",
@@ -731,6 +776,13 @@ def build_openapi_document(base_url: str | None = None) -> dict[str, Any]:
             "transport": "streamable-http",
             "tool_count": len(TOOLS),
             "authentication": "none",
+        },
+        "x-mcp-constellation": {
+            "endpoint": "/mcp",
+            "manifest": "/.well-known/mcp.json",
+            "transport": "streamable-http",
+            "authentication": "none",
+            "tools": list(CONSTELLATION_TOOLS),
         },
     }
     if base_url:
