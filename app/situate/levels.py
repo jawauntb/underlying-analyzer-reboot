@@ -18,21 +18,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
+from app.utils import finite
 
 LEVELS_VERSION = "1.0.0"
 
 #: Horizons whose implied quantiles define the cheap/rich zones (SPEC 5.8).
 _ZONE_HORIZONS: tuple[int, ...] = (3, 6)
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _close_series(history: Any) -> pd.Series:
@@ -65,10 +56,10 @@ def distance_to_ma(
     current_price: float | None, mas: Mapping[str, float | None]
 ) -> dict[str, float | None]:
     """Fractional distance of price from each moving average (``price/ma − 1``)."""
-    price = _finite(current_price)
+    price = finite(current_price)
     dist: dict[str, float | None] = {}
     for key in ("ma20", "ma50", "ma200"):
-        ma = _finite(mas.get(key))
+        ma = finite(mas.get(key))
         dist[key] = (price / ma - 1.0) if (price is not None and ma) else None
     return dist
 
@@ -87,7 +78,7 @@ def implied_zones(
     implied distribution is unavailable for those horizons.
     """
     empty = {"cheap_zone": None, "rich_zone": None}
-    price = _finite(spot)
+    price = finite(spot)
     if implied is None or price is None or price <= 0.0:
         return empty
     by_horizon = implied.get("by_horizon") or {}
@@ -100,8 +91,8 @@ def implied_zones(
         if not isinstance(block, Mapping):
             continue
         quantiles = block.get("quantiles") or {}
-        q25 = _finite(quantiles.get("q25"))
-        q75 = _finite(quantiles.get("q75"))
+        q25 = finite(quantiles.get("q25"))
+        q75 = finite(quantiles.get("q75"))
         if q25 is None or q75 is None:
             continue
         cheap_prices.append(price * (1.0 + q25))
@@ -144,7 +135,7 @@ def build_levels(
     the zones, and a missing chain cannot cost the value area.
     """
     close = _close_series(history)
-    price = _finite(current_price)
+    price = finite(current_price)
     if price is None and not close.empty:
         price = float(close.iloc[-1])
 
@@ -177,9 +168,9 @@ def build_levels(
             current_price=price,
         )
         auction = prism_section.get("auction") or {}
-        section["poc"] = _finite(auction.get("poc"))
-        section["vah"] = _finite(auction.get("vah"))
-        section["val"] = _finite(auction.get("val"))
+        section["poc"] = finite(auction.get("poc"))
+        section["vah"] = finite(auction.get("vah"))
+        section["val"] = finite(auction.get("val"))
         section["key_levels"] = prism_section.get("key_levels") or []
         for err in prism_section.get("errors") or []:
             section["errors"].append(err)

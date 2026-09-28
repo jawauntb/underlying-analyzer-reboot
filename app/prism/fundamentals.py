@@ -20,6 +20,7 @@ import math
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
+from app.utils import finite
 
 DEFAULT_QUARTERS = 8
 
@@ -72,21 +73,10 @@ _MARGIN_TOLERANCE = 0.005
 _GROWTH_TOLERANCE = 0.02
 
 
-def _finite(value: Any) -> float | None:
-    """Coerce to a finite float, or ``None`` — never a silent zero."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def _ratio(numerator: Any, denominator: Any) -> float | None:
     """``numerator / denominator`` when both are finite and the divisor is non-zero."""
-    top = _finite(numerator)
-    bottom = _finite(denominator)
+    top = finite(numerator)
+    bottom = finite(denominator)
     if top is None or bottom is None or bottom == 0:
         return None
     return top / bottom
@@ -99,8 +89,8 @@ def _growth(current: Any, prior: Any) -> float | None:
     one ("+430% earnings growth" off a negative base) is exactly the kind of
     number a memo should never carry.
     """
-    now = _finite(current)
-    before = _finite(prior)
+    now = finite(current)
+    before = finite(prior)
     if now is None or before is None or before <= 0:
         return None
     return now / before - 1.0
@@ -108,14 +98,14 @@ def _growth(current: Any, prior: Any) -> float | None:
 
 def _sum(values: Sequence[Any]) -> float | None:
     """Sum a window only when every element is present."""
-    numbers = [_finite(value) for value in values]
+    numbers = [finite(value) for value in values]
     if not numbers or any(number is None for number in numbers):
         return None
     return float(sum(number for number in numbers if number is not None))
 
 
 def _mean(values: Sequence[Any]) -> float | None:
-    numbers = [number for number in (_finite(value) for value in values) if number is not None]
+    numbers = [number for number in (finite(value) for value in values) if number is not None]
     if not numbers:
         return None
     return float(sum(numbers) / len(numbers))
@@ -176,7 +166,7 @@ def fetch_current_ratios(client: Any, ticker: str) -> tuple[dict[str, Any] | Non
 
 
 def _pick(row: Mapping[str, Any], fields: Mapping[str, str]) -> dict[str, float | None]:
-    return {key: _finite(row.get(source)) for key, source in fields.items()}
+    return {key: finite(row.get(source)) for key, source in fields.items()}
 
 
 def merge_quarters(
@@ -219,22 +209,22 @@ def merge_quarters(
 
 def _finalise_quarter(entry: dict[str, Any]) -> dict[str, Any]:
     """Add the derived per-quarter numbers a memo actually quotes."""
-    revenue = _finite(entry.get("revenue"))
-    gross_profit = _finite(entry.get("gross_profit"))
-    operating_income = _finite(entry.get("operating_income"))
-    net_income = _finite(entry.get("net_income"))
-    cfo = _finite(entry.get("cash_from_operations"))
-    capex = _finite(entry.get("capex"))
+    revenue = finite(entry.get("revenue"))
+    gross_profit = finite(entry.get("gross_profit"))
+    operating_income = finite(entry.get("operating_income"))
+    net_income = finite(entry.get("net_income"))
+    cfo = finite(entry.get("cash_from_operations"))
+    capex = finite(entry.get("capex"))
     # Massive reports capex as a negative cash outflow; FCF is CFO plus that
     # signed number, so a positive-signed feed cannot inflate free cash flow.
     fcf: float | None = None
     if cfo is not None and capex is not None:
         fcf = cfo - abs(capex)
-    debt_current = _finite(entry.get("debt_current")) or 0.0
-    long_term_debt = _finite(entry.get("long_term_debt"))
+    debt_current = finite(entry.get("debt_current")) or 0.0
+    long_term_debt = finite(entry.get("long_term_debt"))
     total_debt = (
         None
-        if long_term_debt is None and not _finite(entry.get("debt_current"))
+        if long_term_debt is None and not finite(entry.get("debt_current"))
         else float(debt_current + (long_term_debt or 0.0))
     )
     quarter = dict(entry)
@@ -286,19 +276,19 @@ def derive_ratios(
     provider = dict(provider_ratios or {})
     ttm = trailing_twelve_months(quarters)
     latest: Mapping[str, Any] = quarters[0] if quarters else {}
-    price = _finite(current_price) or _finite(provider.get("price"))
-    vendor_cap = _finite(market_cap) or _finite(provider.get("market_cap"))
-    shares = _finite(latest.get("shares"))
+    price = finite(current_price) or finite(provider.get("price"))
+    vendor_cap = finite(market_cap) or finite(provider.get("market_cap"))
+    shares = finite(latest.get("shares"))
     # Strike the cap off the same price every other section quotes. The vendor
     # cap is a snapshot taken at whatever price the vendor last saw, so mixing it
     # with the packet's close makes P/S and P/B disagree with P/E by ~1%. The
     # vendor figure is kept alongside rather than dropped.
     cap = price * shares if price is not None and shares is not None else vendor_cap
 
-    cash = _finite(latest.get("cash"))
-    investments = _finite(latest.get("short_term_investments")) or 0.0
-    total_debt = _finite(latest.get("total_debt"))
-    equity = _finite(latest.get("total_equity"))
+    cash = finite(latest.get("cash"))
+    investments = finite(latest.get("short_term_investments")) or 0.0
+    total_debt = finite(latest.get("total_debt"))
+    equity = finite(latest.get("total_equity"))
     enterprise_value: float | None = None
     if cap is not None and total_debt is not None and cash is not None:
         enterprise_value = cap + total_debt - cash - investments
@@ -347,7 +337,7 @@ def derive_ratios(
     for key, provider_key in provider_map.items():
         if key in ratios:
             continue
-        value = _finite(provider.get(provider_key))
+        value = finite(provider.get(provider_key))
         if value is not None:
             ratios[key] = value
             source[key] = "massive_ratios"
@@ -389,10 +379,10 @@ def growth_metrics(quarters: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
     revenue_yoy = _growth(latest.get("revenue"), year_ago.get("revenue"))
     prior_yoy = _growth(year_ago.get("revenue"), two_years.get("revenue"))
-    gm_now = _finite(latest.get("gross_margin"))
-    gm_then = _finite(year_ago.get("gross_margin"))
-    om_now = _finite(latest.get("operating_margin"))
-    om_then = _finite(year_ago.get("operating_margin"))
+    gm_now = finite(latest.get("gross_margin"))
+    gm_then = finite(year_ago.get("gross_margin"))
+    om_now = finite(latest.get("operating_margin"))
+    om_then = finite(year_ago.get("operating_margin"))
     gm_change = None if gm_now is None or gm_then is None else gm_now - gm_then
     om_change = None if om_now is None or om_then is None else om_now - om_then
 
@@ -427,7 +417,7 @@ def moving_averages(quarters: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {"window_quarters": len(window)}
     for metric in metrics:
         average = _mean([row.get(metric) for row in window])
-        latest = _finite(quarters[0].get(metric)) if quarters else None
+        latest = finite(quarters[0].get(metric)) if quarters else None
         result[metric] = {
             "ma_4q": average,
             "latest": latest,
@@ -452,7 +442,7 @@ def forecast_next_quarters(
     forecast is refused rather than guessed.
     """
     ordered = list(reversed(list(quarters)))
-    revenues = [(index, _finite(row.get("revenue")), row) for index, row in enumerate(ordered)]
+    revenues = [(index, finite(row.get("revenue")), row) for index, row in enumerate(ordered)]
     usable = [(index, value, row) for index, value, row in revenues if value is not None]
     if len(usable) < 6:
         return {
@@ -482,7 +472,7 @@ def forecast_next_quarters(
 
     margin = _mean([row.get("net_margin") for row in list(quarters)[:4]])
     gross = _mean([row.get("gross_margin") for row in list(quarters)[:4]])
-    shares = _finite(quarters[0].get("shares")) if quarters else None
+    shares = finite(quarters[0].get("shares")) if quarters else None
 
     last_index = usable[-1][0]
     last_row = ordered[last_index]
@@ -549,11 +539,11 @@ def classify_stage(
 ) -> dict[str, Any]:
     """Label the business cycle stage and say exactly what carried the label."""
     evidence: list[str] = []
-    revenue_yoy = _finite(growth.get("revenue_yoy"))
-    acceleration = _finite(growth.get("revenue_growth_acceleration"))
+    revenue_yoy = finite(growth.get("revenue_yoy"))
+    acceleration = finite(growth.get("revenue_growth_acceleration"))
     margin_trend = str(growth.get("margin_trend") or "unknown")
-    net_income = _finite(quarters[0].get("net_income")) if quarters else None
-    year_ago_income = _finite(quarters[4].get("net_income")) if len(quarters) > 4 else None
+    net_income = finite(quarters[0].get("net_income")) if quarters else None
+    year_ago_income = finite(quarters[4].get("net_income")) if len(quarters) > 4 else None
 
     if revenue_yoy is None:
         return {
@@ -591,7 +581,7 @@ def classify_stage(
         confidence = 0.5
         evidence.append("growth rate has rolled over from its year-ago pace")
 
-    implied = _finite((forecast or {}).get("implied_revenue_growth"))
+    implied = finite((forecast or {}).get("implied_revenue_growth"))
     if implied is not None:
         evidence.append(
             f"trend-plus-seasonal forecast implies {implied:+.1%} revenue over the next year"
@@ -608,9 +598,9 @@ def quarters_from_sec_trend(
     for row in (pack.get("Quarters") or [])[: max(1, int(limit))]:
         if not isinstance(row, Mapping):
             continue
-        revenue = _finite(row.get("revenue"))
-        cfo = _finite(row.get("cash_from_operations"))
-        capex = _finite(row.get("capex"))
+        revenue = finite(row.get("revenue"))
+        cfo = finite(row.get("cash_from_operations"))
+        capex = finite(row.get("capex"))
         entry = {
             "period_end": str(row.get("period_end") or ""),
             "fiscal_quarter": _fiscal_quarter_number(row.get("fiscal_period")),
@@ -619,22 +609,22 @@ def quarters_from_sec_trend(
             "form": row.get("form"),
             "statements": ["sec_xbrl"],
             "revenue": revenue,
-            "gross_profit": _finite(row.get("gross_profit")),
-            "operating_income": _finite(row.get("operating_income")),
-            "net_income": _finite(row.get("net_income")),
-            "eps": _finite(row.get("diluted_eps")),
-            "shares": _finite(row.get("diluted_shares")),
-            "cash": _finite(row.get("cash")),
-            "long_term_debt": _finite(row.get("long_term_debt")),
+            "gross_profit": finite(row.get("gross_profit")),
+            "operating_income": finite(row.get("operating_income")),
+            "net_income": finite(row.get("net_income")),
+            "eps": finite(row.get("diluted_eps")),
+            "shares": finite(row.get("diluted_shares")),
+            "cash": finite(row.get("cash")),
+            "long_term_debt": finite(row.get("long_term_debt")),
             "debt_current": None,
-            "total_equity": _finite(row.get("total_equity")),
-            "total_assets": _finite(row.get("total_assets")),
-            "inventories": _finite(row.get("inventory")),
+            "total_equity": finite(row.get("total_equity")),
+            "total_assets": finite(row.get("total_assets")),
+            "inventories": finite(row.get("inventory")),
             "cash_from_operations": cfo,
             "capex": capex,
             "ebitda": None,
         }
-        entry["total_debt"] = _finite(row.get("long_term_debt"))
+        entry["total_debt"] = finite(row.get("long_term_debt"))
         entry["fcf"] = None if cfo is None or capex is None else cfo - abs(capex)
         entry["gross_margin"] = _ratio(entry["gross_profit"], revenue)
         entry["operating_margin"] = _ratio(entry["operating_income"], revenue)

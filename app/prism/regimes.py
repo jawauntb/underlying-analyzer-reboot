@@ -38,6 +38,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from app.utils import normal_pdf
 from app.prism.hmm import (
     GaussianHMM,
     expected_durations,
@@ -146,8 +147,7 @@ def _normal_cdf(x: FloatArray, loc: float, scale: float) -> FloatArray:
     return np.asarray(0.5 * (1.0 + np.vectorize(math.erf)(z)), dtype=np.float64)
 
 
-def _normal_pdf(x: float, loc: float, scale: float) -> float:
-    return float(math.exp(-0.5 * ((x - loc) / scale) ** 2) / (scale * math.sqrt(2.0 * math.pi)))
+# _normal_pdf is imported from app.utils
 
 
 def _laplace_cdf(x: FloatArray, loc: float, scale: float) -> FloatArray:
@@ -173,7 +173,7 @@ def _lognormal_cdf(x: FloatArray, loc: float, scale: float) -> FloatArray:
 def _lognormal_pdf(x: float, loc: float, scale: float) -> float:
     if x <= 0:
         return 0.0
-    return float(_normal_pdf(math.log(x), loc, scale) / x)
+    return float(normal_pdf(math.log(x), loc, scale) / x)
 
 
 def _exponential_cdf(x: FloatArray, rate: float) -> FloatArray:
@@ -329,7 +329,7 @@ def _fitted_pdf(fit: Mapping[str, Any], x: float) -> float:
         return 0.0
     try:
         if family == "normal":
-            return _normal_pdf(x, float(params["loc"]), float(params["scale"]))
+            return normal_pdf(x, float(params["loc"]), float(params["scale"]))
         if family == "laplace":
             return _laplace_pdf(x, float(params["loc"]), float(params["scale"]))
         if family == "lognormal":

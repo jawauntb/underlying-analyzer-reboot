@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from app.utils import finite
 
 TRADING_DAYS = 252.0
 
@@ -32,16 +33,6 @@ ROLLING_WINDOW = 21
 
 #: How close to 0.25 a contract's |delta| must be for the wing to count.
 DELTA_TOLERANCE = 0.10
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def log_returns(close: pd.Series) -> pd.Series:
@@ -190,12 +181,12 @@ def smile_points(rows: Sequence[Mapping[str, Any]], current_price: float) -> lis
     """Flatten chain rows into per-strike call/put implied-volatility points."""
     points: list[dict[str, Any]] = []
     for row in rows:
-        strike = _finite(row.get("strike"))
+        strike = finite(row.get("strike"))
         if strike is None or current_price <= 0:
             continue
         moneyness = strike / current_price
         for kind in ("call", "put"):
-            iv = _finite(row.get(f"{kind}_implied_volatility"))
+            iv = finite(row.get(f"{kind}_implied_volatility"))
             if iv is None:
                 continue
             points.append(
@@ -204,9 +195,9 @@ def smile_points(rows: Sequence[Mapping[str, Any]], current_price: float) -> lis
                     "moneyness": moneyness,
                     "iv": iv,
                     "type": kind,
-                    "delta": _finite(row.get(f"{kind}_delta")),
-                    "open_interest": _finite(row.get(f"{kind}_open_interest")),
-                    "volume": _finite(row.get(f"{kind}_volume")),
+                    "delta": finite(row.get(f"{kind}_delta")),
+                    "open_interest": finite(row.get(f"{kind}_open_interest")),
+                    "volume": finite(row.get(f"{kind}_volume")),
                 }
             )
     points.sort(key=lambda item: (float(item["strike"]), str(item["type"])))
@@ -272,7 +263,7 @@ def _closest_delta(
     candidates = [
         point
         for point in points
-        if str(point.get("type")) == kind and _finite(point.get("delta")) is not None
+        if str(point.get("type")) == kind and finite(point.get("delta")) is not None
     ]
     if not candidates:
         return None
@@ -315,7 +306,7 @@ def implied_volatility(
         return result
 
     used = str(getattr(chain, "expiry", "") or expiry or "")
-    price = _finite(getattr(chain, "current_price", None)) or 0.0
+    price = finite(getattr(chain, "current_price", None)) or 0.0
     rows = list(getattr(chain, "rows", []) or [])
     points = smile_points(rows, price)
     atm = atm_implied_volatility(points, price)
@@ -383,8 +374,8 @@ def build_volatility(
         implied = implied_volatility(client, ticker, as_of=as_of)
         section["implied"] = implied
         section["implied_error"] = implied.get("error")
-        atm = _finite(implied.get("atm_iv"))
-        realized_1m = _finite((realized.get("1m") or {}).get("annualized"))
+        atm = finite(implied.get("atm_iv"))
+        realized_1m = finite((realized.get("1m") or {}).get("annualized"))
         if atm is not None and realized_1m is not None:
             # What options are charging over what the stock actually did.
             section["variance_risk_premium"] = atm - realized_1m

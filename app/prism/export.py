@@ -14,6 +14,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from app.utils import finite
 
 FORMATS: tuple[str, ...] = ("json", "txt", "pdf")
 
@@ -32,18 +33,8 @@ class PrismExportError(ValueError):
     """Raised for an unsupported export format."""
 
 
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def _fmt(value: Any, *, digits: int = 4) -> str:
-    number = _finite(value)
+    number = finite(value)
     if number is not None:
         return f"{number:,.{digits}f}"
     if value is None:
@@ -53,7 +44,7 @@ def _fmt(value: Any, *, digits: int = 4) -> str:
 
 
 def _pct(value: Any, *, digits: int = 2) -> str:
-    number = _finite(value)
+    number = finite(value)
     return "-" if number is None else f"{number * 100:+.{digits}f}%"
 
 
@@ -350,7 +341,7 @@ def _render_factors(packet: Mapping[str, Any]) -> list[str]:
     if not section:
         return lines + [f"  unavailable: {packet.get('factors_error')}"]
     lines.append(f"  model: {section.get('model')}")
-    stale_days = _finite(section.get("stale_days"))
+    stale_days = finite(section.get("stale_days"))
     raw_source = section.get("source")
     source: Mapping[str, Any] = raw_source if isinstance(raw_source, Mapping) else {}
     if section.get("as_of"):
@@ -1038,7 +1029,7 @@ def _pdf_scenarios(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
         twelve = horizons.get("12m") if isinstance(horizons, Mapping) else None
         six = horizons.get("6m") if isinstance(horizons, Mapping) else None
         reference = twelve if isinstance(twelve, Mapping) else (six or {})
-        probability = _finite(block.get("probability"))
+        probability = finite(block.get("probability"))
         rows.append(
             {
                 "name": name.title(),
@@ -1132,7 +1123,7 @@ def to_pdf(packet: Mapping[str, Any]) -> bytes:
         )
 
     targets = [
-        _finite(row.get("price"))
+        finite(row.get("price"))
         for row in (memo.get("exit_targets") or [])
         if isinstance(row, Mapping)
     ]
@@ -1155,12 +1146,12 @@ def to_pdf(packet: Mapping[str, Any]) -> bytes:
         generated_at=str(packet.get("generated_at") or ""),
         # `stop_or_reassess` is the level at which the thesis is abandoned, not a
         # price target; it is labelled "REASSESS BELOW" above.
-        target_low=_finite(memo.get("stop_or_reassess")),
-        target_mid=_finite(memo.get("fair_value")) or _finite((entry or {}).get("fair_value")),
+        target_low=finite(memo.get("stop_or_reassess")),
+        target_mid=finite(memo.get("fair_value")) or finite((entry or {}).get("fair_value")),
         target_high=prices[-1] if prices else None,
-        current_price=_finite((entry or {}).get("current_price")),
-        market_cap=_finite(profile.get("market_cap")),
-        torque_score=_finite((torque or {}).get("total_score")),
+        current_price=finite((entry or {}).get("current_price")),
+        market_cap=finite(profile.get("market_cap")),
+        torque_score=finite((torque or {}).get("total_score")),
         torque_stage=str((torque or {}).get("stage_label") or "") or None,
         torque_components=[
             {"name": name, **(values if isinstance(values, dict) else {})}

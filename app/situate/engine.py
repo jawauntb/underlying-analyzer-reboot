@@ -27,6 +27,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.utils import finite
 from app.situate.contract import (
     ENGINE_VERSION,
     empty_packet,
@@ -55,16 +56,6 @@ TABULAR_HORIZON = 3
 
 class SituateEngineError(RuntimeError):
     """Raised only when the packet cannot be started at all (e.g. no ticker)."""
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _finitize(obj: Any) -> Any:

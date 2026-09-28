@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from app.utils import finite
 
 try:  # S1 owns the canonical contract; degrade to the SPEC constant if absent.
     from app.situate.contract import HORIZONS as _CONTRACT_HORIZONS
@@ -45,16 +46,6 @@ TRADING_DAYS_PER_YEAR = 252
 #: Quantile levels reported for every distribution.
 QUANTILE_LEVELS: tuple[float, ...] = (0.05, 0.25, 0.50, 0.75, 0.95)
 _QUANTILE_KEYS: tuple[str, ...] = ("q05", "q25", "q50", "q75", "q95")
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _clean_close(close: pd.Series | None) -> pd.Series:
@@ -175,8 +166,8 @@ def _shrink(cond: dict[str, Any], uncond: dict[str, Any], *, k: float = SHRINK_K
     w = n_eff / (n_eff + k) if (n_eff + k) > 0 else 0.0
     shrunk: dict[str, Any] = {"w": round(w, 4), "n_eff": n_eff, "n": cond.get("n", 0)}
     for key in (*_QUANTILE_KEYS, "hit", "mean"):
-        c = _finite(cond.get(key))
-        u = _finite(uncond.get(key))
+        c = finite(cond.get(key))
+        u = finite(uncond.get(key))
         if c is None or u is None:
             shrunk[key] = u if c is None else c
         else:
@@ -201,8 +192,8 @@ def _vol_managed(
         "n": uncond.get("n", 0),
         "n_eff": uncond.get("n_eff", 0.0),
     }
-    t = _finite(target_vol)
-    c = _finite(current_vol)
+    t = finite(target_vol)
+    c = finite(current_vol)
     if t is None or c is None or c <= 0.0:
         for key in _QUANTILE_KEYS:
             block[key] = None
@@ -211,7 +202,7 @@ def _vol_managed(
     scale = t / c
     block["scale"] = scale
     for key in _QUANTILE_KEYS:
-        value = _finite(uncond.get(key))
+        value = finite(uncond.get(key))
         block[key] = value * scale if value is not None else None
     return block
 
@@ -255,8 +246,8 @@ def _target_and_current_vol(close: pd.Series) -> tuple[float | None, float | Non
     vol = realized_vol_annual(close)
     if vol.empty:
         return None, None
-    target = _finite(float(vol.median()))
-    current = _finite(float(vol.iloc[-1]))
+    target = finite(float(vol.median()))
+    current = finite(float(vol.iloc[-1]))
     return target, current
 
 
@@ -312,8 +303,8 @@ def conditional_iqr_by_horizon(section: dict[str, Any]) -> dict[int, float | Non
         except (TypeError, ValueError):
             continue
         shrunk = (block or {}).get("shrunk") or {}
-        q75 = _finite(shrunk.get("q75"))
-        q25 = _finite(shrunk.get("q25"))
+        q75 = finite(shrunk.get("q75"))
+        q25 = finite(shrunk.get("q25"))
         result[h] = (q75 - q25) if (q75 is not None and q25 is not None) else None
     return result
 
@@ -327,7 +318,7 @@ def shrunk_median_by_horizon(section: dict[str, Any]) -> dict[int, float | None]
         except (TypeError, ValueError):
             continue
         shrunk = (block or {}).get("shrunk") or {}
-        result[h] = _finite(shrunk.get("q50"))
+        result[h] = finite(shrunk.get("q50"))
     return result
 
 

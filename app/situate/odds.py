@@ -30,6 +30,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.situate.contract import HORIZONS, QUANTILE_KEYS
+from app.utils import finite
 
 ODDS_VERSION = "1.0.0"
 
@@ -47,26 +48,13 @@ _SCENARIO_STATE: dict[str, str] = {
 }
 
 
-def _finite(value: Any) -> float | None:
-    """Coerce to a finite float, or ``None`` (bools are never numbers here)."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    import math
-
-    return number if math.isfinite(number) else None
-
-
 def _quantile_map(block: Mapping[str, Any] | None) -> dict[str, float] | None:
     """A ``{q05..q95}`` map from a quantile block, or ``None`` if incomplete."""
     if not isinstance(block, Mapping):
         return None
     out: dict[str, float] = {}
     for key in QUANTILE_KEYS:
-        value = _finite(block.get(key))
+        value = finite(block.get(key))
         if value is None:
             return None
         out[key] = value
@@ -145,10 +133,10 @@ def build_odds(packet: Mapping[str, Any]) -> dict[str, Any]:
         uncond = _m(br_block, "uncond")
 
         br_q = _quantile_map(shrunk) or _quantile_map(uncond)
-        base_rate_q50 = _finite(shrunk.get("q50"))
+        base_rate_q50 = finite(shrunk.get("q50"))
         if base_rate_q50 is None:
-            base_rate_q50 = _finite(uncond.get("q50"))
-        shrink_w = _finite(shrunk.get("w"))
+            base_rate_q50 = finite(uncond.get("q50"))
+        shrink_w = finite(shrunk.get("w"))
 
         imp_block = _m(implied_by_h, key)
         imp_q = _quantile_map(imp_block.get("rw_quantiles")) or _quantile_map(
@@ -157,7 +145,7 @@ def build_odds(packet: Mapping[str, Any]) -> dict[str, Any]:
 
         # Industry median lifts the stack's *excess* quantiles to total return.
         ind_shrunk = _m(_m(br_block, "industry"), "shrunk")
-        industry_median = _finite(ind_shrunk.get("q50"))
+        industry_median = finite(ind_shrunk.get("q50"))
 
         stack_block = _m(stack_by_h, key) if stack_published else {}
         stack_q = None
@@ -187,7 +175,7 @@ def build_odds(packet: Mapping[str, Any]) -> dict[str, Any]:
             "p_up": _p_up_from_quantiles(quantiles) if quantiles else None,
             "base_rate_q50": base_rate_q50,
             "shrink_w": shrink_w,
-            "implied_q50": _finite((imp_q or {}).get("q50")) if imp_q else None,
+            "implied_q50": finite((imp_q or {}).get("q50")) if imp_q else None,
         }
         if reason:
             entry["reason"] = reason
@@ -216,7 +204,7 @@ def top_exposure_drivers(packet: Mapping[str, Any], *, limit: int = 2) -> list[d
         return []
     scored: list[tuple[float, str, float]] = []
     for name, beta in betas.items():
-        value = _finite(beta)
+        value = finite(beta)
         if value is None:
             continue
         scored.append((abs(value), str(name), value))
@@ -259,7 +247,7 @@ def build_scenarios(
             block = by_horizon.get(str(h)) if isinstance(by_horizon.get(str(h)), Mapping) else {}
             quantiles = block.get("quantiles") if isinstance(block, Mapping) else None
             value = (
-                _finite((quantiles or {}).get(quantile_key))
+                finite((quantiles or {}).get(quantile_key))
                 if isinstance(quantiles, Mapping)
                 else None
             )

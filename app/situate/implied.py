@@ -36,6 +36,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import numpy as np
+from app.utils import finite
 
 try:
     from app.situate.contract import HORIZONS as _CONTRACT_HORIZONS
@@ -70,16 +71,6 @@ def _norm_cdf(x: float) -> float:
 
 def _norm_pdf(x: float) -> float:
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def bs_price(
@@ -187,12 +178,12 @@ def _bisect_iv(
 # --------------------------------------------------------------------------- #
 def _contract_mid(contract: Mapping[str, Any]) -> float | None:
     """Mid ``(bid+ask)/2`` when a two-sided quote exists, else day close / last."""
-    bid = _finite(contract.get("bid"))
-    ask = _finite(contract.get("ask"))
+    bid = finite(contract.get("bid"))
+    ask = finite(contract.get("ask"))
     if bid is not None and ask is not None and ask >= bid > 0.0:
         return 0.5 * (bid + ask)
     for key in ("day_close", "last", "close"):
-        value = _finite(contract.get(key))
+        value = finite(contract.get(key))
         if value is not None and value > 0.0:
             return value
     return None
@@ -213,13 +204,13 @@ def normalize_raw_contracts(
         underlying = row.get("underlying_asset")
         if isinstance(underlying, Mapping) and spot is None:
             for key in ("price", "value", "last_price"):
-                candidate = _finite(underlying.get(key))
+                candidate = finite(underlying.get(key))
                 if candidate is not None and candidate > 0.0:
                     spot = candidate
                     break
         raw_details = row.get("details")
         details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else row
-        strike = _finite(details.get("strike_price"))
+        strike = finite(details.get("strike_price"))
         contract_type = str(details.get("contract_type") or "").lower()
         expiry = details.get("expiration_date")
         if strike is None or strike <= 0.0 or contract_type not in {"call", "put"} or not expiry:
@@ -235,11 +226,11 @@ def normalize_raw_contracts(
                 "expiry": str(expiry),
                 "strike": float(strike),
                 "type": contract_type,
-                "bid": _finite(quote.get("bid_price") or quote.get("bp")),
-                "ask": _finite(quote.get("ask_price") or quote.get("ap")),
-                "last": _finite(trade.get("price") or trade.get("p")),
-                "day_close": _finite(day.get("close") or day.get("c")),
-                "open_interest": _finite(row.get("open_interest")) or 0.0,
+                "bid": finite(quote.get("bid_price") or quote.get("bp")),
+                "ask": finite(quote.get("ask_price") or quote.get("ap")),
+                "last": finite(trade.get("price") or trade.get("p")),
+                "day_close": finite(day.get("close") or day.get("c")),
+                "open_interest": finite(row.get("open_interest")) or 0.0,
             }
         )
     return contracts, spot
@@ -349,7 +340,7 @@ def _strike_ivs(
     """
     by_strike: dict[float, dict[str, Mapping[str, Any]]] = {}
     for contract in contracts:
-        strike = _finite(contract.get("strike"))
+        strike = finite(contract.get("strike"))
         kind = str(contract.get("type") or "").lower()
         if strike is None or strike <= 0.0 or kind not in {"call", "put"}:
             continue
@@ -533,9 +524,9 @@ def fit_density(
         return float(1.0 - np.interp(price_level, mid_k, cdf))
 
     atm_iv = (
-        _finite(float(smile(0.0)))
+        finite(float(smile(0.0)))
         if (k_lo <= forward <= k_hi)
-        else _finite(float(np.interp(0.0, unique_k, unique_iv)))
+        else finite(float(np.interp(0.0, unique_k, unique_iv)))
     )
     skew = _delta_skew(unique_k, unique_iv, spot, forward, t, r, q)
 
@@ -663,7 +654,7 @@ def build_implied(
             )
         return section
 
-    resolved_spot = _finite(spot) or chain_spot
+    resolved_spot = finite(spot) or chain_spot
     section["underlying_price"] = resolved_spot
     if resolved_spot is None or resolved_spot <= 0.0:
         section["errors"].append(
@@ -715,16 +706,16 @@ def build_implied(
         block["t_years"] = round(t_years, 4)
         block["horizon_months"] = h
 
-        implied_iqr = _finite(block["quantiles"]["q75"]) - _finite(  # type: ignore[operator]
+        implied_iqr = finite(block["quantiles"]["q75"]) - finite(  # type: ignore[operator]
             block["quantiles"]["q25"]
         )
-        hist_iqr = _finite((hist_cond_iqr or {}).get(h))
+        hist_iqr = finite((hist_cond_iqr or {}).get(h))
         block["implied_iqr"] = round(implied_iqr, 6) if implied_iqr is not None else None
         block["width_ratio_vs_hist"] = (
             round(implied_iqr / hist_iqr, 4) if (hist_iqr is not None and hist_iqr > 0) else None
         )
 
-        target_median = _finite((shrunk_base_median or {}).get(h))
+        target_median = finite((shrunk_base_median or {}).get(h))
         block["rw_quantiles"], block["mean_shift"] = _shift_to_base_rate(
             block["quantiles"], rn_mean=block["rn_mean_return"], target_median=target_median
         )
@@ -748,7 +739,7 @@ def _shift_to_base_rate(
     shift = target_median - rn_mean
     shifted: dict[str, float | None] = {}
     for key in _QUANTILE_KEYS:
-        value = _finite(rn_quantiles.get(key))
+        value = finite(rn_quantiles.get(key))
         shifted[key] = round(value + shift, 6) if value is not None else None
     return shifted, round(shift, 6)
 

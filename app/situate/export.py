@@ -11,6 +11,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from app.utils import finite
 
 FORMATS = ("md", "json", "pdf")
 CONTENT_TYPES = {
@@ -25,20 +26,8 @@ class SituateExportError(ValueError):
     """Raised for an unknown export format."""
 
 
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    import math
-
-    return number if math.isfinite(number) else None
-
-
 def _pct(value: Any, *, digits: int = 1, sign: bool = True) -> str:
-    number = _finite(value)
+    number = finite(value)
     if number is None:
         return "n/a"
     return f"{number * 100:{'+' if sign else ''}.{digits}f}%"
@@ -161,8 +150,8 @@ def to_pdf(packet: Mapping[str, Any]) -> bytes:
         generated_at=str(packet.get("generated_at") or ""),
         # Situate reports zones and distributions, never a point target: leave the
         # PDF's target fields empty and let the memo prose carry the zones.
-        current_price=_finite(levels.get("current_price")),
-        market_cap=_finite(profile.get("market_cap")),
+        current_price=finite(levels.get("current_price")),
+        market_cap=finite(profile.get("market_cap")),
         scenarios=_pdf_scenarios(packet) or None,
         citations=_pdf_citations(packet) or None,
         catalysts=_string_list((memo or {}).get("whats_priced_in")) or None,
