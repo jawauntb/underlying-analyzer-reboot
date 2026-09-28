@@ -690,6 +690,29 @@
             <h3>stdio</h3>
             <pre>python -m pip install -e ".[mcp]"
 UNDERLYING_BASE_URL=https://underlying-terminal-production.up.railway.app underlying-mcp</pre>
+            <h3>Constellation</h3>
+            <p>
+              <code>POST /mcp</code> is a separate, smaller MCP for the lattice animals and the
+              other constellation sites: an allowlist of read-only, cheap tools with no
+              language-model calls, not the registry. The tools are
+              <code>list_capabilities</code>, <code>health_check</code>,
+              <code>provider_status</code>, <code>sec_source_pack</code>,
+              <code>chart_data</code>, <code>torque_data</code>, <code>moneyline_data</code>,
+              <code>situate_get</code>, <code>prism_get</code>, <code>peer_forecast</code> and
+              <code>ask_lattice_animals</code>. <code>POST /mcp/lattice</code> relays the lattice
+              animals' own MCP one hop deeper, and <code>GET /.well-known/mcp.json</code> is the
+              manifest. See
+              <a href="https://github.com/jawauntb/underlying-analyzer-reboot/blob/main/docs/mcp.md"
+                >docs/mcp.md</a
+              >.
+            </p>
+            <pre>{
+  "mcpServers": {
+    "underlying-constellation": {
+      "url": "https://underlying-terminal-production.up.railway.app/mcp"
+    }
+  }
+}</pre>
             <h3>Live tool catalog</h3>
             <p id="mcp-tools-status">Loading the catalog from <code>/api/agent/tools</code>...</p>
             <div class="docs-table-wrap">
