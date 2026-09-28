@@ -14,7 +14,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
-from app.utils import finite
+from app.utils import finite, pct2
 
 FORMATS: tuple[str, ...] = ("json", "txt", "pdf")
 
@@ -43,9 +43,8 @@ def _fmt(value: Any, *, digits: int = 4) -> str:
     return text if len(text) <= 120 else f"{text[:117]}..."
 
 
-def _pct(value: Any, *, digits: int = 2) -> str:
-    number = finite(value)
-    return "-" if number is None else f"{number * 100:+.{digits}f}%"
+# _pct is now pct2 from app.utils
+_pct = pct2
 
 
 def _table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> list[str]:
