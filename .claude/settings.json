@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "git fetch origin && git merge origin/main --no-edit || true", "timeout": 60 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__github__create_pull_request|mcp__github__merge_pull_request",
+        "hooks": [
+          { "type": "command", "command": "git fetch origin && git merge origin/main --no-edit || true", "timeout": 60 }
+        ]
+      }
+    ]
+  }
+}
