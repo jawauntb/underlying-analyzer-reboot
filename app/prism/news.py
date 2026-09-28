@@ -18,6 +18,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+from app.utils import trim
+
 #: Packet categories, in the order they are searched.
 CATEGORIES: tuple[str, ...] = (
     "company",
@@ -52,10 +54,7 @@ def _domain(url: str) -> str:
 
 
 def _trim(text: Any, *, limit: int = SUMMARY_CHARS) -> str:
-    cleaned = " ".join(str(text or "").split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[: limit - 3].rstrip()}..."
+    return trim(text, limit=limit)
 
 
 def build_queries(

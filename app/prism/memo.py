@@ -21,6 +21,7 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
+from app.utils import finite
 
 DEFAULT_PROJECTION_CHARS = 25_000
 DEFAULT_MAX_TOKENS = 8_000
@@ -82,28 +83,18 @@ JSON_BLOCK = re.compile(r"<PRISM_JSON>\s*(\{.*?\})\s*</PRISM_JSON>", re.DOTALL)
 MEMO_BLOCK = re.compile(r"<PRISM_MEMO>\s*(.*?)(?:</PRISM_MEMO>|\Z)", re.DOTALL)
 
 
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def _pct(value: Any, *, digits: int = 2) -> str:
-    number = _finite(value)
+    number = finite(value)
     return "n/a" if number is None else f"{number * 100:+.{digits}f}%"
 
 
 def _num(value: Any, *, digits: int = 3) -> str:
-    number = _finite(value)
+    number = finite(value)
     return "n/a" if number is None else f"{number:,.{digits}f}"
 
 
 def _money(value: Any) -> str:
-    number = _finite(value)
+    number = finite(value)
     if number is None:
         return "n/a"
     for cutoff, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
@@ -296,12 +287,12 @@ def derive_recommendation(packet: Mapping[str, Any]) -> dict[str, Any]:
     entry = _sub(scenarios, "entry")
     horizon = str(scenarios.get("probability_horizon") or "3m")
 
-    bull = _finite((cases.get("bull") or {}).get("probability")) or 0.0
-    bear = _finite((cases.get("bear") or {}).get("probability")) or 0.0
+    bull = finite((cases.get("bull") or {}).get("probability")) or 0.0
+    bear = finite((cases.get("bear") or {}).get("probability")) or 0.0
     edge = bull - bear
 
-    current = _finite(entry.get("current_price")) or _finite(scenarios.get("current_price"))
-    fair = _finite(entry.get("fair_value"))
+    current = finite(entry.get("current_price")) or finite(scenarios.get("current_price"))
+    fair = finite(entry.get("fair_value"))
     value_gap: float | None = None
     if current and fair and current > 0:
         value_gap = fair / current - 1.0
@@ -394,14 +385,14 @@ def derive_targets(packet: Mapping[str, Any]) -> dict[str, Any]:
             block = bull_horizons.get(horizon)
             if not isinstance(block, Mapping):
                 continue
-            price = _finite(block.get("price_p50"))
+            price = finite(block.get("price_p50"))
             if price is None:
                 continue
             exit_targets.append(
                 {
                     "horizon": horizon,
                     "price": price,
-                    "probability": _finite(block.get("probability")),
+                    "probability": finite(block.get("probability")),
                     "basis": "bull-case median price at this horizon",
                 }
             )
@@ -411,13 +402,13 @@ def derive_targets(packet: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(bear_horizons, Mapping):
         block = bear_horizons.get("3m") if isinstance(bear_horizons.get("3m"), Mapping) else None
         if isinstance(block, Mapping):
-            stop = _finite(block.get("price_p50"))
+            stop = finite(block.get("price_p50"))
 
     return {
-        "entry_price": _finite(entry_block.get("bargain_below")),
-        "fair_value": _finite(entry_block.get("fair_value")),
-        "expensive_above": _finite(entry_block.get("expensive_above")),
-        "current_price": _finite(entry_block.get("current_price")),
+        "entry_price": finite(entry_block.get("bargain_below")),
+        "fair_value": finite(entry_block.get("fair_value")),
+        "expensive_above": finite(entry_block.get("expensive_above")),
+        "current_price": finite(entry_block.get("current_price")),
         "exit_targets": exit_targets,
         "stop_or_reassess": stop,
     }
@@ -442,8 +433,8 @@ def clean_exit_targets(value: Any, fallback: Sequence[Mapping[str, Any]]) -> lis
                 continue
             row: dict[str, Any] = {
                 "horizon": str(horizon).strip(),
-                "price": _finite(item.get("price")),
-                "probability": _finite(item.get("probability")),
+                "price": finite(item.get("price")),
+                "probability": finite(item.get("probability")),
             }
             basis = item.get("basis")
             if basis is not None:
@@ -484,7 +475,7 @@ def clean_key_determinants(
                 in {"bullish", "bearish", "neutral", "unknown"}
                 else "unknown"
             )
-            row["weight"] = _finite(item.get("weight"))
+            row["weight"] = finite(item.get("weight"))
             rows.append(row)
     if rows:
         return rows
@@ -520,7 +511,7 @@ def key_determinants(packet: Mapping[str, Any], *, limit: int = 6) -> list[dict[
 
     rows: list[dict[str, Any]] = []
     for name, weight in sorted(
-        ((str(key), _finite(value) or 0.0) for key, value in (weights or {}).items()),
+        ((str(key), finite(value) or 0.0) for key, value in (weights or {}).items()),
         key=lambda item: -item[1],
     )[: max(1, int(limit))]:
         component = components.get(name) if isinstance(components, Mapping) else None
@@ -528,7 +519,7 @@ def key_determinants(packet: Mapping[str, Any], *, limit: int = 6) -> list[dict[
         if isinstance(component, Mapping):
             expected_map = component.get("expected_return")
             if isinstance(expected_map, Mapping):
-                expected = _finite(expected_map.get("6m"))
+                expected = finite(expected_map.get("6m"))
         marker = load_bearing.get(name)
         rows.append(
             {
@@ -544,7 +535,7 @@ def key_determinants(packet: Mapping[str, Any], *, limit: int = 6) -> list[dict[
                 "expected_return_6m": expected,
                 "available": bool((component or {}).get("available")),
                 "load_bearing": bool((marker or {}).get("load_bearing")),
-                "weight_delta_if_removed": _finite((marker or {}).get("weight_delta_if_removed")),
+                "weight_delta_if_removed": finite((marker or {}).get("weight_delta_if_removed")),
             }
         )
     return rows
@@ -555,14 +546,14 @@ def priced_in(packet: Mapping[str, Any]) -> list[str]:
     out: list[str] = []
     scenarios = _section(packet, "scenarios") or {}
     entry = _sub(scenarios, "entry")
-    gap = _finite(entry.get("current_vs_fair"))
+    gap = finite(entry.get("current_vs_fair"))
     if gap is not None:
         out.append(
             f"The last price sits {gap:+.1%} against the mixture's six-month fair value, "
             "so that much of the modelled outcome is already in the price."
         )
     volatility = _section(packet, "volatility") or {}
-    premium = _finite(volatility.get("variance_risk_premium"))
+    premium = finite(volatility.get("variance_risk_premium"))
     if premium is not None:
         out.append(
             f"Options are charging {premium:+.1%} over trailing one-month realized "
@@ -570,7 +561,7 @@ def priced_in(packet: Mapping[str, Any]) -> list[str]:
         )
     factors = _section(packet, "factors") or {}
     residuals = _sub(factors, "residuals")
-    residual = _finite(residuals.get("last_60d_cum"))
+    residual = finite(residuals.get("last_60d_cum"))
     if residual is not None:
         out.append(
             f"Factor-adjusted, the last sixty sessions carry {residual:+.1%} of residual "
@@ -579,9 +570,9 @@ def priced_in(packet: Mapping[str, Any]) -> list[str]:
         )
     fundamentals = _section(packet, "fundamentals") or {}
     ratios = _sub(fundamentals, "ratios")
-    pe = _finite(ratios.get("pe"))
+    pe = finite(ratios.get("pe"))
     forecast = _sub(fundamentals, "forecast")
-    implied = _finite(forecast.get("implied_revenue_growth"))
+    implied = finite(forecast.get("implied_revenue_growth"))
     if pe is not None and implied is not None:
         out.append(
             f"At {pe:,.1f}x trailing earnings the market is paying ahead of the "
@@ -811,7 +802,7 @@ def _project_relational(packet: Mapping[str, Any]) -> list[str]:
     if isinstance(impact, Mapping):
         ranked = sorted(
             (
-                (str(symbol), _finite((block or {}).get("weight")) or 0.0)
+                (str(symbol), finite((block or {}).get("weight")) or 0.0)
                 for symbol, block in impact.items()
                 if isinstance(block, Mapping)
             ),
@@ -836,7 +827,7 @@ def _project_factors(packet: Mapping[str, Any]) -> list[str]:
     if not section:
         return ["## Factors", f"- unavailable: {_section_error(packet, 'factors')}", ""]
     lines = ["## Factors", f"- model: {section.get('model')}"]
-    stale_days = _finite(section.get("stale_days"))
+    stale_days = finite(section.get("stale_days"))
     if section.get("as_of"):
         lines.append(
             f"- factor data as of {section.get('as_of')}"
@@ -875,7 +866,7 @@ def _project_factors(packet: Mapping[str, Any]) -> list[str]:
         priced = ", ".join(
             f"{name} {_pct(value * 252.0, digits=2)}/yr"
             for name, value in premia["daily"].items()
-            if _finite(value) is not None
+            if finite(value) is not None
         )
         lines.append(
             f"- premia used to price the exposures ({premia.get('source')}, "
@@ -904,8 +895,8 @@ def _project_tabular(packet: Mapping[str, Any]) -> list[str]:
         return []
     from app.peer_forecast import BUCKETS, CONFIDENCE_FLOOR
 
-    confidence = _finite(section.get("confidence")) or 0.0
-    floor = _finite(section.get("confidence_floor"))
+    confidence = finite(section.get("confidence")) or 0.0
+    floor = finite(section.get("confidence_floor"))
     floor = floor if floor is not None else CONFIDENCE_FLOOR
     bucket = str(section.get("bucket") or "").replace("_", " ")
     raw_probs = section.get("probabilities")
@@ -935,7 +926,7 @@ def _project_tabular(packet: Mapping[str, Any]) -> list[str]:
     peers: list[Any] = raw_peers if isinstance(raw_peers, list) else []
     ranked = [
         p for p in peers
-        if isinstance(p, Mapping) and _finite(p.get("expected_excess_return")) is not None
+        if isinstance(p, Mapping) and finite(p.get("expected_excess_return")) is not None
     ]
     if ranked:
         ranked.sort(key=lambda p: float(p["expected_excess_return"]), reverse=True)
@@ -1773,7 +1764,7 @@ def build_memo(
     strength = str(parsed.get("strength") or "").strip().lower()
     if strength not in STRENGTHS:
         strength = derived["strength"]
-    conviction = _finite(parsed.get("conviction"))
+    conviction = finite(parsed.get("conviction"))
     conviction = derived["conviction"] if conviction is None else max(0.0, min(1.0, conviction))
 
     text = str(parsed.get("text") or "").strip()
@@ -1824,10 +1815,10 @@ def build_memo(
             "one_line": str(parsed.get("one_line") or derived["one_line"]),
         },
         "derivation": derived,
-        "entry_price": _finite(parsed.get("entry_price")) or targets["entry_price"],
+        "entry_price": finite(parsed.get("entry_price")) or targets["entry_price"],
         "exit_targets": clean_exit_targets(parsed.get("exit_targets"), targets["exit_targets"]),
         "stop_or_reassess": (
-            _finite(parsed.get("stop_or_reassess")) or targets["stop_or_reassess"]
+            finite(parsed.get("stop_or_reassess")) or targets["stop_or_reassess"]
         ),
         "fair_value": targets["fair_value"],
         "text": text,

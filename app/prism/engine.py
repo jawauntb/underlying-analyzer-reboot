@@ -26,6 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from app.utils import finite
 from app.prism.contract import (
     ENGINE_VERSION,
     Provenance,
@@ -46,16 +47,6 @@ EIGEN_HOLDOUT_MONTHS = 36
 
 class PrismEngineError(RuntimeError):
     """Raised only when the packet cannot be started at all (e.g. no ticker)."""
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 @contextmanager
@@ -166,7 +157,7 @@ def build_profile(client: Any, ticker: str) -> dict[str, Any]:
         "sector": sector,
         "sector_inferred": sector_inferred,
         "industry": industry,
-        "market_cap": _finite(raw.get("marketCap")),
+        "market_cap": finite(raw.get("marketCap")),
         "description": raw.get("longBusinessSummary"),
         "listed_since": (massive or {}).get("list_date") or raw.get("list_date"),
         "primary_exchange": (massive or {}).get("primary_exchange") or raw.get("exchange"),
@@ -342,7 +333,7 @@ def build_recent(
             key = "1m" if days <= 25 else "3m"
             block = windows.get(key)
             if isinstance(block, Mapping):
-                entropy_value = _finite(block.get("H"))
+                entropy_value = finite(block.get("H"))
         notable: list[str] = []
         if volatility is not None and volatility > 0.6:
             notable.append(f"annualised volatility ran at {volatility:.0%}")
@@ -808,7 +799,7 @@ def _build_fundamentals(
         symbol,
         sec_client=sec_client,
         current_price=current_price,
-        market_cap=_finite(profile.get("market_cap")),
+        market_cap=finite(profile.get("market_cap")),
     )
 
 
@@ -846,7 +837,7 @@ def _build_factors(
 
     macro = packet.get("macro") if isinstance(packet.get("macro"), Mapping) else {}
     yields = (macro or {}).get("yields") if isinstance((macro or {}).get("yields"), Mapping) else {}
-    two_year = _finite(((yields or {}).get("DGS2") or {}).get("current"))
+    two_year = finite(((yields or {}).get("DGS2") or {}).get("current"))
     risk_free = two_year / 100.0 if two_year is not None else None
     cache_dir = getattr(cache, "base_dir", None) or cache_dir_from_env()
     return build_factors(
@@ -1204,7 +1195,7 @@ def prism_summary(packet: Mapping[str, Any], *, max_news: int = 5) -> dict[str, 
         for name, block in cases.items():
             if isinstance(block, Mapping):
                 case_summary[name] = {
-                    "probability": _finite(block.get("probability")),
+                    "probability": finite(block.get("probability")),
                     "narrative": block.get("narrative"),
                 }
 

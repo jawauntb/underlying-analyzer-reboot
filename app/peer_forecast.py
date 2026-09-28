@@ -50,6 +50,7 @@ from app.situate.stack import (
     eligible_train_mask,
 )
 from app.tabular import (
+from app.utils import finite
     DEFAULT_N_ESTIMATORS,
     TabularPredictor,
     TabularUnavailable,
@@ -174,11 +175,6 @@ def _expected_return(
     return total / weight
 
 
-def _finite(value: Any) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
     return number if math.isfinite(number) else None
 
 
@@ -213,7 +209,7 @@ def _classify(
         probs = dict.fromkeys(BUCKETS, 0.0)
         for cls, prob in zip(classes, row, strict=False):
             if cls in probs:
-                probs[cls] = max(0.0, float(_finite(prob) or 0.0))
+                probs[cls] = max(0.0, float(finite(prob) or 0.0))
         total = sum(probs.values())
         if total > 0.0:
             probs = {k: v / total for k, v in probs.items()}
@@ -315,7 +311,7 @@ def build_sector_forecast(
                 for symbol, probs in zip(backtest_query["symbol"].tolist(), bt_probs, strict=True):
                     backtest[str(symbol)] = _expected_return(probs, bt_means)
     realized: dict[str, float | None] = {
-        str(symbol): _finite(value)
+        str(symbol): finite(value)
         for symbol, value in zip(
             backtest_query["symbol"].tolist(),
             backtest_query[target_col].tolist(),

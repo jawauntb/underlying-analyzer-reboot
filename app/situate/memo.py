@@ -33,6 +33,7 @@ from app.prism.memo import (
     strip_model_citations,
 )
 from app.situate.contract import ENGINE_NAME, ENGINE_VERSION, HORIZONS
+from app.utils import finite
 
 MEMO_VERSION = "1.0.0"
 DISCLAIMER = (
@@ -77,18 +78,8 @@ MEMO_SYSTEM = (
 # --------------------------------------------------------------------------
 
 
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
 def _pct(value: Any, *, digits: int = 1, sign: bool = False) -> str:
-    number = _finite(value)
+    number = finite(value)
     if number is None:
         return "n/a"
     formatted = f"{number * 100:{'+' if sign else ''}.{digits}f}%"
@@ -96,12 +87,12 @@ def _pct(value: Any, *, digits: int = 1, sign: bool = False) -> str:
 
 
 def _num(value: Any, *, digits: int = 2) -> str:
-    number = _finite(value)
+    number = finite(value)
     return f"{number:.{digits}f}" if number is not None else "n/a"
 
 
 def _money(value: Any) -> str:
-    number = _finite(value)
+    number = finite(value)
     if number is None:
         return "n/a"
     return f"${number:,.2f}"
@@ -176,9 +167,9 @@ def derive_posture(packet: Mapping[str, Any]) -> dict[str, Any]:
         }
     block = _mget(_odds_by_horizon(packet), str(horizon))
     quantiles = _mget(block, "quantiles")
-    p_up = _finite(block.get("p_up"))
-    q50 = _finite(quantiles.get("q50"))
-    shrink_w = _finite(block.get("shrink_w"))
+    p_up = finite(block.get("p_up"))
+    q50 = finite(quantiles.get("q50"))
+    shrink_w = finite(block.get("shrink_w"))
 
     stance = "balanced"
     if p_up is not None and q50 is not None:
@@ -236,7 +227,7 @@ def build_citations(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
     exposure = _section(packet, "exposure")
     if exposure:
         betas = exposure.get("betas") if isinstance(exposure.get("betas"), Mapping) else {}
-        spy_beta = _finite((betas or {}).get("SPY"))
+        spy_beta = finite((betas or {}).get("SPY"))
         add(
             "exposure",
             f"SPY beta {_num(spy_beta)}, R² {_num(exposure.get('r2'))}, "
@@ -353,9 +344,9 @@ def key_determinants(packet: Mapping[str, Any], *, limit: int = 6) -> list[dict[
     betas = exposure.get("betas") if isinstance(exposure.get("betas"), Mapping) else {}
     scored = sorted(
         (
-            (abs(_finite(v) or 0.0), str(k), _finite(v))
+            (abs(finite(v) or 0.0), str(k), finite(v))
             for k, v in (betas or {}).items()
-            if _finite(v) is not None
+            if finite(v) is not None
         ),
         key=lambda row: row[0],
         reverse=True,
@@ -380,8 +371,8 @@ def whats_priced_in(packet: Mapping[str, Any]) -> list[str]:
         block = by_h.get(str(h))
         if not isinstance(block, Mapping) or block.get("iv_atm") is None:
             continue
-        width = _finite(block.get("width_ratio_vs_hist"))
-        skew = _finite(block.get("skew_25d"))
+        width = finite(block.get("width_ratio_vs_hist"))
+        skew = finite(block.get("skew_25d"))
         parts = [f"{h}m: ATM IV {_pct(block.get('iv_atm'))}"]
         if width is not None:
             if width > 1.15:
@@ -416,7 +407,7 @@ def falsifiers(packet: Mapping[str, Any]) -> list[str]:
     determinants = key_determinants(packet, limit=2)
     if determinants:
         names = ", ".join(d["name"] for d in determinants)
-        r2 = _finite(exposure.get("r2"))
+        r2 = finite(exposure.get("r2"))
         out.append(
             f"The exposure read attributes {ticker}'s moves mostly to {names} "
             f"(R² {_num(r2)}); if realized correlation to those legs breaks down over "
@@ -427,8 +418,8 @@ def falsifiers(packet: Mapping[str, Any]) -> list[str]:
     if horizon is not None:
         block = _mget(_odds_by_horizon(packet), str(horizon))
         quantiles = _mget(block, "quantiles")
-        q05 = _finite(quantiles.get("q05"))
-        q95 = _finite(quantiles.get("q95"))
+        q05 = finite(quantiles.get("q05"))
+        q95 = finite(quantiles.get("q95"))
         if q05 is not None and q95 is not None:
             out.append(
                 f"If the realized {horizon}-month return lands outside the "
@@ -612,7 +603,7 @@ def render_markdown(
             basis = value_z.get("basis")
             zbits = ", ".join(
                 f"{k} z {_num(v)}" for k, v in value_z.items()
-                if k != "basis" and _finite(v) is not None
+                if k != "basis" and finite(v) is not None
             )
             if zbits:
                 lines.append(f"Value z-scores ({basis}): {zbits} {cite('fundamentals')}.")
@@ -759,8 +750,8 @@ def _project_tabular(
     ref = cite("tabular") if cite is not None else ""
     horizon = tabular.get("horizon_months")
     etf = tabular.get("sector_etf") or "the sector ETF"
-    confidence = _finite(tabular.get("confidence")) or 0.0
-    floor = _finite(tabular.get("confidence_floor"))
+    confidence = finite(tabular.get("confidence")) or 0.0
+    floor = finite(tabular.get("confidence_floor"))
     floor = floor if floor is not None else CONFIDENCE_FLOOR
     bucket = str(tabular.get("bucket") or "").replace("_", " ")
     raw_probs = tabular.get("probabilities")
@@ -789,7 +780,7 @@ def _project_tabular(
     peers: list[Any] = raw_peers if isinstance(raw_peers, list) else []
     ranked = [
         p for p in peers
-        if isinstance(p, Mapping) and _finite(p.get("expected_excess_return")) is not None
+        if isinstance(p, Mapping) and finite(p.get("expected_excess_return")) is not None
     ]
     if ranked:
         ranked.sort(key=lambda p: float(p["expected_excess_return"]), reverse=True)
@@ -821,9 +812,9 @@ def _implied_history_disagreements(packet: Mapping[str, Any]) -> list[str]:
         shrunk = (br_block.get("shrunk") or {}) if isinstance(br_block, Mapping) else {}
         imp_block = _mget(implied_by_h, str(h))
         imp_rw = (imp_block.get("rw_quantiles") or {}) if isinstance(imp_block, Mapping) else {}
-        hist_med = _finite(shrunk.get("q50"))
-        imp_med = _finite(imp_rw.get("q50"))
-        width = _finite(imp_block.get("width_ratio_vs_hist"))
+        hist_med = finite(shrunk.get("q50"))
+        imp_med = finite(imp_rw.get("q50"))
+        width = finite(imp_block.get("width_ratio_vs_hist"))
         if width is not None and (width > 1.25 or width < 0.8):
             out.append(f"{h}m implied move is {_num(width)}x the historical conditional band")
         if hist_med is not None and imp_med is not None and abs(hist_med - imp_med) > 0.03:
@@ -995,7 +986,7 @@ def build_memo(
         horizon = int(horizon) if horizon is not None else posture["horizon"]
     except (TypeError, ValueError):
         horizon = posture["horizon"]
-    conviction = _finite(parsed.get("conviction"))
+    conviction = finite(parsed.get("conviction"))
     conviction = posture["conviction"] if conviction is None else max(0.0, min(1.0, conviction))
 
     text = str(parsed.get("text") or "").strip()

@@ -105,6 +105,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from app.utils import finite, normal_cdf
+
 __all__ = [
     "DEFAULT_MARKET_DRIFT_ANNUAL",
     "HORIZONS",
@@ -182,22 +184,7 @@ _STAGE_TILT: dict[str, float] = {
 
 
 # --------------------------------------------------------------------------
-# Small numeric helpers
-# --------------------------------------------------------------------------
-
-
-def _normal_cdf(x: float, mu: float, sigma: float) -> float:
-    if sigma <= 0:
-        return 1.0 if x >= mu else 0.0
-    return 0.5 * (1.0 + math.erf((x - mu) / (sigma * math.sqrt(2.0))))
-
-
-def _finite(value: Any) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+# Note: normal_cdf and finite are imported from app.utils to avoid duplication
 
 
 def _horizon_map(horizons: Mapping[str, int] | None) -> dict[str, int]:
@@ -317,10 +304,10 @@ def _seasonality_component(
             expected[label] = None
             sigma[label] = None
             continue
-        mean = _finite(entry.get("mean"))
+        mean = finite(entry.get("mean"))
         expected[label] = mean
-        p10 = _finite(entry.get("p10"))
-        p90 = _finite(entry.get("p90"))
+        p10 = finite(entry.get("p10"))
+        p90 = finite(entry.get("p90"))
         if p10 is not None and p90 is not None and p90 > p10:
             sigma[label] = float((p90 - p10) / (2.0 * 1.2815515655446004))
         else:
@@ -377,8 +364,8 @@ def _regime_component(
         stats = by_regime.get(label)
         if not isinstance(stats, Mapping):
             continue
-        mean = _finite(stats.get("mean_daily"))
-        std = _finite(stats.get("std_daily"))
+        mean = finite(stats.get("mean_daily"))
+        std = finite(stats.get("std_daily"))
         if mean is None or std is None:
             continue
         means[index] = mean
@@ -404,7 +391,7 @@ def _regime_component(
         mean_sum, var_sum = per_day[days - 1]
         expected[label] = float(math.expm1(mean_sum))
         sigma[label] = float(math.sqrt(var_sum)) if var_sum > 0 else base_sigma.get(label)
-    confidence = float(min(max(_finite(current.get("switch_confidence")) or 0.5, 0.05), 1.0))
+    confidence = float(min(max(finite(current.get("switch_confidence")) or 0.5, 0.05), 1.0))
     return {
         "component": "regime",
         "available": True,
@@ -461,7 +448,7 @@ def _factors_component(
         premia = {
             str(key): float(value)
             for key, value in factor_premia.items()
-            if _finite(value) is not None
+            if finite(value) is not None
         }
     if not premia:
         block = factors.get("premia")
@@ -470,7 +457,7 @@ def _factors_component(
             premia = {
                 str(key): float(value)
                 for key, value in candidate.items()
-                if _finite(value) is not None
+                if finite(value) is not None
             }
             premia_source = str((block or {}).get("source") or "full_sample_factor_means")
     if not premia:
@@ -483,15 +470,15 @@ def _factors_component(
         )
 
     betas = {
-        str(key): (_finite(value) or 0.0) for key, value in (chosen.get("betas") or {}).items()
+        str(key): (finite(value) or 0.0) for key, value in (chosen.get("betas") or {}).items()
     }
     # Alpha is deliberately excluded from the forecast: a five-year in-sample alpha
     # of tens of percent a year is a description of the past, not a prediction. It
     # is reported beside the forecast as `alpha_component` instead.
-    alpha_daily = _finite(chosen.get("alpha_daily")) or 0.0
+    alpha_daily = finite(chosen.get("alpha_daily")) or 0.0
     daily = sum(betas.get(name, 0.0) * value for name, value in premia.items())
-    residual_daily = _finite(chosen.get("residual_vol_daily"))
-    r2 = _finite(chosen.get("r2"))
+    residual_daily = finite(chosen.get("residual_vol_daily"))
+    r2 = finite(chosen.get("r2"))
     total_daily_vol: float | None = residual_daily
     if residual_daily is not None and r2 is not None and r2 < 0.98:
         # Total return variance implied by the residual variance and R-squared.
@@ -533,7 +520,7 @@ def _factors_component(
         # Reported, never added to the forecast.
         "alpha_component": {
             "alpha_daily": alpha_daily,
-            "alpha_annual": _finite(chosen.get("alpha_annual")),
+            "alpha_annual": finite(chosen.get("alpha_annual")),
             "note": (
                 "In-sample intercept over the fitted window. Excluded from "
                 "expected_return: it is a description of realised idiosyncratic "
@@ -566,8 +553,8 @@ def _spectral_component(
             expected[label] = None
             sigma[label] = None
             continue
-        expected[label] = _finite(entry.get("expected_return"))
-        confidence = _finite(entry.get("confidence")) or 0.05
+        expected[label] = finite(entry.get("expected_return"))
+        confidence = finite(entry.get("confidence")) or 0.05
         confidences.append(confidence)
         # The projection's confidence is already per horizon (R-squared times a
         # horizon damping times the walk-forward consistency factor, floored
@@ -611,7 +598,7 @@ def _fundamentals_component(
     label = str((stage or {}).get("label") or "").lower() if isinstance(stage, Mapping) else ""
     tilt = _STAGE_TILT.get(label)
     growth = fundamentals.get("growth") if isinstance(fundamentals.get("growth"), Mapping) else {}
-    revenue_yoy = _finite((growth or {}).get("revenue_yoy"))
+    revenue_yoy = finite((growth or {}).get("revenue_yoy"))
     if tilt is None and revenue_yoy is None:
         return _empty_component(
             "fundamentals", "no stage label or revenue growth to tilt on", horizons
@@ -654,7 +641,7 @@ def _macro_component(
         """
         if not isinstance(node, Mapping):
             return None
-        value = _finite(node.get(key))
+        value = finite(node.get(key))
         if value is None:
             return None
         mode = str(node.get("change_mode") or "diff")
@@ -678,7 +665,7 @@ def _macro_component(
         contributions["dollar"] = float(np.clip(-fraction * 0.5, -0.04, 0.04))
     curve = macro.get("curve_shape")
     if isinstance(curve, Mapping):
-        slope = _finite(curve.get("2s10s"))
+        slope = finite(curve.get("2s10s"))
         if slope is not None:
             contributions["curve"] = float(np.clip(slope * 0.01, -0.05, 0.05))
     if not contributions:
@@ -917,10 +904,10 @@ def shrink_components(
 
         scored = evidence_components.get(name)
         measured_skill = (
-            _finite((scored or {}).get("skill")) if isinstance(scored, Mapping) else None
+            finite((scored or {}).get("skill")) if isinstance(scored, Mapping) else None
         )
         skill_factor = _skill_factor(measured_skill)
-        base_confidence = _finite(block.get("confidence"))
+        base_confidence = finite(block.get("confidence"))
         by_horizon = dict(block.get("confidence_by_horizon") or {})
 
         shrunk: dict[str, float | None] = {}
@@ -932,9 +919,9 @@ def shrink_components(
         clamp_bounds: dict[str, Any] = {}
 
         for label, days in horizon_map.items():
-            value = _finite(raw.get(label))
-            prior_value = _finite(prior_by_horizon.get(label))
-            evidence = _finite(by_horizon.get(label))
+            value = finite(raw.get(label))
+            prior_value = finite(prior_by_horizon.get(label))
+            evidence = finite(by_horizon.get(label))
             if evidence is None:
                 evidence = base_confidence if base_confidence is not None else 0.0
             evidence = float(min(max(evidence, 0.0), 1.0))
@@ -960,8 +947,8 @@ def shrink_components(
                 calibrated = confidence * value + (1.0 - confidence) * prior_value
 
             bound = (bounds or {}).get(label) if bounds else None
-            low = _finite((bound or {}).get("low")) if isinstance(bound, Mapping) else None
-            high = _finite((bound or {}).get("high")) if isinstance(bound, Mapping) else None
+            low = finite((bound or {}).get("low")) if isinstance(bound, Mapping) else None
+            high = finite((bound or {}).get("high")) if isinstance(bound, Mapping) else None
             if isinstance(bound, Mapping):
                 clamp_bounds[label] = {"low": low, "high": high, "n": bound.get("n")}
             hit: str | None = None
@@ -982,7 +969,7 @@ def shrink_components(
             ),
             "raw_expected_return": raw,
             "prior": {
-                label: _finite(prior_by_horizon.get(label)) for label in horizon_map
+                label: finite(prior_by_horizon.get(label)) for label in horizon_map
             },
             "prior_source": (prior or {}).get("source"),
             "shrink_weight": weights,
@@ -1367,7 +1354,7 @@ def make_weight_fn(
 
 
 def _mixture_cdf(x: float, parts: Sequence[tuple[float, float, float]]) -> float:
-    return float(sum(weight * _normal_cdf(x, mu, sigma) for weight, mu, sigma in parts))
+    return float(sum(weight * normal_cdf(x, mu, sigma) for weight, mu, sigma in parts))
 
 
 def _mixture_quantile(
@@ -1522,7 +1509,7 @@ def component_agreement(
         for name, component in components.items():
             if not component.get("available"):
                 continue
-            value = _finite((component.get("expected_return") or {}).get(label))
+            value = finite((component.get("expected_return") or {}).get(label))
             if value is not None:
                 means[name] = value
         entry: dict[str, Any] = {
@@ -1599,9 +1586,9 @@ def mix(
             if not component.get("available"):
                 missing.setdefault(name, str(component.get("reason") or "unavailable"))
                 continue
-            weight = _finite(weights.get(name))
-            mu = _finite((component.get("expected_return") or {}).get(label))
-            sigma = _finite((component.get("sigma") or {}).get(label))
+            weight = finite(weights.get(name))
+            mu = finite((component.get("expected_return") or {}).get(label))
+            sigma = finite((component.get("sigma") or {}).get(label))
             if weight is None or weight <= 0 or mu is None or sigma is None or sigma <= 0:
                 continue
             converted = to_log_space(mu, sigma)
@@ -1806,12 +1793,12 @@ def entry_zone(
             block = (cases.get(case) or {}).get("horizons", {}).get(horizon)
             if not isinstance(block, Mapping):
                 continue
-            probability = _finite(block.get("probability")) or 0.0
+            probability = finite(block.get("probability")) or 0.0
             logs: list[float | None] = []
             for key in ("p10", "p50", "p90"):
-                direct = _finite(block.get(f"{key}_log"))
+                direct = finite(block.get(f"{key}_log"))
                 if direct is None:
-                    simple = _finite(block.get(key))
+                    simple = finite(block.get(key))
                     direct = math.log1p(simple) if simple is not None and simple > -1.0 else None
                 logs.append(direct)
             p10, p50, p90 = logs
@@ -1823,10 +1810,10 @@ def entry_zone(
         return zone
     total = float(sum(weight for weight, _, _ in parts)) or 1.0
     parts = [(weight / total, mu, sigma) for weight, mu, sigma in parts]
-    mean = _finite(distribution.get("mean_log"))
+    mean = finite(distribution.get("mean_log"))
     if mean is None:
         mean = float(sum(weight * mu for weight, mu, _ in parts))
-    std = _finite(distribution.get("std_log"))
+    std = finite(distribution.get("std_log"))
     if std is None or std <= 0:
         second = float(sum(weight * (sigma**2 + mu**2) for weight, mu, sigma in parts))
         std = math.sqrt(max(second - mean**2, 1e-12))
@@ -1874,7 +1861,7 @@ def timing_label(
 
     def _case_probability(name: str) -> float:
         block = (cases.get(name) or {}).get("horizons", {}).get(horizon) or {}
-        return _finite(block.get("probability")) or 0.0
+        return finite(block.get("probability")) or 0.0
 
     p_bull = _case_probability("bull")
     p_bear = _case_probability("bear")
@@ -1888,8 +1875,8 @@ def timing_label(
         if isinstance(this_month, Mapping):
             for window in ("10y", "5y", "2y", "1y"):
                 entry = this_month.get(window)
-                if isinstance(entry, Mapping) and _finite(entry.get("hit_rate")) is not None:
-                    hit_rate = _finite(entry.get("hit_rate"))
+                if isinstance(entry, Mapping) and finite(entry.get("hit_rate")) is not None:
+                    hit_rate = finite(entry.get("hit_rate"))
                     break
 
     score = ratio + (p_bull - p_bear) + ((hit_rate - 0.5) if hit_rate is not None else 0.0)
@@ -1933,10 +1920,10 @@ def watch_signals(
         scored: list[tuple[str, float, float | None]] = []
         for symbol, payload in impact_weights.items():
             if isinstance(payload, Mapping):
-                weight = _finite(payload.get("weight"))
-                share = _finite(payload.get("explained_variance_share"))
+                weight = finite(payload.get("weight"))
+                share = finite(payload.get("explained_variance_share"))
             else:
-                weight = _finite(payload)
+                weight = finite(payload)
                 share = None
             if weight is not None:
                 scored.append((str(symbol), weight, share))
@@ -1967,7 +1954,7 @@ def watch_signals(
         if isinstance(next_probabilities, Mapping):
             label = str(current.get("label"))
             leaving = {
-                key: _finite(value) or 0.0
+                key: finite(value) or 0.0
                 for key, value in next_probabilities.items()
                 if str(key) != label
             }
@@ -1990,7 +1977,7 @@ def watch_signals(
 
     if isinstance(entropy, Mapping):
         current = entropy.get("current")
-        if isinstance(current, Mapping) and _finite(current.get("H")) is not None:
+        if isinstance(current, Mapping) and finite(current.get("H")) is not None:
             value = float(current["H"])
             signals.append(
                 {
@@ -2028,8 +2015,8 @@ def _narrative(
         ", ".join(f"{name} ({weight:.0%})" for name, weight in ranked)
         or "no weighted component"
     )
-    p50 = _finite(horizon_block.get("p50"))
-    probability = _finite(horizon_block.get("probability"))
+    p50 = finite(horizon_block.get("p50"))
+    probability = finite(horizon_block.get("probability"))
     move = f"{p50:+.1%}" if p50 is not None else "an unquantified move"
     chance = f"{probability:.0%}" if probability is not None else "an unquantified share"
     return (
@@ -2181,7 +2168,7 @@ def build_scenarios(
     for case_name, case_body in mixture["cases"].items():
         block = case_body["horizons"].get(reference) or {}
         cases[case_name] = {
-            "probability": _finite(block.get("probability")),
+            "probability": finite(block.get("probability")),
             "narrative": _narrative(
                 case_name, block, weighting["weights"], components, reference
             ),

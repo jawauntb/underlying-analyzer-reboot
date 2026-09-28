@@ -38,6 +38,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from app.utils import finite
 
 __all__ = [
     "MODULE_VERSION",
@@ -109,19 +110,11 @@ class FundamentalsError(RuntimeError):
 # --------------------------------------------------------------------------- #
 # Small numeric helpers (never a silent zero).
 # --------------------------------------------------------------------------- #
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _ratio(numerator: Any, denominator: Any) -> float | None:
-    top = _finite(numerator)
-    bottom = _finite(denominator)
+    top = finite(numerator)
+    bottom = finite(denominator)
     if top is None or bottom is None or bottom == 0:
         return None
     return top / bottom
@@ -129,15 +122,15 @@ def _ratio(numerator: Any, denominator: Any) -> float | None:
 
 def _sum(values: Sequence[Any]) -> float | None:
     """Sum a window only when every element is present (no partial TTM)."""
-    numbers = [_finite(value) for value in values]
+    numbers = [finite(value) for value in values]
     if not numbers or any(number is None for number in numbers):
         return None
     return float(sum(number for number in numbers if number is not None))
 
 
 def _z_score(current: float | None, history: Sequence[float]) -> float | None:
-    values = [v for v in (_finite(x) for x in history) if v is not None]
-    cur = _finite(current)
+    values = [v for v in (finite(x) for x in history) if v is not None]
+    cur = finite(current)
     if cur is None or len(values) < MIN_Z_OBS:
         return None
     arr = np.asarray(values, dtype=np.float64)
@@ -179,7 +172,7 @@ def _parse_iso(value: Any) -> date | None:
 # Statement loading + point-in-time quarter join.
 # --------------------------------------------------------------------------- #
 def _pick(row: Mapping[str, Any], fields: Mapping[str, str]) -> dict[str, float | None]:
-    return {key: _finite(row.get(source)) for key, source in fields.items()}
+    return {key: finite(row.get(source)) for key, source in fields.items()}
 
 
 def _is_earlier_filing(candidate: Mapping[str, Any], incumbent: Mapping[str, Any]) -> bool:
@@ -286,26 +279,26 @@ def load_quarters(
 
 def _finalise_quarter(entry: dict[str, Any]) -> dict[str, Any]:
     """Add per-quarter derived numbers a memo actually quotes."""
-    revenue = _finite(entry.get("revenue"))
-    gross_profit = _finite(entry.get("gross_profit"))
-    operating_income = _finite(entry.get("operating_income"))
-    cfo = _finite(entry.get("cash_from_operations"))
-    capex = _finite(entry.get("capex"))
+    revenue = finite(entry.get("revenue"))
+    gross_profit = finite(entry.get("gross_profit"))
+    operating_income = finite(entry.get("operating_income"))
+    cfo = finite(entry.get("cash_from_operations"))
+    capex = finite(entry.get("capex"))
     # Massive reports capex as a negative outflow; FCF subtracts its magnitude so
     # a positive-signed feed cannot inflate free cash flow.
     fcf: float | None = None
     if cfo is not None and capex is not None:
         fcf = cfo - abs(capex)
-    debt_current = _finite(entry.get("debt_current")) or 0.0
-    long_term_debt = _finite(entry.get("long_term_debt"))
+    debt_current = finite(entry.get("debt_current")) or 0.0
+    long_term_debt = finite(entry.get("long_term_debt"))
     total_debt = (
         None
-        if long_term_debt is None and _finite(entry.get("debt_current")) is None
+        if long_term_debt is None and finite(entry.get("debt_current")) is None
         else float(debt_current + (long_term_debt or 0.0))
     )
-    ebitda = _finite(entry.get("ebitda"))
+    ebitda = finite(entry.get("ebitda"))
     if ebitda is None and operating_income is not None:
-        dep = _finite(entry.get("depreciation")) or _finite(entry.get("depreciation_income"))
+        dep = finite(entry.get("depreciation")) or finite(entry.get("depreciation_income"))
         if dep is not None:
             ebitda = operating_income + abs(dep)
     out = dict(entry)
@@ -384,10 +377,10 @@ def compute_quality(
     cfo_ttm = _sum([q.get("cash_from_operations") for q in ttm])
     op_ttm = _sum([q.get("operating_income") for q in ttm])
     interest_ttm = _sum([q.get("interest_expense") for q in ttm])
-    total_assets = _finite(latest.get("total_assets"))
-    total_debt = _finite(latest.get("total_debt"))
-    cash = _finite(latest.get("cash")) or 0.0
-    sti = _finite(latest.get("short_term_investments")) or 0.0
+    total_assets = finite(latest.get("total_assets"))
+    total_debt = finite(latest.get("total_debt"))
+    cash = finite(latest.get("cash")) or 0.0
+    sti = finite(latest.get("short_term_investments")) or 0.0
 
     gp_to_assets = _ratio(gross_ttm, total_assets)
 
@@ -446,7 +439,7 @@ def _ttm_multiples_at(
     if price is None or start + TTM_QUARTERS > len(quarters):
         return None
     window = quarters[start : start + TTM_QUARTERS]
-    shares = _finite(quarters[start].get("shares"))
+    shares = finite(quarters[start].get("shares"))
     if shares is None or shares <= 0:
         return None
     market_cap = price * shares
@@ -454,9 +447,9 @@ def _ttm_multiples_at(
     ebitda_ttm = _sum([q.get("ebitda") for q in window])
     eps_ttm = _sum([q.get("eps") for q in window])
     fcf_ttm = _sum([q.get("fcf") for q in window])
-    total_debt = _finite(quarters[start].get("total_debt"))
-    cash = _finite(quarters[start].get("cash")) or 0.0
-    sti = _finite(quarters[start].get("short_term_investments")) or 0.0
+    total_debt = finite(quarters[start].get("total_debt"))
+    cash = finite(quarters[start].get("cash")) or 0.0
+    sti = finite(quarters[start].get("short_term_investments")) or 0.0
     ev = market_cap + (total_debt or 0.0) - cash - sti
     return {
         "ev_sales": _ratio(ev, rev_ttm),
@@ -499,7 +492,7 @@ def compute_value_z(
         if multiples is None:
             continue
         for key in keys:
-            value = _finite(multiples.get(key))
+            value = finite(multiples.get(key))
             if value is not None:
                 history[key].append(value)
 
@@ -530,7 +523,7 @@ def compute_value_z(
 # Eight-quarter trajectory (filing-date keyed) with slope + acceleration.
 # --------------------------------------------------------------------------- #
 def _slope(values: Sequence[float | None]) -> float | None:
-    points = [(i, v) for i, v in enumerate(_finite(x) for x in values) if v is not None]
+    points = [(i, v) for i, v in enumerate(finite(x) for x in values) if v is not None]
     if len(points) < 3:
         return None
     xs = np.asarray([p[0] for p in points], dtype=np.float64)
@@ -541,7 +534,7 @@ def _slope(values: Sequence[float | None]) -> float | None:
 
 def _accel_flag(values: Sequence[float | None]) -> bool | None:
     """Second-derivative flag: is the series accelerating on average?"""
-    clean = [_finite(x) for x in values]
+    clean = [finite(x) for x in values]
     clean = [v for v in clean if v is not None]  # type: ignore[assignment]
     if len(clean) < 3:
         return None
@@ -563,10 +556,10 @@ def compute_trajectory(
     rows: list[dict[str, Any]] = []
     for i in range(min(TRAJECTORY_QUARTERS, len(quarters))):
         q = quarters[i]
-        rev = _finite(q.get("revenue"))
+        rev = finite(q.get("revenue"))
         rev_growth: float | None = None
         if i + TTM_QUARTERS < len(quarters):
-            prior = _finite(quarters[i + TTM_QUARTERS].get("revenue"))
+            prior = finite(quarters[i + TTM_QUARTERS].get("revenue"))
             if rev is not None and prior is not None and prior > 0:
                 rev_growth = rev / prior - 1.0
         rows.append(

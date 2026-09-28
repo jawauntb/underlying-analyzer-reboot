@@ -14,16 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+from app.utils import finite
 
 
 def _last_point(points: Sequence[Mapping[str, Any]] | None) -> float | None:
@@ -31,7 +22,7 @@ def _last_point(points: Sequence[Mapping[str, Any]] | None) -> float | None:
     if not points:
         return None
     for row in reversed(list(points)):
-        value = _finite(row.get("value"))
+        value = finite(row.get("value"))
         if value is not None:
             return value
     return None
@@ -45,9 +36,9 @@ def auction_levels(history: Any, *, period: str) -> dict[str, Any]:
     meta = dict(payload.get("meta") or {})
     levels = dict(payload.get("levels") or {})
     return {
-        "vah": _finite(levels.get("vah")),
-        "val": _finite(levels.get("val")),
-        "poc": _finite(levels.get("poc")),
+        "vah": finite(levels.get("vah")),
+        "val": finite(levels.get("val")),
+        "poc": finite(levels.get("poc")),
         "location": meta.get("location"),
         "state": meta.get("state"),
         "window": meta.get("level_window") or "21 completed daily sessions",
@@ -66,13 +57,13 @@ def regression_levels(history: Any) -> dict[str, Any]:
     upper = _last_point(series.get("upper_band"))
     lower = _last_point(series.get("lower_band"))
     close = _last_point(series.get("close"))
-    residual_std = _finite(meta.get("residual_std"))
+    residual_std = finite(meta.get("residual_std"))
     position: float | None = None
     if close is not None and trend is not None and residual_std:
         position = (close - trend) / residual_std
     return {
-        "slope_per_day": _finite(meta.get("slope_per_day")),
-        "intercept": _finite(meta.get("intercept")),
+        "slope_per_day": finite(meta.get("slope_per_day")),
+        "intercept": finite(meta.get("intercept")),
         "residual_std": residual_std,
         "trend_value": trend,
         "upper_band": upper,
@@ -98,7 +89,7 @@ def torque_levels(
     )
     meta = dict(payload.get("meta") or {})
     return {
-        "total_score": _finite(meta.get("total_score")),
+        "total_score": finite(meta.get("total_score")),
         "stage_label": meta.get("stage_label"),
         "stage_detail": meta.get("stage_detail"),
         "recommendation": meta.get("recommendation"),
@@ -164,7 +155,7 @@ def key_levels(
     rows: list[dict[str, Any]] = []
 
     def add(price: Any, kind: str, source: str) -> None:
-        value = _finite(price)
+        value = finite(price)
         if value is None or value <= 0:
             return
         rows.append({"price": value, "kind": kind, "source": source})
@@ -191,7 +182,7 @@ def key_levels(
     ridge = ridge or {}
     add(ridge.get("major_ma"), "trend", "ridge major moving average")
 
-    reference = _finite(current_price) or _finite(extremes.get("last_close"))
+    reference = finite(current_price) or finite(extremes.get("last_close"))
     for row in rows:
         if reference:
             row["distance_pct"] = row["price"] / reference - 1.0
