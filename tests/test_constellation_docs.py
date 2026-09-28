@@ -55,7 +55,19 @@ def test_the_mcp_page_names_every_registry_tool_and_every_constellation_tool() -
 def test_the_environment_variables_are_documented_where_they_are_set_and_read() -> None:
     page = (ROOT / "docs" / "mcp.md").read_text()
     env_example = (ROOT / ".env.example").read_text()
-    for variable in ("LATTICE_MCP_URL", "MCP_PUBLIC_ORIGIN", "MCP_ALLOW_LOCAL"):
+    for variable in (
+        "LATTICE_MCP_URL",
+        "MCP_PUBLIC_ORIGIN",
+        "MCP_ALLOW_LOCAL",
+        "MCP_PEER_FORECAST_DAILY_CAP",
+    ):
         assert variable in page, variable
         assert variable in env_example, variable
         assert variable in (ROOT / "app" / "constellation_mcp.py").read_text(), variable
+
+
+def test_the_docs_say_the_limits_are_per_process_and_gunicorn_runs_three_workers() -> None:
+    page = (ROOT / "docs" / "mcp.md").read_text()
+    assert "--workers 3" in (ROOT / "Procfile").read_text()
+    assert "three gunicorn workers" in page and "up to three times" in page
+    assert "REST route" in page and "not capped" in page

@@ -161,7 +161,8 @@ offers does not move, and that each of the 21 registry tools off the list answer
 ### The tools
 
 Every tool reads: none trades, sends, saves or changes anything a user can see (`peer_forecast`
-can fill a cache, below), and none takes a URL, watchlist, user id or key. The registry tools run
+can fill a cache and spend model credits under a daily cap, below), and none takes a URL,
+watchlist, user id or key. The registry tools run
 in process through `execute_tool`; the reads with no registry entry go through their own routes. A
 result is compact JSON under the 8000 characters the library keeps: series are cut to their point
 count, date range and last 5 points, and floats are rounded to 6 significant digits. A result
@@ -181,7 +182,7 @@ provider could send.
 | `moneyline_data` | `ticker`, optional `expiry` (`YYYY-MM-DD`) | Open-interest ladder for the strikes nearest spot | `POST /api/data/tools/moneyline` |
 | `situate_get` | `ticker`, optional `as_of` | The stored Situate summary. An error when nothing is stored | `GET /api/situate/{ticker}/summary` |
 | `prism_get` | `ticker`, optional `as_of` | The stored Prism summary. An error when nothing is stored | `GET /api/prism/{ticker}/summary` |
-| `peer_forecast` | `ticker`, optional `horizon` (1, 2, 3, 6 or 12 months) | The TabICL v2 sector peer forecast: bucket, probabilities, expected excess return, confidence and the peers' ranks. A `503` reason comes through as `unavailable: <reason>` | `GET /api/tabular/peer-forecast/{ticker}` |
+| `peer_forecast` | `ticker`, optional `horizon` (1, 2, 3, 6 or 12 months) | The TabICL v2 sector peer forecast: bucket, probabilities, expected excess return, confidence and the peers' ranks. A `503` reason comes through as `unavailable: <reason>`; a spent daily cap is an error that says when it resets | `GET /api/tabular/peer-forecast/{ticker}` |
 | `ask_lattice_animals` | `question` (1 to 600 characters; longer is cut), optional `to` (`field`, `app` or `connectome`) | The lattice animals' answer, relayed one hop deeper. One model call on their side, so slow | `POST` to the hub's `/mcp` |
 
 Notes on the ones with a catch:
@@ -199,9 +200,21 @@ Notes on the ones with a catch:
   (`TABULAR_INFERENCE_URL`) it calls the model once for the live cross-section and once for the
   backtest. When the model is not configured, the ticker is outside the curated sector universe,
   or the model is down, the tool answers with the reason the route gave.
+- `peer_forecast` is the one tool that can spend model credits, so an uncached computation
+  through `/mcp` counts against a daily cap: `MCP_PEER_FORECAST_DAILY_CAP`, default 20, per
+  process and per UTC day. A call that finds its sector, horizon and day in the cache is free and
+  is not counted. A cold computation (the panel load and the model calls) counts once, and stays
+  counted if it fails after it started. When the cap is spent the tool answers with an error that
+  says so and when it resets (00:00 UTC), and a forecast that is already cached still answers. A
+  cap of `0` allows no uncached forecast. The count is in memory, so a restart resets it. The REST
+  route `/api/tabular/peer-forecast/{ticker}` is not capped and its computations are not counted,
+  but they fill the same cache, so `/mcp` gets what they computed for free. The service runs three
+  gunicorn workers, each with its own count and its own cache, so the effective cap is up to
+  three times the number (60 uncached forecasts a day at the default).
 - A cold `peer_forecast` or `sec_source_pack` can take longer than the hub's 25 second deadline
   for an outbound call. The work finishes on this side and is cached (12 hours for the forecast,
-  6 hours for the SEC pack), so a second call is quick.
+  6 hours for the SEC pack), so a second call is quick. The tool description for `peer_forecast`
+  says this, and that a cold call spends model credits under a daily cap.
 - `provider_status` answers from `GET /api/providers`. The test sets a `MASSIVE_API_KEY` and
   checks the key is not in the result.
 
@@ -254,8 +267,9 @@ while the hop is under 2, and sends hop + 1 with its own name added to the path.
 
 `tests/test_constellation_mcp.py` shows each of these against a stub peer on `127.0.0.1`. The
 counter is checked by each member; nothing signs it. Outbound calls also share a daily cap
-(500) and each caller address has a limit of 40 calls a minute; both are per process, and the
-service runs three gunicorn workers.
+(500) and each caller address has a limit of 40 calls a minute. These limits, and the
+`peer_forecast` cap above, are per process, and the service runs three gunicorn workers
+(`Procfile`), so the effective caps are up to three times the numbers.
 
 ### Configuration
 
@@ -264,6 +278,7 @@ service runs three gunicorn workers.
 | `LATTICE_MCP_URL` | `https://latticeanimal-production.up.railway.app/mcp` | The hub's MCP, which `ask_lattice_animals` and `POST /mcp/lattice` reach. Must be https. |
 | `MCP_PUBLIC_ORIGIN` | `https://underlying-terminal-production.up.railway.app` | The origin the manifest advertises as `endpoint`. |
 | `MCP_ALLOW_LOCAL` | unset | Set to `1` to let `LATTICE_MCP_URL` be plain `http` on loopback, for a laptop or a test. |
+| `MCP_PEER_FORECAST_DAILY_CAP` | `20` | Uncached `peer_forecast` computations allowed through `/mcp` per process per UTC day. `0` allows none. A cached forecast is free and not counted, and the REST route is not capped. Three gunicorn workers mean up to three times this. |
 
 ### Try it
 

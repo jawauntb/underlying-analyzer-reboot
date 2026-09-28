@@ -1121,7 +1121,8 @@ The constellation's MCP: a separate, smaller allowlist of read-only, cheap tools
 streamable HTTP: one message per POST, a notification gets `202`, a batch gets `400`, and `GET`
 or `DELETE` get `405` with `Allow: POST`. No API key. It is not `/api/mcp`, which serves the
 whole registry; see [mcp.md](mcp.md#constellation-mcp-post-mcp) for why, the tool table, the hop
-rule and the environment variables (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN`, `MCP_ALLOW_LOCAL`).
+rule and the environment variables (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN`, `MCP_ALLOW_LOCAL`,
+`MCP_PEER_FORECAST_DAILY_CAP`).
 
 ```bash
 curl -s -X POST http://127.0.0.1:5050/mcp \

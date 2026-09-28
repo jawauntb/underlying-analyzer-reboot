@@ -292,7 +292,8 @@ Situate research engine reference: [docs/situate.md](docs/situate.md).
 
 MCP (no API key): [docs/mcp.md](docs/mcp.md). Streamable HTTP at `/api/mcp`, or stdio via
 `underlying-mcp` pointed at the Railway production URL by default. The constellation's smaller
-allowlist is at `/mcp` (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN` and `MCP_ALLOW_LOCAL` configure it).
+allowlist is at `/mcp` (`LATTICE_MCP_URL`, `MCP_PUBLIC_ORIGIN`, `MCP_ALLOW_LOCAL` and
+`MCP_PEER_FORECAST_DAILY_CAP`, the daily cap on uncached peer forecasts, configure it).
 
 ## Local Setup
 

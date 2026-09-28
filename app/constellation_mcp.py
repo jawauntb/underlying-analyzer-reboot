@@ -23,7 +23,10 @@ a user id or a key. What ``tests/test_constellation_mcp.py`` shows about them:
   per-client admission limit);
 * a result is compact JSON under the 8000 characters the library keeps, with each series cut
   to its last few points, and text that leaves the server has secrets scrubbed (an error
-  message has endpoints scrubbed too).
+  message has endpoints scrubbed too);
+* ``peer_forecast`` is the one tool that can spend model credits, so an uncached computation
+  through ``/mcp`` counts against a per-process, per-UTC-day cap (``MCP_PEER_FORECAST_DAILY_CAP``,
+  default 20). A cache hit is free, and the REST route is not capped.
 
 Registry tools run in process through :func:`app.tool_executor.execute_tool`. The reads with no
 registry entry (the stored summaries, the peer forecast) go through their own routes the same
@@ -37,9 +40,11 @@ from __future__ import annotations
 import math
 import os
 import re
+import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -48,11 +53,12 @@ from flask import Flask, current_app
 from app import mcp_lite
 from app.market_data import HISTORY_INTERVALS, clean_ticker
 from app.mcp_lite import Mcp, create_mcp, dumps, lattice_tool
-from app.peer_forecast import PEER_FORECAST_HORIZONS, parse_horizon
+from app.peer_forecast import PEER_FORECAST_HORIZONS, cold_build_guard, parse_horizon
 from app.prism.routes import clean_as_of as clean_prism_as_of
 from app.prism.routes import clean_symbol as clean_prism_symbol
 from app.situate.routes import clean_as_of as clean_situate_as_of
 from app.situate.routes import clean_symbol as clean_situate_symbol
+from app.tabular import TabularUnavailable
 from app.tabular_routes import _clean_ticker as clean_peer_forecast_ticker
 from app.tool_executor import execute_tool
 from app.tool_registry import tool_catalog_payload
@@ -94,6 +100,12 @@ RESULT_BUDGET = 7_500
 SERIES_TAIL = 5
 MAX_STRIKES = 25
 MAX_PEERS = 20
+
+#: Uncached ``peer_forecast`` computations allowed through ``/mcp`` per process per UTC day.
+PEER_FORECAST_CAP_ENV = "MCP_PEER_FORECAST_DAILY_CAP"
+DEFAULT_PEER_FORECAST_DAILY_CAP = 20
+#: Where the app keeps that count (``app.config``), one per app and so one per process.
+PEER_FORECAST_BUDGET_KEY = "CONSTELLATION_PEER_FORECAST_BUDGET"
 
 #: Single-ticker chart packs. ``torque`` is ``torque_data``, ``peer-forecast`` is
 #: ``peer_forecast``, and ``portfolio`` needs several tickers and a benchmark.
@@ -588,13 +600,111 @@ def _prism_get(args: dict[str, Any]) -> str:
     return _stored_summary("Prism", "/api/prism", args, clean_prism_symbol, clean_prism_as_of)
 
 
+class DailyBudget:
+    """A count of something spent, kept per process and reset at 00:00 UTC. It is thread-safe,
+    and ``clock`` (epoch seconds) can be replaced, which is how the tests cross midnight."""
+
+    def __init__(self, cap: int, clock: Callable[[], float] = time.time) -> None:
+        self.cap = max(0, cap)
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._day = ""
+        self._spent = 0
+
+    def _now(self) -> datetime:
+        return datetime.fromtimestamp(self.clock(), tz=UTC)
+
+    def _roll(self, now: datetime) -> None:
+        """Start a new count when the UTC day has changed. The caller holds the lock."""
+        day = now.date().isoformat()
+        if day != self._day:
+            self._day, self._spent = day, 0
+
+    def try_spend(self) -> bool:
+        """Spend one unit if one is left today. When the cap is spent, nothing is counted."""
+        with self._lock:
+            self._roll(self._now())
+            if self._spent >= self.cap:
+                return False
+            self._spent += 1
+            return True
+
+    @property
+    def spent(self) -> int:
+        with self._lock:
+            self._roll(self._now())
+            return self._spent
+
+    def resets_at(self) -> datetime:
+        """The next 00:00 UTC."""
+        now = self._now()
+        return datetime(now.year, now.month, now.day, tzinfo=UTC) + timedelta(days=1)
+
+
+def _daily_cap(env: Mapping[str, str]) -> int:
+    """``MCP_PEER_FORECAST_DAILY_CAP``: a whole number of uncached forecasts a day, and 0 allows
+    none (cached ones still answer). Anything else takes the default."""
+    try:
+        cap = int(str(env.get(PEER_FORECAST_CAP_ENV) or "").strip())
+    except ValueError:
+        return DEFAULT_PEER_FORECAST_DAILY_CAP
+    return cap if cap >= 0 else DEFAULT_PEER_FORECAST_DAILY_CAP
+
+
+def _cap_message(budget: DailyBudget) -> str:
+    if budget.cap == 0:
+        return (
+            "uncached forecasts are switched off here (the daily cap is 0); "
+            "forecasts already cached still answer"
+        )
+    reset = budget.resets_at().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (
+        f"the daily cap on uncached forecasts ({budget.cap} a day) is spent; "
+        f"it resets at {reset}; forecasts already cached still answer"
+    )
+
+
+class _ColdBuildGuard:
+    """What ``app.peer_forecast`` calls when a lookup misses the cache and a computation (a panel
+    load, then model calls) is about to start: it spends one unit of the day's budget, or
+    refuses. A computation that has started stays counted if it fails."""
+
+    def __init__(self, budget: DailyBudget) -> None:
+        self.budget = budget
+        self.refusal: str | None = None
+
+    def __call__(self) -> None:
+        if not self.budget.try_spend():
+            self.refusal = _cap_message(self.budget)
+            raise TabularUnavailable(self.refusal)
+
+
+def _peer_forecast_budget() -> DailyBudget:
+    """This process's count: made when the MCP is mounted, and here if it was not."""
+    budget: DailyBudget = current_app.config.setdefault(
+        PEER_FORECAST_BUDGET_KEY, DailyBudget(_daily_cap(os.environ))
+    )
+    return budget
+
+
 def _peer_forecast(args: dict[str, Any]) -> str:
     """No ``as_of``: the route hands it to a cache key unvalidated, so each new date a caller
-    sent would buy a fresh sector build (a panel load and a model call)."""
+    sent would buy a fresh sector build (a panel load and a model call).
+
+    The route runs in process with :data:`app.peer_forecast.cold_build_guard` set for this call
+    only, so a cache hit is free and a cold computation spends one unit of the daily budget
+    (or is refused). The REST route is not called with a guard and is not capped."""
     given = _arguments(args, ("ticker", "horizon"), ("ticker",))
     symbol = _symbol(given["ticker"], clean_peer_forecast_ticker)
     query = {"horizon": _horizon(given["horizon"])} if "horizon" in given else None
-    payload, status = _route(f"/api/tabular/peer-forecast/{quote(symbol, safe='')}", query)
+    guard = _ColdBuildGuard(_peer_forecast_budget())
+    token = cold_build_guard.set(guard)
+    try:
+        payload, status = _route(f"/api/tabular/peer-forecast/{quote(symbol, safe='')}", query)
+    finally:
+        cold_build_guard.reset(token)
+    if guard.refusal:
+        raise ToolError(guard.refusal)
     if status != 200 or not isinstance(payload, Mapping):
         raise _failure(payload, status, "peer forecast failed")
     return _fit(_peer_forecast_view(payload))
@@ -738,11 +848,11 @@ _TOOLS: tuple[_Tool, ...] = (
     ),
     _Tool(
         PEER_FORECAST_TOOL,
-        "Sector peer forecast for one ticker: the TabICL v2 bucket (strong_under to "
-        "strong_over) of its forward excess return versus curated sector peers, with "
-        "probabilities and confidence. Unavailable, with the reason, when the model is off or "
-        "the ticker is outside the universe.",
-        "TabICL v2 sector peer forecast: excess-return bucket vs curated peers",
+        "Sector peer forecast for one ticker: TabICL v2 bucket (strong_under to strong_over) of "
+        "forward excess return vs curated peers, with probabilities. A cold call can take "
+        "longer than the hub's 25 s deadline and spends model credits under a daily cap "
+        "(default 20); a cached one is free. Errors say why.",
+        "TabICL v2 sector peer forecast: excess-return bucket vs curated peers (cold calls capped)",
         _peer_forecast,
         {
             "ticker": _TICKER_SHORT,
@@ -855,8 +965,11 @@ def build_constellation_mcp(env: Mapping[str, str] | None = None) -> Mcp:
 
 def mount_constellation_mcp(app: Flask, env: Mapping[str, str] | None = None) -> Mcp:
     """Mount ``POST /mcp``, ``POST /mcp/lattice`` and ``GET /.well-known/mcp.json`` (also
-    ``/.well-known/mcp/server-card.json``) on ``app``. ``/api/mcp`` is left as it is."""
+    ``/.well-known/mcp/server-card.json``) on ``app``. ``/api/mcp`` is left as it is. The
+    ``peer_forecast`` daily budget (``MCP_PEER_FORECAST_DAILY_CAP``) is made here, one per app."""
+    env = os.environ if env is None else env
     server = build_constellation_mcp(env)
     server.flask(app)
     app.config["CONSTELLATION_MCP"] = server
+    app.config[PEER_FORECAST_BUDGET_KEY] = DailyBudget(_daily_cap(env))
     return server

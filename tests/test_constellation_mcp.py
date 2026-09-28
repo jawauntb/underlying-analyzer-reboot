@@ -26,7 +26,7 @@ import socket
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -238,6 +238,7 @@ class FakePanelClient:
     works without an ``as_of`` (the tool passes none)."""
 
     def __init__(self, *, days: int = 2600, seed: int = 3) -> None:
+        self.history_calls: list[str] = []  # one per symbol a sector build asks for
         rng = np.random.default_rng(seed)
         index = pd.date_range(end=date.today().isoformat(), periods=days, freq="B")
         market = rng.normal(0.0004, 0.011, days)
@@ -251,6 +252,7 @@ class FakePanelClient:
     def get_history(self, ticker: str, *, start: Any, end: Any, interval: str = "1d") -> _History:
         del interval
         symbol = str(ticker).upper()
+        self.history_calls.append(symbol)
         if symbol not in self.series:
             raise ValueError(f"unknown symbol {symbol}")
         series = self.series[symbol]
@@ -300,6 +302,7 @@ class World:
     market: FakeMarket
     sec: FakeSec
     predictor: RecordingPredictor
+    panel: FakePanelClient
     routes: list[tuple[str, str]]  # every in-process request the app served, apart from /mcp
 
 
@@ -331,6 +334,7 @@ def _environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
         "MCP_PUBLIC_ORIGIN",
         "LATTICE_MCP_URL",
         "MCP_ALLOW_LOCAL",
+        "MCP_PEER_FORECAST_DAILY_CAP",
         "MASSIVE_API_KEY",
         "TABULAR_INFERENCE_URL",
         "TABULAR_INFERENCE_TOKEN",
@@ -354,7 +358,8 @@ def _environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
 
 def make_world(tmp_path: Path) -> World:
     app = create_app()
-    world = World(app, app.test_client(), FakeMarket(), FakeSec(), RecordingPredictor(), [])
+    panel = FakePanelClient()
+    world = World(app, app.test_client(), FakeMarket(), FakeSec(), RecordingPredictor(), panel, [])
     app.config["MARKET_DATA_CLIENT"] = world.market
     app.config["SEC_CLIENT"] = world.sec
     app.config["SITUATE_STORE"] = store_module.PrismStore(
@@ -362,7 +367,7 @@ def make_world(tmp_path: Path) -> World:
     )
     app.config["PRISM_STORE"] = store_module.PrismStore(base_dir=tmp_path / "prism", supabase=None)
     app.config["TABULAR_PREDICTOR"] = world.predictor
-    app.config["SITUATE_MARKET_CLIENT"] = FakePanelClient()
+    app.config["SITUATE_MARKET_CLIENT"] = panel
 
     def record() -> None:
         if not request.path.startswith(("/mcp", "/.well-known")):
@@ -851,6 +856,240 @@ def test_peer_forecast_says_why_it_is_unavailable(world: World) -> None:
     world.app.config["TABULAR_PREDICTOR"] = None
     off = call(world, "peer_forecast", {"ticker": "NVDA"})
     assert off["isError"] is True and "TABULAR_INFERENCE_URL" in text_of(off)
+
+
+# --------------------------------------------------------------------------------------
+# the daily cap on uncached forecasts (the one tool that can spend model credits)
+# --------------------------------------------------------------------------------------
+
+
+class FakeClock:
+    """A clock the tests move: epoch seconds, as ``time.time`` returns them."""
+
+    def __init__(self, at: datetime) -> None:
+        self.now = at.timestamp()
+
+    def __call__(self) -> float:
+        return self.now
+
+    def move_to(self, at: datetime) -> None:
+        self.now = at.timestamp()
+
+
+def budget_of(world: World) -> cm.DailyBudget:
+    budget = world.app.config[cm.PEER_FORECAST_BUDGET_KEY]
+    assert isinstance(budget, cm.DailyBudget)
+    return budget
+
+
+def forecast(world: World, ticker: str = "NVDA", horizon: int = 3) -> dict[str, Any]:
+    return call(world, "peer_forecast", {"ticker": ticker, "horizon": horizon})
+
+
+def test_a_cache_hit_is_free_and_only_a_cold_computation_is_counted(world: World) -> None:
+    budget = budget_of(world)
+    assert budget.cap == cm.DEFAULT_PEER_FORECAST_DAILY_CAP == 20 and budget.spent == 0
+    assert data_of(forecast(world, "NVDA"))["available"] is True  # cold: one build
+    assert budget.spent == 1 and world.predictor.calls == 2
+    for ticker in ("AAPL", "MSFT", "NVDA"):  # same sector and horizon: the cached build
+        assert data_of(forecast(world, ticker))["available"] is True
+    assert budget.spent == 1 and world.predictor.calls == 2
+    forecast(world, "NVDA", horizon=6)  # another horizon is another build
+    assert budget.spent == 2 and world.predictor.calls == 4
+    forecast(world, "AAPL", horizon=6)
+    assert budget.spent == 2 and world.predictor.calls == 4
+
+
+def test_a_call_that_stops_before_a_computation_is_not_counted(world: World) -> None:
+    budget = budget_of(world)
+    outside = call(world, "peer_forecast", {"ticker": "ZZZZ"})  # not in the sector universe
+    assert outside["isError"] is True and "curated sector universe" in text_of(outside)
+    world.app.config["TABULAR_PREDICTOR"] = None  # no model: the route answers before any build
+    off = call(world, "peer_forecast", {"ticker": "NVDA"})
+    assert off["isError"] is True and "TABULAR_INFERENCE_URL" in text_of(off)
+    refused = call(world, "peer_forecast", {"ticker": "NVDA", "as_of": "2026-08-31"})
+    assert refused["isError"] is True and "unknown argument(s): as_of" in text_of(refused)
+    assert budget.spent == 0 and world.panel.history_calls == []
+
+
+def test_the_daily_cap_refuses_a_cold_forecast_and_says_when_it_resets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(cm.PEER_FORECAST_CAP_ENV, "2")
+    world = make_world(tmp_path)
+    budget = budget_of(world)
+    budget.clock = FakeClock(datetime(2026, 9, 28, 13, 0, tzinfo=UTC))
+    assert budget.cap == 2
+    for horizon in (1, 2):
+        assert data_of(forecast(world, horizon=horizon))["available"] is True
+    assert budget.spent == 2 and world.predictor.calls == 4
+    loaded = len(world.panel.history_calls)
+
+    refused = forecast(world, horizon=3)
+    assert refused["isError"] is True
+    assert text_of(refused) == (
+        "peer_forecast: the daily cap on uncached forecasts (2 a day) is spent; "
+        "it resets at 2026-09-29T00:00:00Z; forecasts already cached still answer"
+    )
+    # nothing was asked of a provider or the model, and the refusal is not counted
+    assert budget.spent == 2 and world.predictor.calls == 4
+    assert len(world.panel.history_calls) == loaded
+
+    # a forecast that is already cached still answers, and costs nothing
+    assert data_of(forecast(world, "AAPL", horizon=1))["horizon_months"] == 1
+    assert budget.spent == 2
+
+
+def test_a_computation_that_fails_after_it_starts_still_counts_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(cm.PEER_FORECAST_CAP_ENV, "2")
+    world = make_world(tmp_path)
+    world.app.config["TABULAR_PREDICTOR"] = RecordingPredictor(fail=True)
+    for attempt in (1, 2):  # each attempt loads the panel, then the model fails
+        result = forecast(world)
+        assert text_of(result) == "peer_forecast: unavailable: fake model is down (HTTP 503)"
+        assert budget_of(world).spent == attempt
+    loaded = len(world.panel.history_calls)
+    assert loaded > 0
+    third = forecast(world)
+    assert third["isError"] is True and "daily cap" in text_of(third)
+    assert budget_of(world).spent == 2 and len(world.panel.history_calls) == loaded
+
+
+def test_the_cap_resets_at_00_utc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(cm.PEER_FORECAST_CAP_ENV, "1")
+    world = make_world(tmp_path)
+    budget = budget_of(world)
+    clock = FakeClock(datetime(2026, 9, 28, 23, 59, 30, tzinfo=UTC))
+    budget.clock = clock
+    assert data_of(forecast(world, horizon=1))["available"] is True
+    late = forecast(world, horizon=2)
+    assert late["isError"] is True and "resets at 2026-09-29T00:00:00Z" in text_of(late)
+
+    clock.move_to(datetime(2026, 9, 29, 0, 0, 1, tzinfo=UTC))  # a new UTC day
+    assert budget.spent == 0
+    assert data_of(forecast(world, horizon=2))["available"] is True
+    assert budget.spent == 1
+    again = forecast(world, horizon=3)
+    assert again["isError"] is True and "resets at 2026-09-30T00:00:00Z" in text_of(again)
+
+
+def test_a_cap_of_zero_switches_off_uncached_forecasts_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(cm.PEER_FORECAST_CAP_ENV, "0")
+    world = make_world(tmp_path)
+    off = forecast(world)
+    assert off["isError"] is True
+    assert text_of(off) == (
+        "peer_forecast: uncached forecasts are switched off here (the daily cap is 0); "
+        "forecasts already cached still answer"
+    )
+    assert budget_of(world).spent == 0 and world.predictor.calls == 0
+
+
+def test_the_rest_route_is_not_capped_not_counted_and_fills_the_cache_for_mcp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(cm.PEER_FORECAST_CAP_ENV, "0")
+    world = make_world(tmp_path)
+    assert forecast(world)["isError"] is True  # /mcp: nothing uncached is allowed
+    for horizon in (1, 2, 3):  # REST: three cold builds, all answered
+        response = world.client.get(f"/api/tabular/peer-forecast/NVDA?horizon={horizon}")
+        assert response.status_code == 200
+        assert response.get_json()["horizon_months"] == horizon
+    assert budget_of(world).spent == 0 and world.predictor.calls == 6
+    # what REST computed is in the same cache, so /mcp answers it for free even at a cap of 0
+    assert data_of(forecast(world, "AAPL", horizon=2))["horizon_months"] == 2
+    assert budget_of(world).spent == 0 and world.predictor.calls == 6
+    assert pf.cold_build_guard.get() is None  # the guard is set for an /mcp call only
+
+
+def test_the_cap_comes_from_the_environment_and_a_bad_value_takes_the_default() -> None:
+    cases = [(None, 20), ("", 20), ("abc", 20), ("-3", 20), ("2.5", 20), (" 7 ", 7), ("0", 0)]
+    for raw, expected in cases:
+        env = {} if raw is None else {cm.PEER_FORECAST_CAP_ENV: raw}
+        assert cm._daily_cap(env) == expected, raw
+    assert cm._daily_cap({cm.PEER_FORECAST_CAP_ENV: "20"}) == cm.DEFAULT_PEER_FORECAST_DAILY_CAP
+
+
+def test_each_app_has_its_own_count(tmp_path: Path) -> None:
+    first, second = make_world(tmp_path / "a"), make_world(tmp_path / "b")
+    assert budget_of(first) is not budget_of(second)
+    forecast(first)
+    assert budget_of(first).spent == 1 and budget_of(second).spent == 0
+
+
+def test_the_budget_is_exact_when_threads_spend_at_once() -> None:
+    budget = cm.DailyBudget(20)
+    outcomes: list[list[bool]] = []
+
+    def spend() -> None:
+        outcomes.append([budget.try_spend() for _ in range(10)])
+
+    threads = [threading.Thread(target=spend) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(sum(row) for row in outcomes) == 20 and budget.spent == 20
+
+
+def test_the_guard_is_called_when_a_lookup_misses_and_a_refusal_stops_the_build() -> None:
+    predictor, client = RecordingPredictor(), FakePanelClient()
+    started: list[str] = []
+
+    def count() -> None:
+        started.append("start")
+
+    def refuse() -> None:
+        raise TabularUnavailable("refused")
+
+    token = pf.cold_build_guard.set(count)
+    try:
+        pf.peer_forecast_for_ticker("NVDA", horizon=3, predictor=predictor, client=client)
+        pf.peer_forecast_for_ticker("AAPL", horizon=3, predictor=predictor, client=client)
+        assert started == ["start"]  # the second lookup was a hit
+        loaded, model_calls = len(client.history_calls), predictor.calls
+        refusing = pf.cold_build_guard.set(refuse)
+        try:
+            with pytest.raises(TabularUnavailable, match="refused"):
+                pf.peer_forecast_for_ticker("NVDA", horizon=6, predictor=predictor, client=client)
+        finally:
+            pf.cold_build_guard.reset(refusing)
+        assert len(client.history_calls) == loaded and predictor.calls == model_calls
+    finally:
+        pf.cold_build_guard.reset(token)
+    assert pf.cold_build_guard.get() is None
+
+
+def test_a_missing_market_client_fails_before_the_guard_is_called() -> None:
+    started: list[str] = []
+    token = pf.cold_build_guard.set(lambda: started.append("start"))
+    try:
+        with pytest.raises(TabularUnavailable, match="no market data client"):
+            pf.peer_forecast_for_ticker("NVDA", predictor=RecordingPredictor(), client=None)
+    finally:
+        pf.cold_build_guard.reset(token)
+    assert started == []
+
+
+def test_the_peer_forecast_description_warns_about_cold_calls_and_the_cap(world: World) -> None:
+    tools = {t["name"]: t for t in rpc(world.client, "tools/list")["result"]["tools"]}
+    description = tools["peer_forecast"]["description"]
+    for phrase in (
+        "cold call",
+        "25 s deadline",
+        "model credits",
+        "daily cap",
+        "cached one is free",
+    ):
+        assert phrase in description, phrase
+    assert len(description) <= 300  # the manifest keeps 300 characters
+    manifest = world.client.get("/.well-known/mcp.json").get_json()
+    listed = {tool["name"]: tool["description"] for tool in manifest["tools"]}
+    assert listed["peer_forecast"] == description
 
 
 # --------------------------------------------------------------------------------------
