@@ -38,7 +38,6 @@ does this to cap what it spends). Unset, which is the default, nothing changes.
 from __future__ import annotations
 
 import hashlib
-import math
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from datetime import date
@@ -56,12 +55,12 @@ from app.situate.stack import (
     eligible_train_mask,
 )
 from app.tabular import (
-from app.utils import finite
     DEFAULT_N_ESTIMATORS,
     TabularPredictor,
     TabularUnavailable,
     get_predictor,
 )
+from app.utils import finite
 
 __all__ = [
     "BUCKETS",
@@ -190,9 +189,6 @@ def _expected_return(
     # Renormalise over the buckets that have a mean so a missing bucket does not
     # silently shrink the expectation toward zero.
     return total / weight
-
-
-    return number if math.isfinite(number) else None
 
 
 # --------------------------------------------------------------------------
