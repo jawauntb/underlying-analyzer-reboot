@@ -464,3 +464,12 @@ python -m ruff check .
 python -m mypy app tests
 python -m pytest
 ```
+
+CI (`.github/workflows/mobile.yml`, job `backend-agent-contract`) runs the backend tests one file at
+a time through [testonce](https://github.com/jawauntb/testonce): a test file that already passed on
+byte-identical inputs (every file it read, its command and its environment) is skipped, and any
+change to one of those inputs reruns it. `testonce.json` lists the cache directories to ignore and
+the tests that read the real clock (`noCache`, so they always run). Run the same thing locally with
+`PYTHONDONTWRITEBYTECODE=1 testonce each tests/test_*.py -- python -m pytest -q {}` (Linux, needs
+`strace`; without that variable a valid `.pyc` hides source edits from the tracer); plain
+`python -m pytest` still works.

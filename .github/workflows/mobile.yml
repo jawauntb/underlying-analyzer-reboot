@@ -5,16 +5,24 @@ on:
     paths:
       - '.github/workflows/mobile.yml'
       - 'app/**'
+      - 'mcp_server/**'
       - 'mobile/**'
-      - 'tests/test_agent.py'
+      - 'tests/**'
+      - 'conftest.py'
+      - 'pytest.ini'
+      - 'testonce.json'
       - 'pyproject.toml'
   push:
     branches: [main]
     paths:
       - '.github/workflows/mobile.yml'
       - 'app/**'
+      - 'mcp_server/**'
       - 'mobile/**'
-      - 'tests/test_agent.py'
+      - 'tests/**'
+      - 'conftest.py'
+      - 'pytest.ini'
+      - 'testonce.json'
       - 'pyproject.toml'
   workflow_dispatch:
 
@@ -45,8 +53,18 @@ jobs:
           cache: pip
       - name: Install backend and verification tools
         run: python -m pip install --disable-pip-version-check -e '.[dev]'
-      - name: Run backend tests
-        run: python -m pytest -q
+      - name: Skip backend tests that already passed on identical inputs (testonce)
+        uses: jawauntb/testonce@main
+      - name: Run backend tests, one cached run per file
+        env:
+          # No .pyc files: with a valid .pyc Python only stats a module's .py, so testonce
+          # would not see a source edit and would wrongly skip the tests that import it.
+          PYTHONDONTWRITEBYTECODE: '1'
+        # Each file gets its own pytest basetemp so the parallel runs never share
+        # /tmp/pytest-of-<user>. A failing file makes `each` exit non-zero.
+        run: |
+          testonce each tests/test_*.py -- \
+            sh -c 'python -m pytest -q --basetemp=/tmp/testonce-pytest-$(basename $0 .py) $0' {}
       - name: Lint the agent boundary
         run: python -m ruff check app/agent.py tests/test_agent.py
       - name: Type-check the agent boundary
