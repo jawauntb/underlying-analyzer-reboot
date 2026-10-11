@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import numpy as np
@@ -485,7 +485,7 @@ def test_supabase_tier_reads_writes_and_degrades(tmp_path: Any) -> None:
             {
                 "cache_key": "series:SPY:2026-09",
                 "entry": {"provider": "massive", "payload": {"dates": [], "values": []}},
-                "fetched_at": "2026-09-01T00:00:00+00:00",
+                "fetched_at": datetime.now(UTC).isoformat(),
             }
         ]
     )
