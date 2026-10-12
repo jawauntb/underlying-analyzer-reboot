@@ -1,0 +1,16 @@
+{
+  "ignore": [
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/node_modules/.cache/**",
+    ".prism-cache/**",
+    "coverage/**",
+    "/tmp"
+  ],
+  "noCache": [
+    "tests/test_prism_*.py",
+    "tests/test_constellation_mcp.py",
+    "tests/test_reclassification.py"
+  ]
+}

@@ -20,3 +20,6 @@ stock_analysis.log
 # Offline evaluation output (scripts/eval_tabicl_stack.py)
 reports/*
 !reports/README.md
+
+# testonce result cache (restored/saved by the jawauntb/testonce action)
+/.testonce/
