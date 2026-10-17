@@ -1,7 +1,7 @@
 # vol-watch: IV rank, implied minus realized, and the fast-drop setup
 
 `app/vol_watch.py` is a standalone worker (`python -m app.vol_watch`) that runs as its
-own Railway service (`vol-watch`, config file `railway.vol-watch.toml`) and pushes to a
+own Railway service (`vol-watch`, start command `python -m app.vol_watch`, no healthcheck) and pushes to a
 phone only when a signal crosses a threshold.
 
 ## What it computes
