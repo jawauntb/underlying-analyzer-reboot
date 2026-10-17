@@ -1,0 +1,12 @@
+"$schema" = "https://railway.com/railway.schema.json"
+
+# Config for the vol-watch worker service. The web service uses railway.toml; this
+# file is selected on the worker via the service's "config file path" setting so
+# the gunicorn start command and HTTP healthcheck do not apply to it.
+
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "python -m app.vol_watch"
+restartPolicyType = "ALWAYS"
