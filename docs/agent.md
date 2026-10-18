@@ -105,11 +105,27 @@ conversations.
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...        # required; the agent is offline without it
 ANTHROPIC_AGENT_MODEL=              # optional; defaults to ANTHROPIC_TEXT_MODEL
-EXA_API_KEY=                        # optional; enables search_news
+EXA_API_KEY=                        # optional; preserves Exa for search_news when configured
+NEWS_SEARCH_PROVIDER=auto          # auto, exa, parallel, or disabled
 ```
 
 `GET /api/agent/tools` reports `agent_ready` so the UI can show the agent is
 offline rather than failing on the first message.
+
+`search_news` uses [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+at `https://search.parallel.ai/mcp` when no Exa key is configured. Search uses Fast
+mode and needs no account or API key. With `NEWS_SEARCH_PROVIDER=auto`, a configured
+`EXA_API_KEY` keeps the existing Exa news search. Select `parallel` or `exa` to pin
+a provider, or `disabled` to prevent news-search requests. An error never switches
+providers. The agent's tool allowlist still controls whether it can call `search_news`.
+
+Parallel supplies source URLs, excerpts, and publication dates in the existing news
+response shape. Results without a valid date, outside `days_back`, or with a future
+date are omitted; the returned count may be smaller than `num_results`. Anonymous
+access has service rate limits, reported as a failed search. Each MCP operation is
+bounded by a 20-second total timeout. Closing a synchronous Flask chat stream does
+not interrupt an already running tool request. Other Exa enrichment, including
+Vision research packs, still requires `EXA_API_KEY`.
 
 ## Safety
 

@@ -1148,8 +1148,15 @@ The constellation manifest (also at `/.well-known/mcp/server-card.json`): `name`
 
 ### `POST /api/news`
 
-Recent news and web results for a ticker and/or topic. Requires `EXA_API_KEY`; without it
-the route returns `ok: false` with `status: "not configured"` rather than failing.
+Recent news and web results for a ticker and/or topic. `NEWS_SEARCH_PROVIDER=auto`
+uses Exa when `EXA_API_KEY` is configured, otherwise free anonymous
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) (Fast mode).
+Set `NEWS_SEARCH_PROVIDER` to `exa`, `parallel`, or `disabled` to choose explicitly.
+Errors do not trigger provider fallback. Explicit Exa without a key and disabled
+search return `ok: false`, `status: "not configured"` with no outbound search.
+Parallel omits undated and out-of-window articles to enforce `days_back`, so fewer
+than `num_results` may be returned. Its `author` field is null. See
+[agent configuration](agent.md#configuration) for timeout and service limits.
 
 ```json
 { "ticker": "NVDA", "query": "data center capex", "days_back": 14, "num_results": 6 }
@@ -1182,6 +1189,7 @@ the route returns `ok: false` with `status: "not configured"` rather than failin
 | `SUPABASE_SERVICE_ROLE_KEY` | Scheduled alert runs |
 | `ALERT_SCHEDULER_TOKEN` | Cron/Function → scheduled run |
 | `EXA_API_KEY` | Vision v2 enrichment and `/api/news` (optional) |
+| `NEWS_SEARCH_PROVIDER` | `/api/news` and agent `search_news`: `auto` (default), `exa`, `parallel`, or `disabled` |
 | `TABULAR_INFERENCE_URL` | TabICL v2 inference service (`modal deploy modal_tabular.py`); unset and without the `tabular` extra every tabular consumer fails open |
 | `TABULAR_INFERENCE_TOKEN` | Bearer token for that service (optional) |
 | `TABULAR_DEVICE` | In-process TabICL device when the `tabular` extra is installed (default `cpu`) |

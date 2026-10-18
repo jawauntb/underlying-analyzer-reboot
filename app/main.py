@@ -116,6 +116,7 @@ from app.mcp_http import (
 )
 from app.memo_pdf import MemoPdfPayload, render_memo_pdf
 from app.openapi import build_openapi_document
+from app.parallel_search import ParallelSearchClient
 from app.prism.routes import register_prism_routes
 from app.sec import SecClient, SecDataError
 from app.situate.routes import register_situate_routes
@@ -201,6 +202,8 @@ def create_app() -> Flask:
     app.config["SEC_CLIENT"] = SecClient(user_agent=os.getenv("SEC_USER_AGENT"))
     app.config["EXA_API_KEY"] = os.getenv("EXA_API_KEY")
     app.config["EXA_CLIENT"] = ExaClient(api_key=app.config["EXA_API_KEY"])
+    app.config["NEWS_SEARCH_PROVIDER"] = os.getenv("NEWS_SEARCH_PROVIDER", "auto")
+    app.config["PARALLEL_SEARCH_CLIENT"] = ParallelSearchClient()
     app.config["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
     app.config["OPENAI_IMAGE_MODEL"] = os.getenv("OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
     app.config["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY")
@@ -1203,7 +1206,14 @@ def create_app() -> Flask:
     def news_search() -> Any:
         payload = request.get_json(silent=True) or {}
         try:
-            return jsonify(build_news_response(get_exa_client(), payload))
+            return jsonify(
+                build_news_response(
+                    get_exa_client(),
+                    payload,
+                    provider=current_app.config["NEWS_SEARCH_PROVIDER"],
+                    parallel_client=current_app.config["PARALLEL_SEARCH_CLIENT"],
+                )
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -1752,7 +1762,13 @@ def collect_agent_turn(events: Iterator[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_news_response(exa_client: ExaClient, payload: dict[str, Any]) -> dict[str, Any]:
+def build_news_response(
+    exa_client: ExaClient,
+    payload: dict[str, Any],
+    *,
+    provider: str = "auto",
+    parallel_client: ParallelSearchClient | None = None,
+) -> dict[str, Any]:
     """Recent news for a ticker and/or free-text topic."""
     ticker = str(payload.get("ticker") or "").strip().upper()
     query = str(payload.get("query") or "").strip()
@@ -1763,29 +1779,44 @@ def build_news_response(exa_client: ExaClient, payload: dict[str, Any]) -> dict[
     num_results = _bounded_int(payload.get("num_results"), default=6, low=1, high=12)
 
     search_terms = " ".join(part for part in [ticker, query] if part).strip()
-    if not getattr(exa_client, "api_key", None):
+    provider = provider.strip().lower()
+    if provider not in {"auto", "exa", "parallel", "disabled"}:
+        raise ValueError("NEWS_SEARCH_PROVIDER must be auto, exa, parallel, or disabled")
+    if provider == "auto":
+        provider = "exa" if getattr(exa_client, "api_key", None) else "parallel"
+    provider_name = {"exa": "Exa", "parallel": "Parallel", "disabled": "disabled"}[provider]
+    if provider == "disabled" or (provider == "exa" and not getattr(exa_client, "api_key", None)):
         return {
             "ok": False,
             "status": "not configured",
-            "provider": "Exa",
+            "provider": provider_name,
             "query": search_terms,
             "results": [],
-            "error": "EXA_API_KEY is not configured, so news search is unavailable.",
+            "error": (
+                "News search is disabled."
+                if provider == "disabled"
+                else "EXA_API_KEY is not configured, so news search is unavailable."
+            ),
         }
 
     start = (datetime.now(UTC) - timedelta(days=days_back)).strftime("%Y-%m-%d")
     try:
-        results = exa_client.search(
-            search_terms,
-            num_results=num_results,
-            start_published_date=start,
-            category="news",
-        )
+        if provider == "parallel":
+            results = (parallel_client or ParallelSearchClient()).search(
+                search_terms, num_results=num_results, start_published_date=start
+            )
+        else:
+            results = exa_client.search(
+                search_terms,
+                num_results=num_results,
+                start_published_date=start,
+                category="news",
+            )
     except Exception as exc:
         return {
             "ok": False,
             "status": "error",
-            "provider": "Exa",
+            "provider": provider_name,
             "query": search_terms,
             "results": [],
             "error": f"News search failed: {exc}",
@@ -1794,7 +1825,7 @@ def build_news_response(exa_client: ExaClient, payload: dict[str, Any]) -> dict[
     return {
         "ok": True,
         "status": "ok",
-        "provider": "Exa",
+        "provider": provider_name,
         "query": search_terms,
         "ticker": ticker or None,
         "days_back": days_back,
