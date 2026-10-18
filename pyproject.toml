@@ -8,6 +8,7 @@ dependencies = [
   "Flask>=3.0,<4",
   "flask-cors>=5.0,<6",
   "gunicorn>=22.0,<24",
+  "httpx>=0.28.1,<1",
   "matplotlib>=3.9,<4",
   "mcp>=1.27,<2",
   "numpy>=2.0,<3",
