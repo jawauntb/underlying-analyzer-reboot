@@ -139,6 +139,14 @@ def test_state_round_trip_and_sample_pruning(tmp_path: Path) -> None:
     assert loaded.last_alert == {"MU:iv_rank": "2026-10-16T14:00:00+00:00"}
     assert loaded.iv_samples == {"MU": {"2026-10-16": 55.1235}}
     assert vw.State.load(tmp_path / "missing.json").signals == {}
+    # samples stored under an older iv method are dropped, signals are kept
+    old = tmp_path / "old.json"
+    old.write_text(
+        '{"iv_method": 1, "signals": {"MU:spread": "high"},'
+        ' "iv_samples": {"MU": {"2026-10-16": 67.0}}}'
+    )
+    legacy = vw.State.load(old)
+    assert legacy.iv_samples == {} and legacy.signals == {"MU:spread": "high"}
 
 
 def test_market_hours_in_eastern_time() -> None:

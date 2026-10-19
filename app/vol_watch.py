@@ -183,8 +183,14 @@ class Config:
 # ---------------------------------------------------------------------------- state
 
 
+# Bump when the iv30 method changes: samples stored under an older method are dropped
+# on load so a year of rank is not anchored to a number computed a different way.
+IV_METHOD_VERSION = 2
+
+
 @dataclass
 class State:
+    iv_method: int = IV_METHOD_VERSION
     signals: dict[str, str] = field(default_factory=dict)  # "TSLA:iv_rank" -> "high"
     iv_samples: dict[str, dict[str, float]] = field(default_factory=dict)  # tkr -> {date: iv}
     last_alert: dict[str, str] = field(default_factory=dict)  # "TSLA:iv_rank" -> iso ts
@@ -200,7 +206,10 @@ class State:
             return cls()
         state = cls()
         state.signals = dict(raw.get("signals") or {})
-        state.iv_samples = {k: dict(v) for k, v in (raw.get("iv_samples") or {}).items()}
+        if int(raw.get("iv_method") or 1) == IV_METHOD_VERSION:
+            state.iv_samples = {k: dict(v) for k, v in (raw.get("iv_samples") or {}).items()}
+        else:
+            log.info("dropping iv samples stored under an older iv method")
         state.last_alert = dict(raw.get("last_alert") or {})
         state.last_drop_alert = dict(raw.get("last_drop_alert") or {})
         state.last_chain_run = raw.get("last_chain_run")
