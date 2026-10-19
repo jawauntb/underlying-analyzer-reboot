@@ -261,6 +261,23 @@ def bs_delta(
     return norm_cdf(d1) if is_call else norm_cdf(d1) - 1.0
 
 
+def bs_theta(
+    spot: float, strike: float, t: float, vol: float, is_call: bool, r: float = RISK_FREE
+) -> float:
+    """Theta in dollars per day per contract (100 multiplier); negative for a long option."""
+    if t <= 0 or vol <= 0:
+        return 0.0
+    d1 = (math.log(spot / strike) + (r + 0.5 * vol * vol) * t) / (vol * math.sqrt(t))
+    d2 = d1 - vol * math.sqrt(t)
+    pdf = math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
+    decay = -spot * pdf * vol / (2 * math.sqrt(t))
+    if is_call:
+        carry = -r * strike * math.exp(-r * t) * norm_cdf(d2)
+    else:
+        carry = r * strike * math.exp(-r * t) * norm_cdf(-d2)
+    return (decay + carry) / 365.0 * 100.0
+
+
 def implied_vol(price: float, spot: float, strike: float, t: float, is_call: bool) -> float | None:
     """Solve Black-Scholes for vol by bisection. Returns a decimal (0.20 = 20%) or None."""
     if price <= 0 or spot <= 0 or strike <= 0 or t <= 0:
@@ -821,7 +838,13 @@ def compute_metrics(
 
 
 def run_chain_pass(
-    cfg: Config, state: State, data: YahooData, notifier: Notifier, today: date, now: datetime
+    cfg: Config,
+    state: State,
+    data: YahooData,
+    notifier: Notifier,
+    today: date,
+    now: datetime,
+    cards: Any = None,
 ) -> list[dict[str, Any]]:
     fired: list[dict[str, Any]] = []
     try:
@@ -854,6 +877,11 @@ def run_chain_pass(
         )
         for alert in crossings(ticker, metrics, state, cfg, now):
             title, body, prio = render_signal(alert)
+            if cards is not None:
+                try:
+                    title, body = cards.vol_signal(ticker, alert["signal"], alert["band"], metrics)
+                except Exception as exc:  # the plain line is the fallback, never silence
+                    log.warning("card render failed for %s: %s", ticker, exc)
             notifier.push(title, body, prio, alert)
             fired.append(alert)
     state.last_chain_run = now.isoformat()
@@ -861,7 +889,12 @@ def run_chain_pass(
 
 
 def run_drop_pass(
-    cfg: Config, state: State, data: YahooData, notifier: Notifier, now: datetime
+    cfg: Config,
+    state: State,
+    data: YahooData,
+    notifier: Notifier,
+    now: datetime,
+    cards: Any = None,
 ) -> list[dict[str, Any]]:
     proxies = sorted({DROP_PROXIES[t] for t in cfg.watchlist if t in DROP_PROXIES})
     if not proxies:
@@ -888,6 +921,12 @@ def run_drop_pass(
             continue
         state.last_drop_alert[proxy] = now.isoformat()
         title, body, prio = render_drop(proxy, hit)
+        if cards is not None:
+            try:
+                facts = {"vix": float(vix.iloc[-1]) if not vix.empty else None}
+                title, body = cards.fast_drop(proxy, hit, facts)
+            except Exception as exc:
+                log.warning("card render failed for drop: %s", exc)
         notifier.push(title, body, prio, hit)
         fired.append({"proxy": proxy, **hit})
     return fired
@@ -900,10 +939,11 @@ def tick(
     notifier: Notifier,
     now: datetime | None = None,
     force_chains: bool = False,
+    cards: Any = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     today = now.astimezone(ET).date()
-    drops = run_drop_pass(cfg, state, data, notifier, now)
+    drops = run_drop_pass(cfg, state, data, notifier, now, cards)
     due = (
         force_chains
         or state.last_chain_run is None
@@ -912,7 +952,7 @@ def tick(
             >= timedelta(minutes=cfg.chain_minutes)
         )
     )
-    signals = run_chain_pass(cfg, state, data, notifier, today, now) if due else []
+    signals = run_chain_pass(cfg, state, data, notifier, today, now, cards) if due else []
     state.save(cfg.state_path)
     return {"drops": drops, "signals": signals, "chains_ran": due}
 
@@ -933,7 +973,11 @@ def main(argv: list[str] | None = None) -> int:
         notifier.configured,
     )
     if "--once" in args:
-        result = tick(cfg, state, data, notifier, force_chains=True)
+        from app.trade_cards import CardBuilder, ChainPicker
+
+        result = tick(
+            cfg, state, data, notifier, force_chains=True, cards=CardBuilder(ChainPicker(data))
+        )
         print(json.dumps({"fired": result, "metrics": state.last_metrics}, indent=1, default=str))
         return 0
     if "--test-push" in args:
@@ -941,18 +985,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     from app.futures_watch import snapshot_now
     from app.futures_watch import start_thread as start_futures
+    from app.trade_cards import CardBuilder, ChainPicker
     from app.trade_watch import start_thread as start_trades
 
     if "--futures-once" in args:
         print(snapshot_now(notifier if "--push" in args else None))
         return 0
+    cards = CardBuilder(ChainPicker(data))
     start_trades(notifier)
-    start_futures(notifier)
+    start_futures(notifier, cards)
     while True:
         now = datetime.now(UTC)
         if is_market_open(now):
             try:
-                tick(cfg, state, data, notifier, now)
+                tick(cfg, state, data, notifier, now, cards=cards)
             except Exception:
                 log.exception("tick failed")
             time.sleep(cfg.tick_minutes * 60)

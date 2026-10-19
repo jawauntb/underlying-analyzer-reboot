@@ -106,3 +106,21 @@ fees: robinhood's order feed carries no fee field, so the pushes read fees 0.00 
 ## the futures feed
 
 the same service pushes futures four times a day (06:30, 08:30, 12:30, 16:30 et) and on moves: es and nq front and back month, vix futures front and back with the spread and whether the curve is in contango or backwardation, gold (gc front and back, gld) and wti crude (cl front and back). `MOVE` fires on a front-month hour move over its threshold (es/nq 0.75%, gc 1%, cl 2%, vx 8%), `OVERNIGHT` when es is more than 1% off the prior settle outside the cash session, `VIX TERM` when the front month crosses the back month. a backwardation push is the macro version of the put-spike edge: stress is now, not later, so sell the spike with wings rather than buying it. the 08:30 snapshot is the pre-open read; the 16:30 one is what the overnight starts from.
+
+## the card
+
+every alert that implies a trade arrives as one card, in his words:
+
+```
+ticker:
+Open:
+Close:
+EV:
+Timeframe:
+Theta:
+Hoping For:
+Reason:
+additional context:
+```
+
+the structure on it is priced off the live chain (45-delta long for the gamma phase, 25-delta credit spread with max loss under $300 for selling time, 50/25 debit spread when options are cheap), ev by the formulas above, theta per day or per hour left on a 0dte. es level crosses (7700 / 7720 / 7740 / 7800 / 7840 / 7880, both directions) get the card too: down with vix quiet is the long put, down with vix already up 8% is the put credit spread, up is the call credit spread. when he forwards a card, coach the card: is the open the right phase, does the close keep the kernel, is the hoping-for specific enough to be wrong.

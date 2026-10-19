@@ -140,3 +140,55 @@ Pushes:
   month, on the change only.
 
 `python -m app.vol_watch --futures-once` prints one snapshot; add `--push` to send it.
+
+## Trade cards (every alert in one template)
+
+`app/trade_cards.py` renders every alert that implies a trade as one card:
+
+```
+ticker:
+Open:
+Close:
+EV:
+Timeframe:
+Theta:
+Hoping For:
+Reason:
+additional context:
+```
+
+The structure on the card is priced off the live chain through the same quote filter
+as the vol watcher (bid > 0, relative spread under 25%, IV solved from the mid on the
+parity forward): a 45-delta long for the gamma phase, a 25-delta credit spread with the
+widest wing that keeps max loss under `CARD_MAX_LOSS` (300) for the premium-selling
+cases, a 50/25-delta debit spread when options are cheap. EV follows the babe-ruth
+formulas (credit spread: `credit × p(otm) − (width − credit) × p(itm)` with the short
+delta as p(itm); long option: debit, breakeven, delta; debit spread: needs
+`p(win) > debit / width`). Theta is Black-Scholes per day, or premium over hours left
+for a same-day contract. When the chain is unavailable the card still goes out with
+`Open: n/a (chain unavailable)` and the reason intact. Context carries VIX, the VX
+front/back and curve shape, ES vs settle, and today's kernel when the trade watcher has
+state.
+
+Which card each alert gets:
+
+| alert | card |
+|---|---|
+| ES below a level, VX front up under 8% in the hour | buy 45-delta XSP 0DTE put; convert to a zero-cost spread 20 ES points lower |
+| ES below a level, VX front already up 8%+ | sell 25-delta XSP 0DTE put credit spread |
+| ES above a level | sell 25-delta XSP 0DTE call credit spread |
+| FAST DROP | sell 25-delta put credit spread (or sell that strike against existing longs) |
+| MOVE | 25-delta credit spread on the product for the root, against the move |
+| OVERNIGHT | 25-delta XSP credit spread at the open, against the gap |
+| VIX TERM backwardation | sell 25-delta XSP put credit spread, 1 week |
+| iv rank rich / implied >> realized / skew spike | sell 25-delta put credit spread on the name |
+| iv rank cheap / implied < realized | 50/25-delta call and put debit spreads, his read picks |
+
+Fills, cancels, kernel pushes and the futures snapshots stay as plain lines.
+
+### ES levels
+
+`FUTURES_ES_LEVELS` (default `7700,7720,7740,7800,7840,7880`): a push when the ES front
+month crosses any level in either direction (`ES < 7740`, `ES > 7800`), once per level
+per `FUTURES_LEVEL_COOLDOWN_MINUTES` (30). The first observation after a deploy only
+records which side price is on.

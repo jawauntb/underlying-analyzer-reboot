@@ -62,9 +62,16 @@ class Config:
     cooldown_minutes: int = 60
     window_minutes: int = 60
     state_path: Path = Path("futures_watch_state.json")
+    es_levels: tuple[float, ...] = (7700.0, 7720.0, 7740.0, 7800.0, 7840.0, 7880.0)
+    level_cooldown_minutes: int = 30
 
     @classmethod
     def from_env(cls) -> Config:
+        raw_levels = os.environ.get("FUTURES_ES_LEVELS") or ""
+        levels: list[float] = []
+        for part in raw_levels.split(","):
+            with contextlib.suppress(ValueError):
+                levels.append(float(part.strip()))
         raw_times = os.environ.get("FUTURES_SNAPSHOT_TIMES") or "06:30,08:30,12:30,16:30"
         times = tuple(t.strip() for t in raw_times.split(",") if t.strip())
         move = dict(DEFAULT_MOVE_PCT)
@@ -84,6 +91,8 @@ class Config:
             state_path=Path(
                 os.environ.get("FUTURES_WATCH_STATE_PATH") or data_dir / "futures_watch_state.json"
             ),
+            es_levels=tuple(sorted(levels)) if levels else cls.es_levels,
+            level_cooldown_minutes=int(os.environ.get("FUTURES_LEVEL_COOLDOWN_MINUTES") or 30),
         )
 
 
@@ -267,6 +276,7 @@ class State:
     overnight_sent: str = ""
     backwardation: bool | None = None
     vx_history: dict[str, list[list[Any]]] = field(default_factory=dict)  # label -> [[iso, px]]
+    es_side: dict[str, str] = field(default_factory=dict)  # "7740" -> above | below
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -282,6 +292,7 @@ class State:
         state.snapshots_sent = list(raw.get("snapshots_sent") or [])
         state.backwardation = raw.get("backwardation")
         state.vx_history = {k: list(v) for k, v in (raw.get("vx_history") or {}).items()}
+        state.es_side = dict(raw.get("es_side") or {})
         return state
 
     def save(self, path: Path) -> None:
@@ -378,11 +389,34 @@ def cash_session(now: datetime) -> bool:
 
 
 class Watcher:
-    def __init__(self, cfg: Config, source: Source, pusher: Pusher) -> None:
+    def __init__(self, cfg: Config, source: Source, pusher: Pusher, cards: Any = None) -> None:
         self.cfg = cfg
         self.source = source
         self.pusher = pusher
+        self.cards = cards
         self.state = State.load(cfg.state_path)
+
+    def _facts(self, quotes: dict[str, Quote]) -> dict[str, Any]:
+        vx = [q for q in quotes.values() if q.root == "VX"]
+        es = next((q for q in quotes.values() if q.root == "ES"), None)
+        vix = quotes.get("VIX")
+        return {
+            "vix": vix.last if vix else None,
+            "vx_front": vx[0].last if vx else None,
+            "vx_back": vx[1].last if len(vx) > 1 else None,
+            "vx_hour_move": vx[0].hour_move_pct if vx else None,
+            "es_change": es.change_pct if es else None,
+        }
+
+    def _card(self, method: str, *args: Any) -> tuple[str, str] | None:
+        if self.cards is None:
+            return None
+        try:
+            result: tuple[str, str] = getattr(self.cards, method)(*args)
+            return result
+        except Exception as exc:
+            log.warning("card render failed (%s): %s", method, exc)
+            return None
 
     def _contracts(self, today: date) -> dict[str, str]:
         if self.state.day == today.isoformat() and self.state.contracts:
@@ -447,6 +481,7 @@ class Watcher:
         local = now.astimezone(ET)
         quotes = self.quotes(now)
         events: list[dict[str, Any]] = []
+        events.extend(self._levels(quotes, now))
         events.extend(self._moves(quotes, now))
         events.extend(self._term(quotes))
         events.extend(self._overnight(quotes, now))
@@ -462,6 +497,38 @@ class Watcher:
             return False
         self.state.last_alert[key] = now.isoformat()
         return True
+
+    def _levels(self, quotes: dict[str, Quote], now: datetime) -> list[dict[str, Any]]:
+        """ES crossing one of his levels, either direction, one push per level per cooldown."""
+        es = next((q for q in quotes.values() if q.root == "ES"), None)
+        if es is None:
+            return []
+        events = []
+        for level in self.cfg.es_levels:
+            key = f"{level:g}"
+            side = "above" if es.last >= level else "below"
+            prev = self.state.es_side.get(key)
+            self.state.es_side[key] = side
+            if prev is None or prev == side:
+                continue
+            last = self.state.last_alert.get(f"level:{key}")
+            if last and now - datetime.fromisoformat(last) < timedelta(
+                minutes=self.cfg.level_cooldown_minutes
+            ):
+                continue
+            self.state.last_alert[f"level:{key}"] = now.isoformat()
+            arrow = "<" if side == "below" else ">"
+            title = f"ES {arrow} {level:g}"
+            body = (
+                f"{es.label} {px(es.last)} crossed {side} {level:g} | "
+                f"{pct(es.change_pct)} vs settle"
+            )
+            card = self._card("es_level", level, side, es.last, self._facts(quotes))
+            if card:
+                title, body = card
+            self.pusher.push(title, body, "high")
+            events.append({"kind": "level", "level": level, "side": side})
+        return events
 
     def _moves(self, quotes: dict[str, Quote], now: datetime) -> list[dict[str, Any]]:
         events = []
@@ -481,6 +548,9 @@ class Watcher:
             vx = [v for v in quotes.values() if v.root == "VX"]
             if vx and q.root != "VX":
                 body += f" | {vx[0].label} {px(vx[0].last)} ({pct(vx[0].hour_move_pct, 1)} 1h)"
+            card = self._card("futures_move", q.label, q.root, move, self._facts(quotes))
+            if card:
+                title, body = card
             self.pusher.push(title, body, "high" if q.root in ("ES", "NQ", "VX") else "default")
             events.append({"kind": "move", "label": q.label, "move": move})
         return events
@@ -505,6 +575,9 @@ class Watcher:
             if back
             else ". curve normal again."
         )
+        card = self._card("vix_term", back, vx[0].label, vx[1].label, spread, self._facts(quotes))
+        if card:
+            title, body = card
         self.pusher.push(title, body, "high")
         return [{"kind": "term", "backwardation": back}]
 
@@ -526,6 +599,9 @@ class Watcher:
         vx = next((q for q in quotes.values() if q.root == "VX"), None)
         if vx:
             body += f" | {vx.label} {px(vx.last)} ({pct(vx.change_pct, 1)})"
+        card = self._card("overnight", es.label, es.change_pct, self._facts(quotes))
+        if card:
+            title, body = card
         self.pusher.push(title, body, "high")
         return [{"kind": "overnight", "change": es.change_pct}]
 
@@ -550,8 +626,8 @@ class Watcher:
         return events
 
 
-def run_forever(cfg: Config, source: Source, pusher: Pusher) -> None:
-    watcher = Watcher(cfg, source, pusher)
+def run_forever(cfg: Config, source: Source, pusher: Pusher, cards: Any = None) -> None:
+    watcher = Watcher(cfg, source, pusher, cards)
     while True:
         now = datetime.now(UTC)
         if not futures_open(now):
@@ -564,13 +640,20 @@ def run_forever(cfg: Config, source: Source, pusher: Pusher) -> None:
         time.sleep(cfg.tick_minutes * 60)
 
 
-def start_thread(pusher: Pusher) -> threading.Thread:
+def start_thread(pusher: Pusher, cards: Any = None) -> threading.Thread:
     cfg = Config.from_env()
     thread = threading.Thread(
-        target=run_forever, args=(cfg, LiveSource(), pusher), name="futures-watch", daemon=True
+        target=run_forever,
+        args=(cfg, LiveSource(), pusher, cards),
+        name="futures-watch",
+        daemon=True,
     )
     thread.start()
-    log.info("futures watcher started: snapshots %s", ",".join(cfg.snapshot_times))
+    log.info(
+        "futures watcher started: snapshots %s, es levels %s",
+        ",".join(cfg.snapshot_times),
+        ",".join(f"{x:g}" for x in cfg.es_levels),
+    )
     return thread
 
 
