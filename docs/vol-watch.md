@@ -110,3 +110,33 @@ $156 with the three 766P contracts open.
 Fees: Robinhood's order objects carry no fee field, so `fees` is 0 unless the API adds
 one (`regulatory_fees`, `fees` or `contract_fees` are read when present). Index option
 fees are real money; the close summary says fees 0.00 until that changes.
+
+## Futures watcher (ES, NQ, VX, GC, CL, GLD)
+
+`app/futures_watch.py` runs as a thread in the same service on futures hours (Sunday
+18:00 ET to Friday 17:00 ET, minus the 17:00 to 18:00 break), ticking every
+`FUTURES_TICK_MINUTES` (5). Contracts: ES and NQ front and back quarterly (roll a week
+before the third Friday), GC front and back active months (G J M Q V Z, roll when the
+contract month is ten days out), CL front and back monthly (roll three days before the
+20th of the prior month), GLD, and VIX futures front and back monthly from Cboe's
+delayed combined quotes (`VX/V6` style, weeklies excluded) with VIX and VIX3M beside
+them. The chosen symbols are written to the state file each day.
+
+Pushes:
+
+- `futures <slot> ET` snapshot at each `FUTURES_SNAPSHOT_TIMES` slot (default
+  06:30, 08:30, 12:30, 16:30): last, change vs prior settle and trailing-hour move per
+  front month, back month last, VIX futures spread with contango or backwardation, gold
+  and crude. A slot the service slept through by more than 90 minutes is skipped rather
+  than sent stale.
+- `MOVE <contract> ±x% in 60m` when the front month moves more than its threshold
+  inside the trailing hour, measured from the hour high (down) or hour low (up):
+  `FUTURES_MOVE_ES` 0.75, `FUTURES_MOVE_NQ` 0.75, `FUTURES_MOVE_GC` 1.0,
+  `FUTURES_MOVE_CL` 2.0, `FUTURES_MOVE_VX` 8.0, `FUTURES_MOVE_GLD` 1.0. One per contract
+  per `FUTURES_COOLDOWN_MINUTES` (60). ES, NQ and VX moves go out at high priority.
+- `OVERNIGHT ES ±x% vs settle` outside the cash session when ES is more than
+  `FUTURES_OVERNIGHT_PCT` (1.0) from the prior settle, once per session day.
+- `VIX TERM: backwardation` / `back to contango` when the front month crosses the back
+  month, on the change only.
+
+`python -m app.vol_watch --futures-once` prints one snapshot; add `--push` to send it.

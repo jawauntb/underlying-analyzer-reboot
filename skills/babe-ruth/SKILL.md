@@ -102,3 +102,7 @@ the same railway service also reads his robinhood orders every 30 seconds from 0
 kernel in that feed = realized loss so far + sum of max loss at entry on everything still open (debit paid, or width minus credit on a spread). it is rule 3 made live: when it reads $500 he is done until next week, and the watcher says so. a FILL push is the moment to run the 5-minute format on what just filled; a KERNEL 80% push is the moment to say "no new risk, only closes" in one line.
 
 fees: robinhood's order feed carries no fee field, so the pushes read fees 0.00 until it does. index option fees are real; keep that in mind on the close summary.
+
+## the futures feed
+
+the same service pushes futures four times a day (06:30, 08:30, 12:30, 16:30 et) and on moves: es and nq front and back month, vix futures front and back with the spread and whether the curve is in contango or backwardation, gold (gc front and back, gld) and wti crude (cl front and back). `MOVE` fires on a front-month hour move over its threshold (es/nq 0.75%, gc 1%, cl 2%, vx 8%), `OVERNIGHT` when es is more than 1% off the prior settle outside the cash session, `VIX TERM` when the front month crosses the back month. a backwardation push is the macro version of the put-spike edge: stress is now, not later, so sell the spike with wings rather than buying it. the 08:30 snapshot is the pre-open read; the 16:30 one is what the overnight starts from.

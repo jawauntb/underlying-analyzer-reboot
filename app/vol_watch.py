@@ -933,9 +933,15 @@ def main(argv: list[str] | None = None) -> int:
     if "--test-push" in args:
         notifier.push("vol_watch test", "if you see this, pushes reach your phone", "default")
         return 0
-    from app.trade_watch import start_thread
+    from app.futures_watch import snapshot_now
+    from app.futures_watch import start_thread as start_futures
+    from app.trade_watch import start_thread as start_trades
 
-    start_thread(notifier)
+    if "--futures-once" in args:
+        print(snapshot_now(notifier if "--push" in args else None))
+        return 0
+    start_trades(notifier)
+    start_futures(notifier)
     while True:
         now = datetime.now(UTC)
         if is_market_open(now):
