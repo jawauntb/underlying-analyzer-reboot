@@ -10,11 +10,24 @@ Every `VOL_WATCH_CHAIN_MINUTES` (15) during US market hours, per watchlist ticke
 
 | metric | definition |
 |---|---|
-| `iv30` | ATM implied vol (call/put averaged) interpolated in variance-time to 30 calendar days from the two nearest listed expiries |
+| `iv30` | IV of the nearest-50-delta call and put (averaged) on the two expiries bracketing 30 calendar days, interpolated in variance-time |
 | `rv20` | annualized close-to-close realized vol over the last 20 trading days |
 | `spread` | `iv30 - rv20` in vol points |
-| `iv_rank` | position of today's `iv30` inside the trailing-year range of stored daily samples; until `VOL_WATCH_MIN_RANK_SAMPLES` (60) exist it is a proxy, `iv30`'s percentile among the trailing 252 daily `rv20` values, flagged `iv_rank_basis = "rv_proxy"` |
-| `skew` | 5%-OTM put IV minus 5%-OTM call IV on the nearer expiry |
+| `iv_rank` | position of today's `iv30` inside the trailing `VOL_WATCH_RANK_SAMPLES` (252) stored daily samples; `rank n/a` until that many exist, and the rank signal never fires on n/a |
+| `skew` | 25-delta put IV minus 25-delta call IV on the nearer expiry; `n/a` when either wing has no passing quote |
+| `zero_dte` | XSP only: same-day ATM straddle mid as a percent of spot (session implied move) vs the move realized so far today, from 5-minute closes |
+
+Every IV is solved from the quote mid with Black-Scholes on the parity-implied forward
+(`F = K + (C - P)e^{rT}` at the strike where call and put mids are closest), so VIX options
+price off the future and dividend names off their forward. A quote counts only when
+`bid > 0`, `ask >= bid`, and `(ask - bid) / mid < VOL_WATCH_MAX_REL_SPREAD` (0.25). The
+vendor's own IV column is never used.
+
+Sanity gates, each of which skips the ticker for that pass and sends nothing: no ATM
+quote passes the filter; `iv30 < VOL_WATCH_MIN_IV` (5); and for SPX, XSP and SPY,
+`|iv30 - VIX| > VOL_WATCH_VIX_GATE_POINTS` (2). Note that VIX is a variance-swap strike
+and normally sits 1 to 4 points above ATM vol, so the 2-point gate will trip on quiet
+days; widen it with the variable if XSP goes silent.
 
 Every `VOL_WATCH_TICK_MINUTES` (5): the fast-drop check. For each index name on the
 watchlist (XSP → SPY, QQQ → QQQ) it measures the drawdown from the trailing-hour high
@@ -24,9 +37,10 @@ on 5-minute bars and ^VIX's rise from its trailing-hour low. Default trigger: do
 ## When it pushes
 
 Only on a band change since the last tick (the state is persisted, so a restart does
-not re-fire). Bands: IV rank high (>= 50) / low (<= 20); spread rich (>= +8) /
-cheap (<= -3); skew spike (>= 12). Returning to the middle band is silent. A fresh
-deploy fires once for anything that is already rich or cheap.
+not re-fire), and at most once per ticker per signal per
+`VOL_WATCH_ALERT_COOLDOWN_MINUTES` (30). Bands: IV rank high (>= 50) / low (<= 20);
+spread rich (>= +8) / cheap (<= -3); skew spike (>= 12). Returning to the middle band
+is silent. A fresh deploy fires once for anything that is already rich or cheap.
 
 ## Delivery
 
@@ -40,8 +54,8 @@ Any subset of:
 ## State
 
 `VOL_WATCH_STATE_PATH` (default `/data/vol_watch_state.json` when `/data` exists). The
-Railway service mounts a volume at `/data` so IV samples accumulate across deploys and
-the rank graduates from the proxy to real IV rank after 60 trading days.
+Railway service mounts a volume at `/data` so IV samples accumulate across deploys; the
+rank prints once 252 daily samples exist.
 
 ## Running it
 
@@ -57,5 +71,5 @@ python -m app.vol_watch               # the loop (sleeps outside 9:30-16:00 ET, 
 ## Data
 
 yfinance only. Index names map to Yahoo symbols (`XSP` → `^XSP`, `VIX` → `^VIX`).
-Thin ETF chains (CANE, SOYB, VIXM) carry stale quotes; the ATM pick prefers strikes with
-open interest and two-sided quotes, but treat their IV as a prompt to look, not a fill.
+Thin ETF chains (SOYB, VIXM) usually have no quote that passes the filter and are
+skipped silently; the log says so each pass.

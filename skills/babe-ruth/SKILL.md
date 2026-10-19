@@ -84,13 +84,13 @@ note: the rung sizes above are reconstructed from the plan message, not from his
 
 ## the watcher (vol-watch)
 
-a worker on railway (`app/vol_watch.py` in underlying-analyzer-reboot) runs during market hours on the watchlist xsp, mu, tsla, lly, avgo, qqq, vix, svxy, vixm, ewz, soyb, cane. every 15 minutes it computes per name: 30-day atm iv, 20-day realized, spread = iv minus realized, iv rank, and 5%-otm put-minus-call skew. every 5 minutes it checks the fast drop on spy (for xsp) and qqq against ^vix. it pushes to his phone only on a crossing:
+a worker on railway (`app/vol_watch.py` in underlying-analyzer-reboot) runs during market hours on the watchlist xsp, mu, tsla, lly, avgo, qqq, vix, svxy, vixm, ewz, soyb, cane. every 15 minutes it computes per name from quote mids only (bid > 0, relative spread under 25%): 30-day 50-delta iv, 20-day realized, spread = iv minus realized, iv rank from its own stored samples, 25-delta put-minus-call skew, and for xsp the 0dte straddle implied move against the move realized so far today. every 5 minutes it checks the fast drop on spy (for xsp) and qqq against ^vix. it pushes to his phone only on a crossing, at most once per name per signal per 30 minutes:
 
 - `iv rank rich` (>= 50) → sell time: credit spread or iron fly. `iv rank cheap` (<= 20) → buy gamma first.
 - `implied >> realized` (spread >= +8 pts) → sell premium. `implied < realized` (<= -3) → long gamma is cheap.
 - `put skew spike` (>= 12 pts) → sell the put spread into it, or convert longs to zero-cost.
 - `FAST DROP` → the put-spike edge above.
 
-read the iv rank basis: until the watcher has 60 daily samples of its own, the rank is a proxy (where today's iv sits among the last year of realized vol) and the push says `(rv proxy)`. thin etf chains (cane, soyb, vixm) throw junk iv on wide quotes; treat those numbers as a prompt to look at the chain, not as a fill.
+`rank n/a` means the watcher has under 252 daily samples of its own; it does not guess from realized. `skew25 n/a` means a wing had no quote that passed the filter. a name that is missing from a pass failed a sanity gate (no clean atm quote, iv under 5, or xsp more than 2 points from vix) and was skipped on purpose. vix's own chain prices off the future, so its iv30 near vvix and its deeply negative skew are real, not errors.
 
 when he forwards an alert, answer in the 5-minute format: read the numbers, name the phase (gamma or theta), hand back the trade that fits the kernel.
