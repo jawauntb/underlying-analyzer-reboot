@@ -473,7 +473,7 @@ def fast_drop(
     if proxy_bars.empty or vix_bars.empty:
         return None
     end = proxy_bars.index[-1]
-    start = end - pd.Timedelta(minutes=window_minutes)
+    start = end - timedelta(minutes=window_minutes)
     px = proxy_bars[proxy_bars.index >= start]
     vx = vix_bars[vix_bars.index >= start]
     if len(px) < 2 or len(vx) < 2:
@@ -933,6 +933,9 @@ def main(argv: list[str] | None = None) -> int:
     if "--test-push" in args:
         notifier.push("vol_watch test", "if you see this, pushes reach your phone", "default")
         return 0
+    from app.trade_watch import start_thread
+
+    start_thread(notifier)
     while True:
         now = datetime.now(UTC)
         if is_market_open(now):

@@ -73,3 +73,40 @@ python -m app.vol_watch               # the loop (sleeps outside 9:30-16:00 ET, 
 yfinance only. Index names map to Yahoo symbols (`XSP` → `^XSP`, `VIX` → `^VIX`).
 Thin ETF chains (SOYB, VIXM) usually have no quote that passes the filter and are
 skipped silently; the log says so each pass.
+
+## Trade watcher (fills, cancels, kernel, ledger)
+
+`app/trade_watch.py` runs as a thread inside the same service once a Robinhood token is
+set (`ROBINHOOD_TOKEN`, optionally `ROBINHOOD_REFRESH_TOKEN` + `ROBINHOOD_DEVICE_TOKEN`
+so a 401 refreshes instead of stopping; `python scripts/robinhood_token.py` prints all
+three after one login on your own machine). Read-only by construction: the HTTP client
+has a `get` method and nothing else, and no code path can place, change or cancel an
+order. The one POST is the OAuth token refresh.
+
+Between 09:25 and 16:15 ET it polls option and equity orders every
+`TRADE_WATCH_POLL_SECONDS` (30) and:
+
+- pushes `FILL <side> <qty> <legs> @ <price> | fees <x>` per newly filled order, multi-leg
+  orders as one push with every leg and the net debit or credit;
+- pushes `CANCELED <order>` when an order is cancelled or rejected, including one that
+  was placed and pulled between polls;
+- keeps the day state: realized P&L net of fees, open positions, each opening order's
+  max loss at entry (debit paid, or width × 100 × qty minus credit for a spread; a
+  partial close keeps the share of legs still open), and
+  `kernel = realized loss + sum of open max losses`;
+- pushes at 50, 80 and 100 percent of `TRADE_WATCH_DAY_BUDGET` (500) and
+  `DAY DOUBLED, done for the day` at realized ≥ +$500, each once per day;
+- pushes an opening snapshot at 09:31 ET and a close summary at 16:05 ET;
+- appends every fill and the close summary to `trade_ledger.csv` on the volume and to
+  the Google Sheet (`GOOGLE_SHEET_ID`, columns `ts_et, order_id, legs, side, qty, price,
+  net, fees, realized_day, kernel_used, note`). The sheet write needs
+  `GOOGLE_SERVICE_ACCOUNT_JSON` (the service account's JSON on one line) and the sheet
+  shared with that service account's email as an editor. Without it the CSV still fills.
+
+The replay test in `tests/test_trade_watch.py` runs the real 2026-10-19 XSP tape through
+the state machine (fixture under `tests/fixtures/`) and asserts realized −$6 and kernel
+$156 with the three 766P contracts open.
+
+Fees: Robinhood's order objects carry no fee field, so `fees` is 0 unless the API adds
+one (`regulatory_fees`, `fees` or `contract_fees` are read when present). Index option
+fees are real money; the close summary says fees 0.00 until that changes.

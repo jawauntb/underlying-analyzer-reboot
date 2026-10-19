@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
   "Flask>=3.0,<4",
   "flask-cors>=5.0,<6",
+  "google-auth>=2.30,<3",
   "gunicorn>=22.0,<24",
   "matplotlib>=3.9,<4",
   "mcp>=1.27,<2",
