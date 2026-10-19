@@ -717,21 +717,27 @@ class Notifier:
         self.sent.append({"title": title, "body": body, "priority": priority})
         c = self.cfg
         if c.ntfy_topic:
-            try:
-                self.session.post(
-                    f"{c.ntfy_server}/{c.ntfy_topic}",
-                    data=body.encode("utf-8"),
-                    headers={
-                        "Title": title.encode("ascii", "ignore").decode(),
-                        "Priority": "high" if priority == "high" else "default",
-                        "Tags": "rotating_light"
-                        if priority == "high"
-                        else "chart_with_upwards_trend",
-                    },
-                    timeout=15,
-                ).raise_for_status()
-            except requests.RequestException as exc:
-                log.warning("ntfy push failed: %s", exc)
+            headers = {
+                "Title": title.encode("ascii", "ignore").decode(),
+                "Priority": "high" if priority == "high" else "default",
+                "Tags": "rotating_light" if priority == "high" else "chart_with_upwards_trend",
+            }
+            for attempt in (1, 2):
+                try:
+                    response = self.session.post(
+                        f"{c.ntfy_server}/{c.ntfy_topic}",
+                        data=body.encode("utf-8"),
+                        headers=headers,
+                        timeout=15,
+                    )
+                    if response.status_code == 429 and attempt == 1:
+                        time.sleep(6)  # ntfy.sh per-ip burst limit: one retry after a pause
+                        continue
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as exc:
+                    log.warning("ntfy push failed: %s", exc)
+                    break
         if c.pushover_user and c.pushover_token:
             try:
                 self.session.post(
