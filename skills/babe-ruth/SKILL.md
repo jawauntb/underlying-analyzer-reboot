@@ -94,3 +94,11 @@ a worker on railway (`app/vol_watch.py` in underlying-analyzer-reboot) runs duri
 `rank n/a` means the watcher has under 252 daily samples of its own; it does not guess from realized. `skew25 n/a` means a wing had no quote that passed the filter. a name that is missing from a pass failed a sanity gate (no clean atm quote, iv under 5, or xsp more than 2 points from vix) and was skipped on purpose. vix's own chain prices off the future, so its iv30 near vvix and its deeply negative skew are real, not errors.
 
 when he forwards an alert, answer in the 5-minute format: read the numbers, name the phase (gamma or theta), hand back the trade that fits the kernel.
+
+## the trade watcher (fills, cancels, kernel)
+
+the same railway service also reads his robinhood orders every 30 seconds from 09:25 to 16:15 et (read-only: the client can only get) and pushes `FILL`, `CANCELED`, `KERNEL 50/80/100%`, `DAY DOUBLED`, a 09:31 snapshot and a 16:05 close summary. every fill lands in the google sheet `trade-ledger-fills` (ts_et, order_id, legs, side, qty, price, net, fees, realized_day, kernel_used, note), so the ledger can be filled from the sheet, not from screenshots.
+
+kernel in that feed = realized loss so far + sum of max loss at entry on everything still open (debit paid, or width minus credit on a spread). it is rule 3 made live: when it reads $500 he is done until next week, and the watcher says so. a FILL push is the moment to run the 5-minute format on what just filled; a KERNEL 80% push is the moment to say "no new risk, only closes" in one line.
+
+fees: robinhood's order feed carries no fee field, so the pushes read fees 0.00 until it does. index option fees are real; keep that in mind on the close summary.
