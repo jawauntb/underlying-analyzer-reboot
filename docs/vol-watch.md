@@ -76,12 +76,21 @@ skipped silently; the log says so each pass.
 
 ## Trade watcher (fills, cancels, kernel, ledger)
 
-`app/trade_watch.py` runs as a thread inside the same service once a Robinhood token is
-set (`ROBINHOOD_TOKEN`, optionally `ROBINHOOD_REFRESH_TOKEN` + `ROBINHOOD_DEVICE_TOKEN`
-so a 401 refreshes instead of stopping; `python scripts/robinhood_token.py` prints all
-three after one login on your own machine). Read-only by construction: the HTTP client
-has a `get` method and nothing else, and no code path can place, change or cancel an
-order. The one POST is the OAuth token refresh.
+`app/trade_watch.py` runs as a thread inside the same service once a Robinhood login is
+configured. No computer is needed: set `ROBINHOOD_USERNAME` and `ROBINHOOD_PASSWORD` on
+the vol-watch service in the Railway dashboard (works in a phone browser). On the next
+start the server logs in with robin_stocks, pushes "approve robinhood login" to the
+phone, and waits while Robinhood shows its own device-approval prompt in the Robinhood
+app. After the approval the session is cached on the volume (`/data/.tokens`) and later
+restarts reuse it without another prompt. If Robinhood asks for an SMS or email code
+instead, the server cannot type it and pushes "robinhood login needs a code"; switch
+two-factor to app approval and restart the service. `ROBINHOOD_TOKEN` (plus the refresh
+and device tokens) still works if a token is ever available another way.
+
+What "read-only" means here: Robinhood has no read-only login, so the session itself
+could trade. The code that holds it cannot: the HTTP client has a `get` method and
+nothing else, and no code path places, changes or cancels an order. The one POST is
+the OAuth token refresh.
 
 Between 09:25 and 16:15 ET it polls option and equity orders every
 `TRADE_WATCH_POLL_SECONDS` (30) and:
@@ -97,11 +106,11 @@ Between 09:25 and 16:15 ET it polls option and equity orders every
 - pushes at 50, 80 and 100 percent of `TRADE_WATCH_DAY_BUDGET` (500) and
   `DAY DOUBLED, done for the day` at realized ≥ +$500, each once per day;
 - pushes an opening snapshot at 09:31 ET and a close summary at 16:05 ET;
-- appends every fill and the close summary to `trade_ledger.csv` on the volume and to
-  the Google Sheet (`GOOGLE_SHEET_ID`, columns `ts_et, order_id, legs, side, qty, price,
-  net, fees, realized_day, kernel_used, note`). The sheet write needs
-  `GOOGLE_SERVICE_ACCOUNT_JSON` (the service account's JSON on one line) and the sheet
-  shared with that service account's email as an editor. Without it the CSV still fills.
+- appends every fill and the close summary to `trade_ledger.csv` on the volume (columns
+  `ts_et, order_id, legs, side, qty, price, net, fees, realized_day, kernel_used, note`).
+  The Google Sheet write is optional and off unless `GOOGLE_SERVICE_ACCOUNT_JSON` is
+  set; a Claude chat with the Robinhood connector reads fills from Robinhood directly,
+  so the ledger does not depend on it.
 
 The replay test in `tests/test_trade_watch.py` runs the real 2026-10-19 XSP tape through
 the state machine (fixture under `tests/fixtures/`) and asserts realized −$6 and kernel

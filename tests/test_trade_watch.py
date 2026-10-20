@@ -281,3 +281,48 @@ def test_window_is_0925_to_1615_et() -> None:
 def test_read_only_client_has_no_write_method() -> None:
     assert not any(name in dir(tw.ReadOnlyHTTP) for name in ("post", "put", "patch", "delete"))
     assert not any(name in dir(tw.RobinhoodClient) for name in ("place_order", "cancel", "post"))
+
+
+def test_server_login_pushes_approval_and_reads_cached_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pickle
+    import sys
+    import types
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_login(username: str, _password: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append({"username": username, **kwargs})
+        cache = Path(kwargs["pickle_path"]) / "robinhood.pickle"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(
+            pickle.dumps({"access_token": "A", "refresh_token": "R", "device_token": "D"})
+        )
+        return {}
+
+    rh = types.ModuleType("robin_stocks.robinhood")
+    rh.login = fake_login  # type: ignore[attr-defined]
+    pkg = types.ModuleType("robin_stocks")
+    pkg.robinhood = rh  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "robin_stocks", pkg)
+    monkeypatch.setitem(sys.modules, "robin_stocks.robinhood", rh)
+    cfg = tw.Config(rh_username="u", rh_password="p", session_dir=tmp_path / ".tokens")
+    assert cfg.broker_configured
+    pusher = FakePusher()
+    ready = tw.server_login(cfg, pusher)
+    assert (ready.rh_token, ready.rh_refresh_token, ready.rh_device_token) == ("A", "R", "D")
+    assert pusher.sent[0][0] == "approve robinhood login" and pusher.sent[0][2] == "high"
+    assert calls[0]["pickle_path"] == str(tmp_path / ".tokens")
+    # second start reuses the cache: no new approval prompt
+    tw.server_login(cfg, pusher)
+    assert len(pusher.sent) == 1
+
+    def code_login(*_a: Any, **_k: Any) -> None:
+        raise EOFError
+
+    rh.login = code_login  # type: ignore[attr-defined]
+    fresh = tw.Config(rh_username="u", rh_password="p", session_dir=tmp_path / "other")
+    with pytest.raises(EOFError):
+        tw.server_login(fresh, pusher)
+    assert pusher.sent[-1][0] == "robinhood login needs a code"

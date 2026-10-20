@@ -97,7 +97,7 @@ when he forwards an alert, answer in the 5-minute format: read the numbers, name
 
 ## the trade watcher (fills, cancels, kernel)
 
-the same railway service also reads his robinhood orders every 30 seconds from 09:25 to 16:15 et (read-only: the client can only get) and pushes `FILL`, `CANCELED`, `KERNEL 50/80/100%`, `DAY DOUBLED`, a 09:31 snapshot and a 16:05 close summary. every fill lands in the google sheet `trade-ledger-fills` (ts_et, order_id, legs, side, qty, price, net, fees, realized_day, kernel_used, note), so the ledger can be filled from the sheet, not from screenshots.
+the same railway service also reads his robinhood orders every 30 seconds from 09:25 to 16:15 et (read-only: the client can only get) and pushes `FILL`, `CANCELED`, `KERNEL 50/80/100%`, `DAY DOUBLED`, a 09:31 snapshot and a 16:05 close summary. fills also land in a csv on the server; for the ledger, read fills straight from the robinhood connector, not from screenshots.
 
 kernel in that feed = realized loss so far + sum of max loss at entry on everything still open (debit paid, or width minus credit on a spread). it is rule 3 made live: when it reads $500 he is done until next week, and the watcher says so. a FILL push is the moment to run the 5-minute format on what just filled; a KERNEL 80% push is the moment to say "no new risk, only closes" in one line.
 
@@ -124,3 +124,7 @@ additional context:
 ```
 
 the structure on it is priced off the live chain (45-delta long for the gamma phase, 25-delta credit spread with max loss under $300 for selling time, 50/25 debit spread when options are cheap), ev by the formulas above, theta per day or per hour left on a 0dte. es level crosses (7700 / 7720 / 7740 / 7800 / 7840 / 7880, both directions) get the card too: down with vix quiet is the long put, down with vix already up 8% is the put credit spread, up is the call credit spread. when he forwards a card, coach the card: is the open the right phase, does the close keep the kernel, is the hoping-for specific enough to be wrong.
+
+## no laptop
+
+he has no laptop until he is back in the us. phone only. never hand him a script, a terminal step or a desktop tool; do setup server-side or through a connector, and give him only phone steps (approve a push, paste a value into railway, tap a link).

@@ -88,6 +88,9 @@ class Config:
     rh_token: str | None = None
     rh_refresh_token: str | None = None
     rh_device_token: str | None = None
+    rh_username: str | None = None
+    rh_password: str | None = None
+    session_dir: Path = Path(".tokens")
     ntfy_topic: str | None = None
     ntfy_server: str = "https://ntfy.sh"
 
@@ -110,13 +113,20 @@ class Config:
             rh_token=os.environ.get("ROBINHOOD_TOKEN") or None,
             rh_refresh_token=os.environ.get("ROBINHOOD_REFRESH_TOKEN") or None,
             rh_device_token=os.environ.get("ROBINHOOD_DEVICE_TOKEN") or None,
+            rh_username=os.environ.get("ROBINHOOD_USERNAME") or None,
+            rh_password=os.environ.get("ROBINHOOD_PASSWORD") or None,
+            session_dir=Path(os.environ.get("ROBINHOOD_SESSION_DIR") or data_dir / ".tokens"),
             ntfy_topic=os.environ.get("NTFY_TOPIC") or None,
             ntfy_server=(os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/"),
         )
 
     @property
     def broker_configured(self) -> bool:
-        return bool(self.rh_token or (self.rh_refresh_token and self.rh_device_token))
+        return bool(
+            self.rh_token
+            or (self.rh_refresh_token and self.rh_device_token)
+            or (self.rh_username and self.rh_password)
+        )
 
 
 # ---------------------------------------------------------------------- normalized
@@ -920,19 +930,76 @@ def run_forever(cfg: Config, broker: Broker, pusher: Pusher, ledger: Ledger) -> 
         time.sleep(cfg.poll_seconds)
 
 
+def server_login(cfg: Config, pusher: Pusher) -> Config:
+    """Log in on the server so nothing has to run on his phone or a laptop.
+
+    Uses robin_stocks once, with the session cached on the volume. A fresh login makes
+    Robinhood send an approval prompt to his phone; robin_stocks polls until he taps
+    approve, then the cached access, refresh and device tokens are handed to the GET-only
+    client below. Later restarts reuse the cache without another prompt. If Robinhood
+    asks for an SMS or email code instead of an app approval there is no keyboard here,
+    so it stops and says so on his phone.
+    """
+    import pickle
+    from dataclasses import replace
+
+    import robin_stocks.robinhood as rh
+
+    cache = cfg.session_dir / "robinhood.pickle"
+    if not cache.exists():
+        pusher.push(
+            "approve robinhood login",
+            "open the Robinhood app and approve the new device login. "
+            "it's the alert server, read-only in code. you have about 5 minutes.",
+            "high",
+        )
+    try:
+        rh.login(
+            cfg.rh_username,
+            cfg.rh_password,
+            store_session=True,
+            pickle_path=str(cfg.session_dir),
+        )
+    except EOFError:
+        pusher.push(
+            "robinhood login needs a code",
+            "robinhood asked for an sms or email code, which the server can't type. "
+            "in Robinhood settings, switch two-factor to app approval, then restart the "
+            "vol-watch service in Railway.",
+            "high",
+        )
+        raise
+    with cache.open("rb") as handle:
+        data = pickle.load(handle)  # noqa: S301 - written by robin_stocks on our own volume
+    log.info("robinhood session ready from %s", cache)
+    return replace(
+        cfg,
+        rh_token=str(data.get("access_token") or "") or None,
+        rh_refresh_token=str(data.get("refresh_token") or "") or None,
+        rh_device_token=str(data.get("device_token") or "") or None,
+    )
+
+
 def start_thread(pusher: Pusher) -> threading.Thread | None:
     """Start the trade watcher next to the vol alerts; None when no broker is configured."""
     cfg = Config.from_env()
     if not cfg.broker_configured:
-        log.info("trade watcher idle: no ROBINHOOD_TOKEN configured")
+        log.info("trade watcher idle: no Robinhood login configured")
         return None
-    broker = RobinhoodClient(cfg)
-    ledger = Ledger(cfg)
-    thread = threading.Thread(
-        target=run_forever, args=(cfg, broker, pusher, ledger), name="trade-watch", daemon=True
-    )
+
+    def run() -> None:
+        nonlocal cfg
+        if not cfg.rh_token and cfg.rh_username and cfg.rh_password:
+            try:
+                cfg = server_login(cfg, pusher)
+            except Exception as exc:
+                log.warning("robinhood server login failed: %s", exc)
+                return
+        run_forever(cfg, RobinhoodClient(cfg), pusher, Ledger(cfg))
+
+    thread = threading.Thread(target=run, name="trade-watch", daemon=True)
     thread.start()
-    log.info("trade watcher started: poll %ss, sheet %s", cfg.poll_seconds, cfg.sheet_id or "auto")
+    log.info("trade watcher started: poll %ss", cfg.poll_seconds)
     return thread
 
 
