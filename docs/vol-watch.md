@@ -201,3 +201,24 @@ Fills, cancels, kernel pushes and the futures snapshots stay as plain lines.
 month crosses any level in either direction (`ES < 7740`, `ES > 7800`), once per level
 per `FUTURES_LEVEL_COOLDOWN_MINUTES` (30). The first observation after a deploy only
 records which side price is on.
+
+
+## Commodities, FX and crypto (added 2026-10-20)
+
+Watchlist adds SOXX, DRAM, XBI, MRNA, COPX and COLO to the vol alerts. COLO has four
+expiries and no ATM quote passes the spread filter, so it is skipped every pass.
+SOXX, XBI and COPX usually have no 25-delta wing that passes, so their skew reads n/a
+and the skew signal never fires for them; IV rank and implied-minus-realized still do.
+
+The futures thread also reads, front month only through Yahoo's continuous contracts:
+soybeans `ZS=F`, sugar no. 11 `SB=F`, copper `HG=F`, the Brazilian real future `6L=F`;
+spot FX `BRLUSD=X` (dollars per real) and `ARS=X` (pesos per dollar, the official managed
+rate, not the market blue or MEP rate); and crypto `ETH-USD`, `SOL-USD`. FX and crypto
+changes are measured against the price 24 hours earlier. Crypto is read all weekend; the
+rest only on futures hours.
+
+MOVE thresholds: ZS 1.5%, SB 2.5%, HG 1.5%, 6L 0.75%, BRL 0.75%, ARS 1.5%, ETH 3%,
+SOL 4% (each overridable with `FUTURES_MOVE_<ROOT>`). Cards map HG to COPX, ZS to SOYB,
+SB to CANE, 6L and BRL to EWZ. ETH, SOL and ARS have no listed options here, so their
+cards are spot-only: a down move suggests a `CARD_SPOT_SIZE` (100) spot buy whose size is
+its max loss, an up move suggests nothing new, and ARS is context only.

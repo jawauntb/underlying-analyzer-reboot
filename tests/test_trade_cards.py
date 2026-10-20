@@ -267,3 +267,16 @@ def test_vol_tick_uses_cards_when_given(tmp_path: Path) -> None:
     titles = [s["title"] for s in notifier.sent]
     assert titles == ["drop SPY", "MU card"]  # xsp is gated by |iv30 - vix| > 2
     assert notifier.sent[1]["body"] == "ticker: MU\nOpen: test spread high"
+
+
+def test_spot_only_cards_for_crypto_and_peso() -> None:
+    builder = tc.CardBuilder(FakePicker())  # type: ignore[arg-type]
+    title, body = builder.futures_move("ETH-USD", "ETH", -5.8, {"vix": 18.0})
+    assert title == "MOVE ETH-USD -5.80%"
+    assert "Open: buy $100 ETH spot (max loss $100)" in body and "Theta: 0 (spot)" in body
+    _, body = builder.futures_move("SOL-USD", "SOL", 6.0, {})
+    assert "Open: none: no defined-risk way to fade" in body
+    _, body = builder.futures_move("USD-ARS", "ARS", 2.0, {})
+    assert "official peso rate is managed" in body
+    _, body = builder.futures_move("HG front", "HG", -1.7, {})
+    assert "ticker: COPX" in body

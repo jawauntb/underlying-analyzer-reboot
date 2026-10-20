@@ -203,3 +203,38 @@ def test_contracts_chosen_once_per_day_and_persisted(tmp_path: Path) -> None:
     assert watcher.state.contracts["VIX3M"] == "^VIX3M"
     reloaded = fw.State.load(tmp_path / "f.json")
     assert reloaded.contracts == watcher.state.contracts and reloaded.backwardation is False
+
+
+def test_commodity_fx_crypto_moves_and_crypto_on_weekends(tmp_path: Path) -> None:
+    watcher, source, pusher = _watcher(tmp_path, times=())
+    assert watcher.cfg.move_pct["ETH"] == 3.0 and watcher.cfg.move_pct["HG"] == 1.5
+    source.quotes = {
+        "HG front": fw.Quote("HG front", "HG", 6.50, 6.62, 6.60, 6.61, 6.49, "t"),  # -1.66%
+        "BRL-USD": fw.Quote("BRL-USD", "BRL", 0.1994, 0.2000, 0.1995, 0.1996, 0.1993, "t"),
+        "ETH-USD": fw.Quote("ETH-USD", "ETH", 2300.0, 2441.0, 2440.0, 2442.0, 2299.0, "t"),
+    }
+    source.vx = _vx(17.45, 18.30)
+    watcher.tick(datetime(2026, 10, 20, 15, 0, tzinfo=UTC))
+    titles = sorted(s[0] for s in pusher.sent if s[0].startswith("MOVE"))
+    assert titles == ["MOVE ETH-USD -5.81% in 60m", "MOVE HG front -1.66% in 60m"]
+    assert watcher.state.contracts["BRL-USD"] == "BRLUSD=X"
+    assert watcher.state.contracts["USD-ARS"] == "ARS=X"
+    assert watcher.state.contracts["ZS front"] == "ZS=F"
+    # saturday: futures closed, crypto still read and alerted
+    sat = datetime(2026, 10, 24, 15, 0, tzinfo=UTC)
+    source.quotes = {"SOL-USD": fw.Quote("SOL-USD", "SOL", 98.0, 105.8, 105.0, 105.5, 97.9, "t")}
+    watcher.tick(sat)
+    assert any(s[0].startswith("MOVE SOL-USD") for s in pusher.sent)
+
+
+def test_snapshot_lists_ags_fx_and_crypto() -> None:
+    quotes = {
+        "ZS front": fw.Quote("ZS front", "ZS", 1249.0, 1240.0, None, None, None, "t"),
+        "BRL-USD": fw.Quote("BRL-USD", "BRL", 0.1994, 0.2000, None, None, None, "t"),
+        "USD-ARS": fw.Quote("USD-ARS", "ARS", 1525.0, 1520.0, None, None, None, "t"),
+        "ETH-USD": fw.Quote("ETH-USD", "ETH", 2441.27, 2400.0, None, None, None, "t"),
+    }
+    _, body = fw.render_snapshot(quotes, "08:30 ET")
+    assert "ZS 1,249.00 (+0.73%)" in body
+    assert "BRL-USD 0.1994 (-0.30%) | USD-ARS 1,525.00 (+0.33%) (24h change; ARS is the official" in body
+    assert "ETH 2,441.27 (+1.72%)" in body

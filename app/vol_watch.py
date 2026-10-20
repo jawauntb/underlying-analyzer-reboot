@@ -81,6 +81,12 @@ DEFAULT_WATCHLIST = [
     "EWZ",
     "SOYB",
     "CANE",
+    "SOXX",
+    "DRAM",
+    "XBI",
+    "MRNA",
+    "COPX",
+    "COLO",
 ]
 
 # Yahoo symbols for the names that are indexes rather than listed shares.

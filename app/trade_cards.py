@@ -48,7 +48,19 @@ log = logging.getLogger("trade_cards")
 ET = ZoneInfo("America/New_York")
 
 # Index futures map onto the options products he trades.
-PRODUCT_FOR = {"ES": "XSP", "NQ": "QQQ", "GC": "GLD", "GLD": "GLD", "VX": "XSP"}
+PRODUCT_FOR = {
+    "ES": "XSP",
+    "NQ": "QQQ",
+    "GC": "GLD",
+    "GLD": "GLD",
+    "VX": "XSP",
+    "HG": "COPX",  # copper -> copper miners
+    "ZS": "SOYB",  # soybeans -> soybean fund (thin chain: card may say chain unavailable)
+    "SB": "CANE",  # sugar -> sugar fund (thin chain)
+    "6L": "EWZ",  # real future -> brazil equities
+    "BRL": "EWZ",
+}
+SPOT_ONLY = {"ETH", "SOL", "ARS"}  # no listed options here: spot or nothing
 
 
 @dataclass
@@ -161,6 +173,7 @@ class Structure:
 
 
 CARD_MAX_LOSS = float(os.environ.get("CARD_MAX_LOSS") or 300.0)
+CARD_SPOT_SIZE = float(os.environ.get("CARD_SPOT_SIZE") or 100.0)
 
 
 class ChainPicker:
@@ -405,6 +418,8 @@ class CardBuilder:
     def futures_move(
         self, label: str, root: str, move: float, facts: dict[str, Any]
     ) -> tuple[str, str]:
+        if root in SPOT_ONLY:
+            return self._spot_move(label, root, move, facts)
         product = PRODUCT_FOR.get(root)
         ctx = _ctx(facts)
         if product is None:
@@ -433,6 +448,53 @@ class CardBuilder:
             reason=f"{label} {move:+.2f}% in the last hour",
             context=ctx,
         )
+        return f"MOVE {label} {move:+.2f}%", card.render()
+
+    def _spot_move(
+        self, label: str, root: str, move: float, facts: dict[str, Any]
+    ) -> tuple[str, str]:
+        """Crypto and the peso have no option chain on the list: spot-only cards."""
+        if root == "ARS":
+            card = Card(
+                ticker=label,
+                open="none: no options; the trade, if any, is EWZ or the BRL legs",
+                close="n/a",
+                ev="n/a",
+                timeframe="n/a",
+                theta="n/a",
+                hoping_for="context only",
+                reason=f"{label} {move:+.2f}% in the last hour on the official rate",
+                context=(
+                    "the official peso rate is managed; the market (blue/mep) rate is a "
+                    "different series and can move without this one; " + _ctx(facts)
+                ),
+            )
+            return f"MOVE {label} {move:+.2f}%", card.render()
+        size = CARD_SPOT_SIZE
+        if move < 0:
+            card = Card(
+                ticker=label,
+                open=f"buy ${size:.0f} {root} spot (max loss ${size:.0f})",
+                close=f"sell half on a {abs(move) / 2:.1f}% bounce, rest at the prior hour high",
+                ev="n/a: no options, so no implied odds; the size is the max loss",
+                timeframe="1hr to 1 day",
+                theta="0 (spot)",
+                hoping_for=f"mean reversion of a {move:.1f}% hour",
+                reason=f"{label} {move:+.2f}% in the last hour",
+                context=_ctx(facts),
+            )
+        else:
+            card = Card(
+                ticker=label,
+                open="none: no defined-risk way to fade a crypto spike here",
+                close="if long from lower, sell a third into it",
+                ev="n/a",
+                timeframe="1hr",
+                theta="0 (spot)",
+                hoping_for="context only",
+                reason=f"{label} {move:+.2f}% in the last hour",
+                context=_ctx(facts),
+            )
         return f"MOVE {label} {move:+.2f}%", card.render()
 
     def overnight(self, label: str, change: float, facts: dict[str, Any]) -> tuple[str, str]:

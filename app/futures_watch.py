@@ -50,7 +50,37 @@ BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/129.0 Safari/537.36"
 )
 
-DEFAULT_MOVE_PCT = {"ES": 0.75, "NQ": 0.75, "GC": 1.0, "CL": 2.0, "VX": 8.0, "GLD": 1.0}
+DEFAULT_MOVE_PCT = {
+    "ES": 0.75,
+    "NQ": 0.75,
+    "GC": 1.0,
+    "CL": 2.0,
+    "VX": 8.0,
+    "GLD": 1.0,
+    "ZS": 1.5,
+    "SB": 2.5,
+    "HG": 1.5,
+    "6L": 0.75,
+    "BRL": 0.75,
+    "ARS": 1.5,
+    "ETH": 3.0,
+    "SOL": 4.0,
+}
+
+# Front-month continuous contracts (Yahoo rolls these) for the commodity and currency
+# futures, then spot FX and crypto. Label -> Yahoo symbol; the root is the first word.
+CONTINUOUS = {
+    "ZS front": "ZS=F",  # soybeans
+    "SB front": "SB=F",  # sugar no. 11
+    "HG front": "HG=F",  # copper
+    "6L front": "6L=F",  # brazilian real future
+}
+FX = {
+    "BRL-USD": "BRLUSD=X",  # dollars per real
+    "USD-ARS": "ARS=X",  # pesos per dollar, the official managed rate
+}
+CRYPTO = {"ETH-USD": "ETH-USD", "SOL-USD": "SOL-USD"}
+ROOT_OF = {"BRL-USD": "BRL", "USD-ARS": "ARS", "ETH-USD": "ETH", "SOL-USD": "SOL"}
 
 
 @dataclass(frozen=True)
@@ -216,6 +246,22 @@ class LiveSource:
             end = bars.index[-1]
             window = bars[bars.index >= end - timedelta(minutes=window_minutes)]
             today_et = end.tz_convert(ET).date()
+            if symbol.endswith("=X") or symbol.endswith("-USD"):
+                # fx and crypto have no settle and their daily bars roll at utc midnight,
+                # so "vs settle" is measured against the price 24 hours ago instead
+                day_ago = bars[bars.index <= end - timedelta(hours=24)]
+                ref = float(day_ago.iloc[-1]) if not day_ago.empty else None
+                out[label] = Quote(
+                    label=label,
+                    root=ROOT_OF.get(label, label.split(" ")[0]),
+                    last=float(bars.iloc[-1]),
+                    prev_settle=ref,
+                    hour_ago=float(window.iloc[0]) if len(window) > 1 else None,
+                    hour_high=float(window.max()) if len(window) > 1 else None,
+                    hour_low=float(window.min()) if len(window) > 1 else None,
+                    as_of=end.isoformat(),
+                )
+                continue
             prior = [
                 v
                 for d, v in zip(daily.index, daily, strict=False)
@@ -223,7 +269,7 @@ class LiveSource:
             ]
             out[label] = Quote(
                 label=label,
-                root=label.split(" ")[0],
+                root=ROOT_OF.get(label, label.split(" ")[0]),
                 last=float(bars.iloc[-1]),
                 prev_settle=float(prior[-1]) if prior else None,
                 hour_ago=float(window.iloc[0]) if len(window) > 1 else None,
@@ -310,7 +356,11 @@ def pct(value: float | None, digits: int = 2) -> str:
 
 
 def px(value: float | None, digits: int = 2) -> str:
-    return "n/a" if value is None else f"{value:,.{digits}f}"
+    if value is None:
+        return "n/a"
+    if digits == 2 and abs(value) < 1:
+        digits = 4  # BRL-USD and the real future quote in fractions of a dollar
+    return f"{value:,.{digits}f}"
 
 
 def render_snapshot(quotes: dict[str, Quote], when: str) -> tuple[str, str]:
@@ -355,6 +405,25 @@ def render_snapshot(quotes: dict[str, Quote], when: str) -> tuple[str, str]:
         if len(cl) > 1:
             text += f" | {cl[1].label} {px(cl[1].last)}"
         lines.append(text)
+    ags = [
+        f"{q.root} {px(q.last)} ({pct(q.change_pct)})"
+        for q in quotes.values()
+        if q.label in CONTINUOUS
+    ]
+    if ags:
+        lines.append(" | ".join(ags))
+    fx = [
+        f"{q.label} {px(q.last, 4 if q.root == 'BRL' else 2)} ({pct(q.change_pct)})"
+        for q in quotes.values()
+        if q.label in FX
+    ]
+    if fx:
+        lines.append(" | ".join(fx) + " (24h change; ARS is the official managed rate)")
+    crypto = [
+        f"{q.root} {px(q.last)} ({pct(q.change_pct)})" for q in quotes.values() if q.label in CRYPTO
+    ]
+    if crypto:
+        lines.append(" | ".join(crypto) + " (24h change)")
     return f"futures {when}", "\n".join(lines) if lines else "no futures quotes"
 
 
@@ -428,6 +497,9 @@ class Watcher:
         symbols["GLD"] = "GLD"
         symbols["VIX"] = "^VIX"
         symbols["VIX3M"] = "^VIX3M"
+        symbols.update(CONTINUOUS)
+        symbols.update(FX)
+        symbols.update(CRYPTO)
         self.state.day = today.isoformat()
         self.state.contracts = symbols
         self.state.snapshots_sent = [
@@ -465,27 +537,33 @@ class Watcher:
             )
         return out
 
-    def quotes(self, now: datetime) -> dict[str, Quote]:
+    def quotes(self, now: datetime, crypto_only: bool = False) -> dict[str, Quote]:
         today = now.astimezone(ET).date()
         symbols = self._contracts(today)
+        if crypto_only:
+            symbols = {k: v for k, v in symbols.items() if k in CRYPTO}
         quotes = self.source.yahoo_quotes(symbols, self.cfg.window_minutes)
         ordered: dict[str, Quote] = {}
         for label in symbols:
             if label in quotes:
                 ordered[label] = quotes[label]
-        ordered.update(self._vx(now, today))
+        if not crypto_only:
+            ordered.update(self._vx(now, today))
         return ordered
 
     def tick(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        """One pass. Outside futures hours only crypto is read (it trades all weekend)."""
         now = now or datetime.now(UTC)
         local = now.astimezone(ET)
-        quotes = self.quotes(now)
+        crypto_only = not futures_open(now)
+        quotes = self.quotes(now, crypto_only=crypto_only)
         events: list[dict[str, Any]] = []
-        events.extend(self._levels(quotes, now))
         events.extend(self._moves(quotes, now))
-        events.extend(self._term(quotes))
-        events.extend(self._overnight(quotes, now))
-        events.extend(self._snapshot(quotes, local))
+        if not crypto_only:
+            events.extend(self._levels(quotes, now))
+            events.extend(self._term(quotes))
+            events.extend(self._overnight(quotes, now))
+            events.extend(self._snapshot(quotes, local))
         self.state.save(self.cfg.state_path)
         return events
 
@@ -629,12 +707,8 @@ class Watcher:
 def run_forever(cfg: Config, source: Source, pusher: Pusher, cards: Any = None) -> None:
     watcher = Watcher(cfg, source, pusher, cards)
     while True:
-        now = datetime.now(UTC)
-        if not futures_open(now):
-            time.sleep(60)
-            continue
         try:
-            watcher.tick(now)
+            watcher.tick(datetime.now(UTC))  # crypto-only outside futures hours
         except Exception:
             log.exception("futures tick failed")
         time.sleep(cfg.tick_minutes * 60)
