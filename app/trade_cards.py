@@ -172,7 +172,7 @@ class Structure:
         )
 
 
-CARD_MAX_LOSS = float(os.environ.get("CARD_MAX_LOSS") or 300.0)
+CARD_MAX_LOSS = float(os.environ.get("CARD_MAX_LOSS") or 700.0)  # kernel rule 5
 CARD_SPOT_SIZE = float(os.environ.get("CARD_SPOT_SIZE") or 100.0)
 
 
@@ -263,7 +263,7 @@ class ChainPicker:
             else:
                 break
         if best is None:
-            raise RuntimeError(f"{ticker}: no wing keeps max loss under ${CARD_MAX_LOSS:.0f}")
+            raise RuntimeError(f"narrowest spread is over the ${CARD_MAX_LOSS:.0f} max-loss rule")
         return Structure(ticker, expiry, days, kind, best, short, spot)
 
     def debit_spread(self, ticker: str, kind: str, target_days: float) -> Structure:
@@ -328,10 +328,17 @@ class CardBuilder:
 
     def _try(self, fn: Any, *args: Any) -> Structure | None:
         try:
+            self.last_error = ""
             return fn(*args)
         except Exception as exc:
             log.warning("card chain lookup failed: %s", exc)
+            self.last_error = str(exc).split(": ", 1)[-1]
             return None
+
+    def _na(self) -> str:
+        """Open line when no structure fits: say why, so n/a is never a mystery."""
+        reason = getattr(self, "last_error", "") or "chain unavailable"
+        return f"n/a ({reason})"
 
     # ---- futures-driven cards -------------------------------------------------
     def es_level(
@@ -346,7 +353,7 @@ class CardBuilder:
             s = self._try(self.picker.long_option, product, "put", 0, 0.45)
             card = Card(
                 ticker=product,
-                open=s.label() if s else "n/a (chain unavailable)",
+                open=s.label() if s else self._na(),
                 close=(
                     "sell the next strike down against it once ES is 20 lower (zero-cost spread); "
                     "out by 15:30 either way"
@@ -366,7 +373,7 @@ class CardBuilder:
             s = self._try(self.picker.credit_spread, product, "put", 0, 0.25)
             card = Card(
                 ticker=product,
-                open=s.label() if s else "n/a (chain unavailable)",
+                open=s.label() if s else self._na(),
                 close="buy back at 50% of credit or let it expire; stop if the short strike trades",
                 ev=s.ev_line() if s else "n/a",
                 timeframe="today",
@@ -382,7 +389,7 @@ class CardBuilder:
         s = self._try(self.picker.credit_spread, product, "call", 0, 0.25)
         card = Card(
             ticker=product,
-            open=s.label() if s else "n/a (chain unavailable)",
+            open=s.label() if s else self._na(),
             close="buy back at 50% of credit; stop if the short strike trades",
             ev=s.ev_line() if s else "n/a",
             timeframe="today",
@@ -398,7 +405,7 @@ class CardBuilder:
         s = self._try(self.picker.credit_spread, product, "put", 0, 0.25)
         card = Card(
             ticker=product,
-            open=s.label() if s else "n/a (chain unavailable)",
+            open=s.label() if s else self._na(),
             close=(
                 "buy back at 50% of credit; if long puts from before, "
                 "sell this short strike against them instead"
@@ -439,7 +446,7 @@ class CardBuilder:
         s = self._try(self.picker.credit_spread, product, kind, 0 if product == "XSP" else 7, 0.25)
         card = Card(
             ticker=product,
-            open=s.label() if s else "n/a (chain unavailable)",
+            open=s.label() if s else self._na(),
             close="buy back at 50% of credit; stop if the short strike trades",
             ev=s.ev_line() if s else "n/a",
             timeframe="today" if product == "XSP" else "1wk",
@@ -502,7 +509,7 @@ class CardBuilder:
         s = self._try(self.picker.credit_spread, "XSP", kind, 0, 0.25)
         card = Card(
             ticker="XSP",
-            open=f"at the open: {s.label()}" if s else "n/a (chain unavailable)",
+            open=f"at the open: {s.label()}" if s else self._na(),
             close="buy back at 50% of credit; stop if the short strike trades",
             ev=s.ev_line() if s else "n/a",
             timeframe="today",
@@ -520,7 +527,7 @@ class CardBuilder:
             s = self._try(self.picker.credit_spread, "XSP", "put", 7, 0.25)
             card = Card(
                 ticker="XSP",
-                open=s.label() if s else "n/a (chain unavailable)",
+                open=s.label() if s else self._na(),
                 close="buy back at 50% of credit, or when the curve goes back to contango",
                 ev=s.ev_line() if s else "n/a",
                 timeframe="1wk",
@@ -570,7 +577,7 @@ class CardBuilder:
             }[signal]
             card = Card(
                 ticker=ticker,
-                open=s.label() if s else "n/a (chain unavailable)",
+                open=s.label() if s else self._na(),
                 close="buy back at 50% of credit; stop if the short strike trades",
                 ev=s.ev_line() if s else "n/a",
                 timeframe="today" if days == 0 else "1mo",
@@ -590,7 +597,7 @@ class CardBuilder:
             return title, card.render()
         s = self._try(self.picker.debit_spread, ticker, "call", days)
         p = self._try(self.picker.debit_spread, ticker, "put", days)
-        open_text = "n/a (chain unavailable)"
+        open_text = self._na()
         if s or p:
             open_text = " or ".join(x.label() for x in (s, p) if x) + " on your read"
         card = Card(

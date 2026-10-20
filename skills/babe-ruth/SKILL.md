@@ -123,7 +123,7 @@ Reason:
 additional context:
 ```
 
-the structure on it is priced off the live chain (45-delta long for the gamma phase, 25-delta credit spread with max loss under $300 for selling time, 50/25 debit spread when options are cheap), ev by the formulas above, theta per day or per hour left on a 0dte. es level crosses (7700 / 7720 / 7740 / 7800 / 7840 / 7880, both directions) get the card too: down with vix quiet is the long put, down with vix already up 8% is the put credit spread, up is the call credit spread. when he forwards a card, coach the card: is the open the right phase, does the close keep the kernel, is the hoping-for specific enough to be wrong.
+the structure on it is priced off the live chain (45-delta long for the gamma phase, 25-delta credit spread with max loss under $700 (rule 5) for selling time, 50/25 debit spread when options are cheap), ev by the formulas above, theta per day or per hour left on a 0dte. es level crosses (7700 / 7720 / 7740 / 7800 / 7840 / 7880, both directions) get the card too: down with vix quiet is the long put, down with vix already up 8% is the put credit spread, up is the call credit spread. when he forwards a card, coach the card: is the open the right phase, does the close keep the kernel, is the hoping-for specific enough to be wrong.
 
 ## no laptop
 

@@ -169,13 +169,13 @@ additional context:
 The structure on the card is priced off the live chain through the same quote filter
 as the vol watcher (bid > 0, relative spread under 25%, IV solved from the mid on the
 parity forward): a 45-delta long for the gamma phase, a 25-delta credit spread with the
-widest wing that keeps max loss under `CARD_MAX_LOSS` (300) for the premium-selling
+widest wing that keeps max loss under `CARD_MAX_LOSS` (700, kernel rule 5) for the premium-selling
 cases, a 50/25-delta debit spread when options are cheap. EV follows the babe-ruth
 formulas (credit spread: `credit × p(otm) − (width − credit) × p(itm)` with the short
 delta as p(itm); long option: debit, breakeven, delta; debit spread: needs
 `p(win) > debit / width`). Theta is Black-Scholes per day, or premium over hours left
 for a same-day contract. When the chain is unavailable the card still goes out with
-`Open: n/a (chain unavailable)` and the reason intact. Context carries VIX, the VX
+`Open: n/a (<why>)`, for example `n/a (narrowest spread is over the $700 max-loss rule)`, with the reason line intact. Context carries VIX, the VX
 front/back and curve shape, ES vs settle, and today's kernel when the trade watcher has
 state.
 

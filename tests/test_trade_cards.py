@@ -196,7 +196,7 @@ def test_es_level_cards_pick_the_phase() -> None:
     # chain down: the card still goes out with the reason intact
     down = tc.CardBuilder(FakePicker(fail=True))  # type: ignore[arg-type]
     title, body = down.es_level(7740, "below", 7738.5, calm)
-    assert "Open: n/a (chain unavailable)" in body and "Reason: ES crossed below 7740" in body
+    assert "Open: n/a (chain down)" in body and "Reason: ES crossed below 7740" in body
 
 
 def test_vol_signal_cards_sell_rich_and_buy_cheap() -> None:
