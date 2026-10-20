@@ -4,12 +4,78 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from app import futures_watch as fw
 from app import trade_cards as tc
 from app import vol_watch as vw
-from tests.test_futures_watch import FakePusher, FakeSource, _q, _vx
+
+
+def _q(label: str, last: float, settle: float, high: float, low: float, ago: float) -> fw.Quote:
+    return fw.Quote(label, label.split(" ")[0], last, settle, ago, high, low, "t")
+
+
+def _vx(front: float, back: float) -> list[dict[str, Any]]:
+    return [
+        {
+            "symbol": "VX/V6",
+            "expiration": "10/21/2026",
+            "last_price": front,
+            "prev_settlement": 19.9,
+        },
+        {
+            "symbol": "VX/X6",
+            "expiration": "11/18/2026",
+            "last_price": back,
+            "prev_settlement": 19.2,
+        },
+    ]
+
+
+class FakeSource:
+    def __init__(self) -> None:
+        self.quotes: dict[str, fw.Quote] = {}
+        self.vx: list[dict[str, Any]] = []
+
+    def yahoo_quotes(self, symbols: dict[str, str], window_minutes: int) -> dict[str, fw.Quote]:
+        del symbols, window_minutes
+        return dict(self.quotes)
+
+    def vx_quotes(self) -> list[dict[str, Any]]:
+        return list(self.vx)
+
+
+class FakePusher:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str, str]] = []
+
+    def push(self, title: str, body: str, priority: str = "default", _payload: Any = None) -> None:
+        self.sent.append((title, body, priority))
+
+
+class _FakeData:
+    """Vol-watch data stub: tame daily closes, a drop on the intraday tape."""
+
+    def daily_closes(self, _ticker: str, _period: str = "2y") -> pd.Series:
+        return pd.Series([100 + (i % 7) * 0.8 for i in range(300)])
+
+    def intraday_closes(self, ticker: str) -> pd.Series:
+        start = datetime(2026, 10, 16, 14, 0, tzinfo=UTC)
+        idx = pd.DatetimeIndex([start + timedelta(minutes=5 * i) for i in range(6)])
+        if ticker == "VIX":
+            return pd.Series([18, 18, 19, 20, 20.5, 20.6], index=idx)
+        return pd.Series([600, 601, 599, 597, 595, 595], index=idx)
+
+    def vix_level(self) -> float:
+        return 18.0
+
+    def chain_metrics(self, ticker: str, _spot: float, _today: Any) -> dict[str, Any]:
+        iv = 25.0 if ticker == "XSP" else 45.0
+        return {"iv30": iv, "skew": 3.0, "expiries": ["2026-11-20"], "samples": [(30.0, iv)]}
+
+    def zero_dte(self, _ticker: str, _spot: float, _today: Any) -> None:
+        return None
 
 
 def _quote(strike: float, mid: float, iv: float, delta: float) -> vw.Quote:
@@ -183,8 +249,6 @@ def test_futures_watcher_es_levels_cross_both_ways_with_cooldown(tmp_path: Path)
 
 
 def test_vol_tick_uses_cards_when_given(tmp_path: Path) -> None:
-    from tests.test_vol_watch import _FakeData
-
     class Cards:
         def vol_signal(
             self, ticker: str, signal: str, band: str, _m: dict[str, Any]
@@ -199,7 +263,7 @@ def test_vol_tick_uses_cards_when_given(tmp_path: Path) -> None:
     cfg = vw.Config(watchlist=["XSP", "MU"], state_path=tmp_path / "s.json")
     notifier = vw.Notifier(cfg)
     now = datetime(2026, 10, 16, 14, 30, tzinfo=UTC)
-    vw.tick(cfg, vw.State(), _FakeData(drop=True), notifier, now=now, cards=Cards())  # type: ignore[arg-type]
+    vw.tick(cfg, vw.State(), _FakeData(), notifier, now=now, cards=Cards())  # type: ignore[arg-type]
     titles = [s["title"] for s in notifier.sent]
     assert titles == ["drop SPY", "MU card"]  # xsp is gated by |iv30 - vix| > 2
     assert notifier.sent[1]["body"] == "ticker: MU\nOpen: test spread high"
