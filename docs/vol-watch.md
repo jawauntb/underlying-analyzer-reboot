@@ -205,10 +205,12 @@ records which side price is on.
 
 ## Commodities, FX and crypto (added 2026-10-20)
 
-Watchlist adds SOXX, DRAM, XBI, MRNA, COPX and COLO to the vol alerts. COLO has four
+Watchlist adds SOXX, DRAM, XBI, MRNA, COPX, COLO and SDGR to the vol alerts. COLO has four
 expiries and no ATM quote passes the spread filter, so it is skipped every pass.
 SOXX, XBI and COPX usually have no 25-delta wing that passes, so their skew reads n/a
 and the skew signal never fires for them; IV rank and implied-minus-realized still do.
+SDGR has listed monthly options at Robinhood, but Yahoo returns no expiries for it, so the
+free feed skips it every pass until Yahoo carries the chain.
 
 The futures thread also reads, front month only through Yahoo's continuous contracts:
 soybeans `ZS=F`, sugar no. 11 `SB=F`, copper `HG=F`, the Brazilian real future `6L=F`;

@@ -87,6 +87,7 @@ DEFAULT_WATCHLIST = [
     "MRNA",
     "COPX",
     "COLO",
+    "SDGR",
 ]
 
 # Yahoo symbols for the names that are indexes rather than listed shares.
