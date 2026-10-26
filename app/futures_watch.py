@@ -38,6 +38,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from app.event_gate import EventGate
+
 log = logging.getLogger("futures_watch")
 
 ET = ZoneInfo("America/New_York")
@@ -458,11 +460,19 @@ def cash_session(now: datetime) -> bool:
 
 
 class Watcher:
-    def __init__(self, cfg: Config, source: Source, pusher: Pusher, cards: Any = None) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        source: Source,
+        pusher: Pusher,
+        cards: Any = None,
+        gate: EventGate | None = None,
+    ) -> None:
         self.cfg = cfg
         self.source = source
         self.pusher = pusher
         self.cards = cards
+        self.gate = gate or EventGate(None)
         self.state = State.load(cfg.state_path)
 
     def _facts(self, quotes: dict[str, Quote]) -> dict[str, Any]:
@@ -604,6 +614,7 @@ class Watcher:
             card = self._card("es_level", level, side, es.last, self._facts(quotes))
             if card:
                 title, body = card
+                title, body = self.gate.apply(title, body, now, "XSP", "ES")
             self.pusher.push(title, body, "high")
             events.append({"kind": "level", "level": level, "side": side})
         return events
@@ -629,6 +640,8 @@ class Watcher:
             card = self._card("futures_move", q.label, q.root, move, self._facts(quotes))
             if card:
                 title, body = card
+                # the card's own "ticker:" line names the product (6L -> EWZ); q.root is the driver
+                title, body = self.gate.apply(title, body, now, q.root, q.root, move, q.last)
             self.pusher.push(title, body, "high" if q.root in ("ES", "NQ", "VX") else "default")
             events.append({"kind": "move", "label": q.label, "move": move})
         return events
@@ -705,7 +718,7 @@ class Watcher:
 
 
 def run_forever(cfg: Config, source: Source, pusher: Pusher, cards: Any = None) -> None:
-    watcher = Watcher(cfg, source, pusher, cards)
+    watcher = Watcher(cfg, source, pusher, cards, EventGate.from_env())
     while True:
         try:
             watcher.tick(datetime.now(UTC))  # crypto-only outside futures hours
