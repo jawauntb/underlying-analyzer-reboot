@@ -260,3 +260,53 @@ def test_back_month_never_drives_es_levels_or_moves(tmp_path: Path) -> None:
     src.z6 = 7721.0
     watcher.tick(at + timedelta(minutes=5))  # a real front-month cross still fires
     assert pusher.sent == ["ES > 7720"]
+
+
+def test_a_quote_with_a_wrong_settle_does_not_cross_a_level(tmp_path: Path) -> None:
+    """2026-11-05 05:12 UTC: one read gave ES Z6 7,725 vs settle ~7,597; the ticks around it had
+    Z6 near 7,702 vs 7,720. It pushed a false 'ES > 7720'."""
+
+    class Src:
+        def __init__(self) -> None:
+            self.q = (7702.0, 7720.6)
+
+        def yahoo_quotes(self, *_a: Any) -> dict[str, fw.Quote]:
+            last, settle = self.q
+            return {"ES Z6": fw.Quote("ES Z6", "ES", last, settle, last, last + 1, last - 1, "t")}
+
+        def vx_quotes(self) -> list[dict[str, Any]]:
+            return []
+
+    class Pusher:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def push(self, title: str, *_a: Any) -> None:
+            self.sent.append(title)
+
+    cfg = fw.Config(snapshot_times=(), state_path=tmp_path / "f.json", es_levels=(7720.0,))
+    src, pusher = Src(), Pusher()
+    watcher = fw.Watcher(cfg, src, pusher)
+    at = datetime(2026, 11, 5, 5, 2, tzinfo=UTC)  # 00:02 ET, outside the cash session
+    watcher.tick(at)
+    src.q = (7725.0, 7596.6)  # the bad read
+    watcher.tick(at + timedelta(minutes=10))
+    assert pusher.sent == []
+    src.q = (7701.0, 7720.6)
+    watcher.tick(at + timedelta(minutes=15))
+    src.q = (7721.0, 7720.6)  # a real cross on a consistent quote still fires
+    watcher.tick(at + timedelta(minutes=20))
+    assert pusher.sent == ["ES > 7720"]
+
+
+def test_three_disagreeing_ticks_adopt_the_new_settle(tmp_path: Path) -> None:
+    cfg = fw.Config(snapshot_times=(), state_path=tmp_path / "f.json", es_levels=(7720.0,))
+    watcher = fw.Watcher(cfg, object(), object())  # type: ignore[arg-type]
+    at = datetime(2026, 11, 5, 5, 0, tzinfo=UTC)
+    good = {"ES Z6": fw.Quote("ES Z6", "ES", 7702.0, 7720.6, 7702.0, 7703.0, 7701.0, "t")}
+    bad_first = {"ES Z6": fw.Quote("ES Z6", "ES", 7725.0, 7596.6, 7725.0, 7726.0, 7724.0, "t")}
+    assert watcher._es_trusted(bad_first, at)  # first read of the day is taken as is
+    assert not watcher._es_trusted(good, at)
+    assert not watcher._es_trusted(good, at)
+    assert watcher._es_trusted(good, at)  # the third adopts it
+    assert watcher.state.es_settle[2] == 7720.6

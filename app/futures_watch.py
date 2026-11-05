@@ -85,6 +85,8 @@ CRYPTO = {"ETH-USD": "ETH-USD", "SOL-USD": "SOL-USD"}
 # Roots that are one market: they share a cooldown and fire one MOVE between them. 6L is the
 # real future and BRL-USD the spot rate; 8 of 11 BRL pushes repeated a 6L push within 30 min.
 MOVE_ALIAS = {"BRL": "6L"}
+# a prior settle that moves more than this within one ET day marks the quote as bad data
+SETTLE_TOLERANCE = 0.001
 ROOT_OF = {"BRL-USD": "BRL", "USD-ARS": "ARS", "ETH-USD": "ETH", "SOL-USD": "SOL"}
 
 
@@ -329,6 +331,8 @@ class State:
     vx_history: dict[str, list[list[Any]]] = field(default_factory=dict)  # label -> [[iso, px]]
     es_side: dict[str, str] = field(default_factory=dict)  # "7740" -> above | below
     es_contract: str = ""  # the contract es_side was measured on; a new one resets it silently
+    es_settle: list[Any] = field(default_factory=list)  # [ET date, label, prior settle] trusted
+    es_settle_rejects: int = 0  # consecutive ticks whose settle disagreed with es_settle
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -346,6 +350,8 @@ class State:
         state.vx_history = {k: list(v) for k, v in (raw.get("vx_history") or {}).items()}
         state.es_side = dict(raw.get("es_side") or {})
         state.es_contract = str(raw.get("es_contract") or "")
+        state.es_settle = list(raw.get("es_settle") or [])
+        state.es_settle_rejects = int(raw.get("es_settle_rejects") or 0)
         return state
 
     def save(self, path: Path) -> None:
@@ -575,9 +581,12 @@ class Watcher:
         events: list[dict[str, Any]] = []
         events.extend(self._moves(quotes, now))
         if not crypto_only:
-            events.extend(self._levels(quotes, now))
+            trusted = self._es_trusted(quotes, now)
+            if trusted:
+                events.extend(self._levels(quotes, now))
             events.extend(self._term(quotes))
-            events.extend(self._overnight(quotes, now))
+            if trusted:
+                events.extend(self._overnight(quotes, now))
             events.extend(self._snapshot(quotes, local))
         self.state.save(self.cfg.state_path)
         return events
@@ -593,6 +602,35 @@ class Watcher:
             return None
         y, m = contract_months(root, now.astimezone(ET).date())[0]
         return contract_label(root, y, m)
+
+    def _es_trusted(self, quotes: dict[str, Quote], now: datetime) -> bool:
+        """False when the front ES quote's prior settle disagrees with the one seen earlier today.
+
+        A contract's prior settle does not change within an ET day. On 2026-11-05 05:12 UTC one
+        Yahoo read gave ES Z6 7,725 against a settle of about 7,597 (+1.69%), while every tick
+        around it had Z6 near 7,702 against 7,720; it pushed a false "ES > 7720". A tick like that
+        skips the level and overnight checks. Three disagreeing ticks in a row adopt the new
+        settle, so a bad first read of the day cannot block the rest of it.
+        """
+        es = quotes.get(self._front("ES", now) or "")
+        if es is None or not es.prev_settle:
+            return True
+        day = now.astimezone(ET).date().isoformat()
+        held = self.state.es_settle
+        same = len(held) == 3 and held[0] == day and held[1] == es.label and float(held[2])
+        if same and abs(es.prev_settle / float(held[2]) - 1.0) > SETTLE_TOLERANCE:
+            self.state.es_settle_rejects += 1
+            if self.state.es_settle_rejects < 3:
+                log.warning(
+                    "%s settle %.2f disagrees with %.2f seen earlier today; skipping levels",
+                    es.label,
+                    es.prev_settle,
+                    float(held[2]),
+                )
+                return False
+        self.state.es_settle = [day, es.label, es.prev_settle]
+        self.state.es_settle_rejects = 0
+        return True
 
     def _cooled(self, key: str, now: datetime) -> bool:
         last = self.state.last_alert.get(key)
