@@ -229,6 +229,9 @@ class State:
     last_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
     pending: dict[str, list[Any]] = field(default_factory=dict)  # "TSLA:spread" -> [band, passes]
     iv_suspect: dict[str, float] = field(default_factory=dict)  # tkr -> iv30 held back one pass
+    # the old rule, run in shadow so the ledger shows what it would have pushed
+    legacy_signals: dict[str, str] = field(default_factory=dict)
+    legacy_last_alert: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -248,6 +251,8 @@ class State:
         state.last_metrics = dict(raw.get("last_metrics") or {})
         state.pending = {k: list(v) for k, v in (raw.get("pending") or {}).items()}
         state.iv_suspect = {k: float(v) for k, v in (raw.get("iv_suspect") or {}).items()}
+        state.legacy_signals = dict(raw.get("legacy_signals") or {})
+        state.legacy_last_alert = dict(raw.get("legacy_last_alert") or {})
         return state
 
     def save(self, path: Path) -> None:
@@ -576,6 +581,34 @@ def crossings(
     return alerts
 
 
+def legacy_candidates(
+    ticker: str, metrics: dict[str, Any], state: State, cfg: Config, now: datetime
+) -> list[dict[str, Any]]:
+    """What the pre-2026-11-05 rule would have pushed this pass: any band change, a 30-minute
+    dedupe, no confirmation, no exit bands. Shadow only, kept in its own state, never pushed;
+    the ledger's candidate rows let a rescore compare kept and removed alerts."""
+    out: list[dict[str, Any]] = []
+    skew = metrics.get("skew")
+    checks = {
+        "spread": classify(metrics.get("spread"), cfg.spread_rich, cfg.spread_cheap),
+        "skew": "unknown" if skew is None else ("high" if skew >= cfg.skew_spike else "mid"),
+    }
+    for name, band in checks.items():
+        key = f"{ticker}:{name}"
+        prev = state.legacy_signals.get(key)
+        state.legacy_signals[key] = band
+        if band in ("unknown", "mid") or prev == band:
+            continue
+        last = state.legacy_last_alert.get(key)
+        if last and now - datetime.fromisoformat(last) < timedelta(
+            minutes=cfg.alert_cooldown_minutes
+        ):
+            continue
+        state.legacy_last_alert[key] = now.isoformat()
+        out.append({"ticker": ticker, "signal": name, "band": band})
+    return out
+
+
 def fast_drop(
     proxy_bars: pd.Series,
     vix_bars: pd.Series,
@@ -836,23 +869,36 @@ class Notifier:
         payload: dict[str, Any] | None = None,
     ) -> None:
         self.sent.append({"title": title, "body": body, "priority": priority})
-        c = self.cfg
         log.info("push: %s", title)
-        if c.push_ledger is not None:
-            # the record of what reached the phone; the 2026-11-04 backtest had to rebuild it
-            try:
-                c.push_ledger.parent.mkdir(parents=True, exist_ok=True)
-                with c.push_ledger.open("a") as fh:
-                    row = {
-                        "ts": datetime.now(UTC).isoformat(),
-                        "title": title,
-                        "body": body,
-                        "priority": priority,
-                        "payload": payload or {},
-                    }
-                    fh.write(json.dumps(row, default=str, sort_keys=True) + "\n")
-            except OSError as exc:
-                log.warning("push ledger write failed: %s", exc)
+        # the record of what reached the phone; the 2026-11-04 backtest had to rebuild it
+        self.record(
+            {
+                "kind": "push",
+                "title": title,
+                "body": body,
+                "priority": priority,
+                "payload": payload or {},
+            }
+        )
+        self._deliver(title, body, priority, payload)
+
+    def record(self, row: dict[str, Any]) -> None:
+        """Append one row to the ledger (push, candidate or held_iv). Never raises."""
+        c = self.cfg
+        if c.push_ledger is None:
+            return
+        try:
+            c.push_ledger.parent.mkdir(parents=True, exist_ok=True)
+            with c.push_ledger.open("a") as fh:
+                full = {"ts": datetime.now(UTC).isoformat(), **row}
+                fh.write(json.dumps(full, default=str, sort_keys=True) + "\n")
+        except OSError as exc:
+            log.warning("push ledger write failed: %s", exc)
+
+    def _deliver(
+        self, title: str, body: str, priority: str, payload: dict[str, Any] | None
+    ) -> None:
+        c = self.cfg
         if c.ntfy_topic:
             headers = {
                 "Title": title.encode("ascii", "ignore").decode(),
@@ -997,6 +1043,8 @@ def run_chain_pass(
             metrics = compute_metrics(ticker, data, state, cfg, today, vix_level)
         except SkipTicker as exc:
             log.info("skip %s", exc)
+            if "jumped" in str(exc):
+                notifier.record({"kind": "held_iv", "ticker": ticker, "reason": str(exc)})
             continue
         except Exception as exc:  # one bad name must not stop the pass
             log.warning("%s: chain metrics failed, skipping: %s", ticker, exc)
@@ -1016,7 +1064,12 @@ def run_chain_pass(
             "n/a" if metrics.get("rv_fc") is None else metrics["rv_fc"],
             f" | {zero_dte_line(metrics['zero_dte'])}" if ticker in ZERO_DTE else "",
         )
-        for alert in crossings(ticker, metrics, state, cfg, now):
+        pushed = crossings(ticker, metrics, state, cfg, now)
+        sent = {(a["signal"], a["band"]) for a in pushed}
+        for cand in legacy_candidates(ticker, metrics, state, cfg, now):
+            cand["pushed_now"] = (cand["signal"], cand["band"]) in sent
+            notifier.record({"kind": "candidate", **cand, "metrics": metrics})
+        for alert in pushed:
             title, body, prio = render_signal(alert)
             if cards is not None:
                 try:
@@ -1135,6 +1188,9 @@ def main(argv: list[str] | None = None) -> int:
     cards = CardBuilder(ChainPicker(data))
     start_trades(notifier)
     start_futures(notifier, cards)
+    from app.ledger_sync import start_thread as start_ledger_sync
+
+    start_ledger_sync(cfg.push_ledger)
     while True:
         now = datetime.now(UTC)
         if is_market_open(now):
