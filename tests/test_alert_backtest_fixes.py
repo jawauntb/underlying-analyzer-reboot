@@ -221,3 +221,42 @@ def test_6l_and_brl_fire_one_move_between_them(tmp_path: Path) -> None:
     watcher.tick(datetime(2026, 10, 27, 13, 0, tzinfo=UTC))
     watcher.tick(datetime(2026, 10, 27, 13, 30, tzinfo=UTC))
     assert pusher.sent == ["MOVE 6L front +1.68% in 60m"]
+
+
+def test_back_month_never_drives_es_levels_or_moves(tmp_path: Path) -> None:
+    """2026-11-05 04:36 UTC: after a restart the sorted state put ES H7 first and pushed false
+    'ES > 7720' and 'ES > 7740' with the front (Z6) at 7,703. H7 was 7,778."""
+
+    class Src:
+        def __init__(self) -> None:
+            self.z6 = 7703.5
+
+        def yahoo_quotes(self, *_a: Any) -> dict[str, fw.Quote]:
+            return {  # back month first, as the sorted state file orders them
+                "ES H7": fw.Quote("ES H7", "ES", 7778.25, 7700.0, 7700.0, 7779.0, 7700.0, "t"),
+                "ES Z6": fw.Quote("ES Z6", "ES", self.z6, 7690.0, 7700.0, 7704.0, 7699.0, "t"),
+            }
+
+        def vx_quotes(self) -> list[dict[str, Any]]:
+            return []
+
+    class Pusher:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def push(self, title: str, *_a: Any) -> None:
+            self.sent.append(title)
+
+    state_path = tmp_path / "f.json"
+    stale = fw.State(es_side={"7700": "below", "7720": "below", "7740": "below"})
+    stale.save(state_path)  # written by the old code, which had no es_contract
+    cfg = fw.Config(snapshot_times=(), state_path=state_path, es_levels=(7700.0, 7720.0, 7740.0))
+    src, pusher = Src(), Pusher()
+    watcher = fw.Watcher(cfg, src, pusher)
+    at = datetime(2026, 11, 5, 4, 36, tzinfo=UTC)
+    watcher.tick(at)  # first run on the new code: records sides on Z6, pushes nothing
+    assert pusher.sent == [] and watcher.state.es_contract == "ES Z6"
+    assert watcher.state.es_side == {"7700": "above", "7720": "below", "7740": "below"}
+    src.z6 = 7721.0
+    watcher.tick(at + timedelta(minutes=5))  # a real front-month cross still fires
+    assert pusher.sent == ["ES > 7720"]

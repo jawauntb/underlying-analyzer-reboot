@@ -328,6 +328,7 @@ class State:
     backwardation: bool | None = None
     vx_history: dict[str, list[list[Any]]] = field(default_factory=dict)  # label -> [[iso, px]]
     es_side: dict[str, str] = field(default_factory=dict)  # "7740" -> above | below
+    es_contract: str = ""  # the contract es_side was measured on; a new one resets it silently
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -344,6 +345,7 @@ class State:
         state.backwardation = raw.get("backwardation")
         state.vx_history = {k: list(v) for k, v in (raw.get("vx_history") or {}).items()}
         state.es_side = dict(raw.get("es_side") or {})
+        state.es_contract = str(raw.get("es_contract") or "")
         return state
 
     def save(self, path: Path) -> None:
@@ -580,6 +582,18 @@ class Watcher:
         self.state.save(self.cfg.state_path)
         return events
 
+    def _front(self, root: str, now: datetime) -> str | None:
+        """The front contract's label from the roll rules, never from dict order.
+
+        The state file is saved with sorted keys, so after a restart "ES H7" loaded ahead of
+        "ES Z6" and the back month read as the front: on 2026-11-05 04:36 UTC that pushed
+        "ES > 7720" and "ES > 7740" with the front at 7,703 (H7 was 7,778).
+        """
+        if root not in EXCHANGE:
+            return None
+        y, m = contract_months(root, now.astimezone(ET).date())[0]
+        return contract_label(root, y, m)
+
     def _cooled(self, key: str, now: datetime) -> bool:
         last = self.state.last_alert.get(key)
         if last and now - datetime.fromisoformat(last) < timedelta(
@@ -591,8 +605,14 @@ class Watcher:
 
     def _levels(self, quotes: dict[str, Quote], now: datetime) -> list[dict[str, Any]]:
         """ES crossing one of his levels, either direction, one push per level per cooldown."""
-        es = next((q for q in quotes.values() if q.root == "ES"), None)
+        es = quotes.get(self._front("ES", now) or "")
         if es is None:
+            return []
+        if self.state.es_contract != es.label:  # new contract (roll, or first run): record only
+            self.state.es_contract = es.label
+            self.state.es_side = {
+                f"{lv:g}": ("above" if es.last >= lv else "below") for lv in self.cfg.es_levels
+            }
             return []
         events = []
         for level in self.cfg.es_levels:
@@ -630,6 +650,9 @@ class Watcher:
             same = MOVE_ALIAS.get(q.root, q.root)
             if q.root in seen_roots or same in fired or q.root not in self.cfg.move_pct:
                 continue
+            front = self._front(q.root, now)
+            if front is not None and q.label != front:
+                continue  # dated futures: the front month only, whatever order quotes came in
             seen_roots.add(q.root)  # front month only
             move = q.hour_move_pct
             if move is None or abs(move) < self.cfg.move_pct[q.root]:
@@ -681,7 +704,7 @@ class Watcher:
     def _overnight(self, quotes: dict[str, Quote], now: datetime) -> list[dict[str, Any]]:
         if cash_session(now):
             return []
-        es = next((q for q in quotes.values() if q.root == "ES"), None)
+        es = quotes.get(self._front("ES", now) or "")
         if es is None or es.change_pct is None or abs(es.change_pct) < self.cfg.overnight_pct:
             return []
         session_day = (now.astimezone(ET) + timedelta(hours=6)).date().isoformat()  # 18:00 roll
