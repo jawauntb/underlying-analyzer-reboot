@@ -322,9 +322,19 @@ def theta_line(struct: Structure | None) -> str:
     return f"{struct.theta_per_day:+.2f} $/day"
 
 
+# The 2026-11-04 alert backtest (HVega reports/alerts/2026-11-04-volwatch-backtest.md): fading
+# the hour move lost, -72 bp a day later with a 15% hit rate (n 41), and 14 of 24 expired
+# spreads traded through the short strike. MOVE cards are context only unless this is set.
+FADE_ENV = "CARDS_FADE_TRADES"
+FADE_RECORD = "fades lost in the 2026-11-04 backtest: -72 bp a day later, 15% hit, n 41"
+
+
 class CardBuilder:
-    def __init__(self, picker: ChainPicker | None = None) -> None:
+    def __init__(self, picker: ChainPicker | None = None, fade_trades: bool | None = None) -> None:
         self.picker = picker or ChainPicker()
+        if fade_trades is None:
+            fade_trades = os.environ.get(FADE_ENV, "").strip().lower() in ("1", "true", "on")
+        self.fade_trades = fade_trades
 
     def _try(self, fn: Any, *args: Any) -> Structure | None:
         try:
@@ -425,10 +435,23 @@ class CardBuilder:
     def futures_move(
         self, label: str, root: str, move: float, facts: dict[str, Any]
     ) -> tuple[str, str]:
-        if root in SPOT_ONLY:
+        if root in SPOT_ONLY and (self.fade_trades or root == "ARS"):
             return self._spot_move(label, root, move, facts)
         product = PRODUCT_FOR.get(root)
         ctx = _ctx(facts)
+        if not self.fade_trades:
+            card = Card(
+                ticker=product or label,
+                open=f"none: context only ({FADE_RECORD})",
+                close="n/a",
+                ev="n/a",
+                timeframe="n/a",
+                theta="n/a",
+                hoping_for="context only",
+                reason=f"{label} {move:+.2f}% in the last hour",
+                context=ctx,
+            )
+            return f"MOVE {label} {move:+.2f}%", card.render()
         if product is None:
             card = Card(
                 root,
@@ -571,8 +594,8 @@ class CardBuilder:
                 "skew": f"25d put skew {m.get('skew')} pts: puts bid over calls",
                 "iv_rank": f"iv rank {m.get('iv_rank')}: rich against its own year",
                 "spread": (
-                    f"implied {m.get('iv30')} vs realized {m.get('rv20')}: "
-                    "paying for movement the tape isn't delivering"
+                    f"implied {m.get('iv30')} vs {_basis(m)}: "
+                    "paying for movement the tape isn't expected to deliver"
                 ),
             }[signal]
             card = Card(
@@ -612,7 +635,7 @@ class CardBuilder:
                 f"iv rank {m.get('iv_rank')}: cheap against its own year ({stats})"
                 if signal == "iv_rank"
                 else (
-                    f"implied {m.get('iv30')} below realized {m.get('rv20')}: "
+                    f"implied {m.get('iv30')} below {_basis(m)}: "
                     f"options cheap vs the tape ({stats})"
                 )
             ),
@@ -620,6 +643,13 @@ class CardBuilder:
         )
         title = f"{ticker} iv rank cheap" if signal == "iv_rank" else f"{ticker} implied < realized"
         return title, card.render()
+
+
+def _basis(m: dict[str, Any]) -> str:
+    """What the spread was measured against: the HAR-RV forecast when vol-watch had one."""
+    if m.get("rv_fc") is not None:
+        return f"forecast realized {m.get('rv_fc')}"
+    return f"realized {m.get('rv20')}"
 
 
 def _pct(value: float | None, digits: int = 1) -> str:

@@ -82,6 +82,9 @@ FX = {
     "USD-ARS": "ARS=X",  # pesos per dollar, the official managed rate
 }
 CRYPTO = {"ETH-USD": "ETH-USD", "SOL-USD": "SOL-USD"}
+# Roots that are one market: they share a cooldown and fire one MOVE between them. 6L is the
+# real future and BRL-USD the spot rate; 8 of 11 BRL pushes repeated a 6L push within 30 min.
+MOVE_ALIAS = {"BRL": "6L"}
 ROOT_OF = {"BRL-USD": "BRL", "USD-ARS": "ARS", "ETH-USD": "ETH", "SOL-USD": "SOL"}
 
 
@@ -622,14 +625,17 @@ class Watcher:
     def _moves(self, quotes: dict[str, Quote], now: datetime) -> list[dict[str, Any]]:
         events = []
         seen_roots: set[str] = set()
+        fired: set[str] = set()
         for q in quotes.values():
-            if q.root in seen_roots or q.root not in self.cfg.move_pct:
+            same = MOVE_ALIAS.get(q.root, q.root)
+            if q.root in seen_roots or same in fired or q.root not in self.cfg.move_pct:
                 continue
             seen_roots.add(q.root)  # front month only
             move = q.hour_move_pct
             if move is None or abs(move) < self.cfg.move_pct[q.root]:
                 continue
-            if not self._cooled(f"move:{q.root}", now):
+            fired.add(same)
+            if not self._cooled(f"move:{same}", now):
                 continue
             ref = q.hour_high if move < 0 else q.hour_low
             title = f"MOVE {q.label} {move:+.2f}% in {self.cfg.window_minutes}m"

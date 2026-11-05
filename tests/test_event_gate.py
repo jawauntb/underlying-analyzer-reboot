@@ -132,7 +132,7 @@ def test_6l_move_card_goes_through_the_gate(tmp_path: Path) -> None:
 
     cfg = fw.Config(snapshot_times=(), state_path=tmp_path / "f.json", es_levels=())
     source, pusher = _Source(), _Pusher()
-    builder = tc.CardBuilder(_Picker())  # type: ignore[arg-type]
+    builder = tc.CardBuilder(_Picker(), fade_trades=True)  # type: ignore[arg-type]
     watcher = fw.Watcher(cfg, source, pusher, builder, EventGate("https://gate", post=gate))
     q = fw.Quote("6L front", "6L", 0.1799, 0.2006, 0.1764, 0.1799, 0.1764, "t")
     events = watcher._moves({"6L front": q}, AT)
