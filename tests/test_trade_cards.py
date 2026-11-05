@@ -270,7 +270,7 @@ def test_vol_tick_uses_cards_when_given(tmp_path: Path) -> None:
 
 
 def test_spot_only_cards_for_crypto_and_peso() -> None:
-    builder = tc.CardBuilder(FakePicker())  # type: ignore[arg-type]
+    builder = tc.CardBuilder(FakePicker(), fade_trades=True)  # type: ignore[arg-type]
     title, body = builder.futures_move("ETH-USD", "ETH", -5.8, {"vix": 18.0})
     assert title == "MOVE ETH-USD -5.80%"
     assert "Open: buy $100 ETH spot (max loss $100)" in body and "Theta: 0 (spot)" in body

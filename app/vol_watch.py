@@ -148,6 +148,17 @@ class Config:
     pushover_user: str | None = None
     pushover_token: str | None = None
     webhook_url: str | None = None
+    # Noise and model fixes from the 2026-11-04 alert backtest (HVega
+    # reports/alerts/2026-11-04-volwatch-backtest.md). The dataclass defaults keep the old
+    # behaviour; from_env turns them on. Every value here is proposed, not fitted.
+    confirm_passes: int = 1  # a new band must hold this many chain passes before it pushes
+    spread_rich_exit: float | None = None  # hysteresis: "rich" holds until spread < this
+    spread_cheap_exit: float | None = None  # "cheap" holds until spread > this
+    skew_exit: float | None = None  # "skew spike" holds until skew < this
+    max_iv_jump: float | None = None  # an iv30 this far (fraction) from the last pass waits a pass
+    rv_forecast: bool = False  # spread = iv30 - HAR-RV forecast instead of iv30 - rv20
+    no_signal: tuple[str, ...] = ()  # names whose vol signals are not pushed at all
+    push_ledger: Path | None = None  # one JSON line per push
 
     @classmethod
     def from_env(cls) -> Config:
@@ -156,6 +167,9 @@ class Config:
             DEFAULT_WATCHLIST
         )
         default_state = Path("/data/vol_watch_state.json")
+        data_dir = default_state.parent if default_state.parent.is_dir() else Path(".")
+        raw_skip = os.environ.get("VOL_WATCH_NO_SIGNAL", "VIX")
+        ledger = os.environ.get("VOL_WATCH_PUSH_LEDGER") or str(data_dir / "vol_watch_pushes.jsonl")
         state_path = Path(
             os.environ.get("VOL_WATCH_STATE_PATH")
             or (default_state if default_state.parent.is_dir() else "vol_watch_state.json")
@@ -184,6 +198,15 @@ class Config:
             pushover_user=os.environ.get("PUSHOVER_USER_KEY") or None,
             pushover_token=os.environ.get("PUSHOVER_APP_TOKEN") or None,
             webhook_url=os.environ.get("VOL_WATCH_WEBHOOK_URL") or None,
+            confirm_passes=max(1, _env_int("VOL_WATCH_CONFIRM_PASSES", 2)),
+            spread_rich_exit=_env_float("VOL_WATCH_SPREAD_RICH_EXIT", 6.0),
+            spread_cheap_exit=_env_float("VOL_WATCH_SPREAD_CHEAP_EXIT", -1.0),
+            skew_exit=_env_float("VOL_WATCH_SKEW_EXIT", 10.0),
+            max_iv_jump=_env_float("VOL_WATCH_MAX_IV_JUMP", 0.25) or None,
+            rv_forecast=os.environ.get("VOL_WATCH_RV_FORECAST", "har").lower()
+            not in ("0", "off", "rv20"),
+            no_signal=tuple(t.strip().upper() for t in raw_skip.split(",") if t.strip()),
+            push_ledger=None if ledger.lower() in ("", "off", "none") else Path(ledger),
         )
 
 
@@ -204,6 +227,8 @@ class State:
     last_drop_alert: dict[str, str] = field(default_factory=dict)  # proxy -> iso ts
     last_chain_run: str | None = None
     last_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pending: dict[str, list[Any]] = field(default_factory=dict)  # "TSLA:spread" -> [band, passes]
+    iv_suspect: dict[str, float] = field(default_factory=dict)  # tkr -> iv30 held back one pass
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -221,6 +246,8 @@ class State:
         state.last_drop_alert = dict(raw.get("last_drop_alert") or {})
         state.last_chain_run = raw.get("last_chain_run")
         state.last_metrics = dict(raw.get("last_metrics") or {})
+        state.pending = {k: list(v) for k, v in (raw.get("pending") or {}).items()}
+        state.iv_suspect = {k: float(v) for k, v in (raw.get("iv_suspect") or {}).items()}
         return state
 
     def save(self, path: Path) -> None:
@@ -326,6 +353,34 @@ def realized_vol(closes: pd.Series, window: int = 20) -> float | None:
     if len(rets) < window:
         return None
     return float(rets.std(ddof=1) * math.sqrt(TRADING_DAYS) * 100.0)
+
+
+def har_rv_forecast(closes: pd.Series, horizon: int = 21, min_obs: int = 250) -> float | None:
+    """HAR-RV forecast (Corsi 2009) of the next ``horizon`` days' realized vol, in points.
+
+    Fitted per name by OLS on its own daily history: the mean squared return over the next
+    ``horizon`` days on yesterday's squared return and the trailing 5- and 22-day means.
+    rv20 only looks back, so a gap three weeks ago kept "realized" high long after the tape
+    calmed (the 2026-11-04 backtest: "implied < realized" was a coin flip, 10 of 21). None when
+    the history is too short or the fit is not usable; the caller falls back to rv20.
+    """
+    series = pd.to_numeric(closes, errors="coerce").dropna()
+    rets = np.log(series / series.shift(1)).dropna()
+    if len(rets) < min_obs + horizon + 22:
+        return None
+    r2 = rets.pow(2).reset_index(drop=True)
+    d, w, m = r2, r2.rolling(5).mean(), r2.rolling(22).mean()
+    y = r2[::-1].rolling(horizon).mean()[::-1].shift(-1)
+    frame = pd.DataFrame({"d": d, "w": w, "m": m, "y": y}).dropna()
+    if len(frame) < min_obs:
+        return None
+    x = np.column_stack([np.ones(len(frame)), frame["d"], frame["w"], frame["m"]])
+    beta, *_ = np.linalg.lstsq(x, frame["y"].to_numpy(), rcond=None)
+    last = np.array([1.0, float(d.iloc[-1]), float(w.iloc[-1]), float(m.iloc[-1])])
+    fc = float(last @ beta)
+    if not math.isfinite(fc) or fc <= 0:
+        return None
+    return math.sqrt(TRADING_DAYS * fc) * 100.0
 
 
 @dataclass(frozen=True)
@@ -460,17 +515,57 @@ def crossings(
     """
     alerts: list[dict[str, Any]] = []
     skew = metrics.get("skew")
+    spread = metrics.get("spread")
+
+    def sticky(name: str, band: str, value: float | None) -> str:
+        """Hysteresis: a confirmed band holds until the value clears its exit level."""
+        prev = state.signals.get(f"{ticker}:{name}")
+        if value is None:
+            return band
+        if name == "spread":
+            if (
+                prev == "high"
+                and cfg.spread_rich_exit is not None
+                and value >= cfg.spread_rich_exit
+            ):
+                return "high"
+            if (
+                prev == "low"
+                and cfg.spread_cheap_exit is not None
+                and value <= cfg.spread_cheap_exit
+            ):
+                return "low"
+        if (
+            name == "skew"
+            and prev == "high"
+            and cfg.skew_exit is not None
+            and value >= cfg.skew_exit
+        ):
+            return "high"
+        return band
+
     checks = {
         "iv_rank": classify(metrics.get("iv_rank"), cfg.iv_rank_high, cfg.iv_rank_low),
-        "spread": classify(metrics.get("spread"), cfg.spread_rich, cfg.spread_cheap),
-        "skew": "unknown" if skew is None else ("high" if skew >= cfg.skew_spike else "mid"),
+        "spread": sticky("spread", classify(spread, cfg.spread_rich, cfg.spread_cheap), spread),
+        "skew": "unknown"
+        if skew is None
+        else sticky("skew", "high" if skew >= cfg.skew_spike else "mid", skew),
     }
     for name, band in checks.items():
         key = f"{ticker}:{name}"
         prev = state.signals.get(key)
-        state.signals[key] = band
         if band in ("unknown", "mid") or prev == band:
+            state.signals[key] = band
+            state.pending.pop(key, None)
             continue
+        # a new band must hold for confirm_passes passes before it is recorded and pushed
+        held = state.pending.get(key)
+        passes = int(held[1]) + 1 if held and held[0] == band else 1
+        if passes < cfg.confirm_passes:
+            state.pending[key] = [band, passes]
+            continue
+        state.pending.pop(key, None)
+        state.signals[key] = band
         last = state.last_alert.get(key)
         if last and now - datetime.fromisoformat(last) < timedelta(
             minutes=cfg.alert_cooldown_minutes
@@ -686,6 +781,8 @@ def render_signal(alert: dict[str, Any]) -> tuple[str, str, str]:
         f"spot {fmt(m.get('spot'), 2)}  iv30 {fmt(m.get('iv30'))}  rv20 {fmt(m.get('rv20'))}  "
         f"spread {fmt(m.get('spread'))}  {rank_text}  skew25 {fmt(m.get('skew'))}"
     )
+    if m.get("rv_fc") is not None:
+        line += f"  rv forecast {fmt(m.get('rv_fc'))} (spread is iv30 minus the forecast)"
     if s == "iv_rank":
         title = f"{t} iv rank {'rich' if band == 'high' else 'cheap'}"
         hint = (
@@ -740,6 +837,22 @@ class Notifier:
     ) -> None:
         self.sent.append({"title": title, "body": body, "priority": priority})
         c = self.cfg
+        log.info("push: %s", title)
+        if c.push_ledger is not None:
+            # the record of what reached the phone; the 2026-11-04 backtest had to rebuild it
+            try:
+                c.push_ledger.parent.mkdir(parents=True, exist_ok=True)
+                with c.push_ledger.open("a") as fh:
+                    row = {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "title": title,
+                        "body": body,
+                        "priority": priority,
+                        "payload": payload or {},
+                    }
+                    fh.write(json.dumps(row, default=str, sort_keys=True) + "\n")
+            except OSError as exc:
+                log.warning("push ledger write failed: %s", exc)
         if c.ntfy_topic:
             headers = {
                 "Title": title.encode("ascii", "ignore").decode(),
@@ -817,6 +930,17 @@ def compute_metrics(
     iv30 = float(chain["iv30"])
     if iv30 < cfg.min_iv:
         raise SkipTicker(f"{ticker}: iv30 {iv30:.1f} below {cfg.min_iv} floor")
+    prev_iv = (state.last_metrics.get(ticker) or {}).get("iv30")
+    if cfg.max_iv_jump and prev_iv and abs(iv30 / float(prev_iv) - 1.0) > cfg.max_iv_jump:
+        # one bad quote moved iv30 a lot (SDGR 145.8 then 100.2 fifteen minutes later):
+        # hold it back a pass; accept it when the next pass prints near it again
+        suspect = state.iv_suspect.get(ticker)
+        if not suspect or abs(iv30 / suspect - 1.0) > cfg.max_iv_jump:
+            state.iv_suspect[ticker] = iv30
+            raise SkipTicker(
+                f"{ticker}: iv30 {iv30:.1f} jumped from {float(prev_iv):.1f}; waiting a pass"
+            )
+    state.iv_suspect.pop(ticker, None)
     if ticker in VIX_GATED:
         if vix_level is None:
             raise SkipTicker(f"{ticker}: VIX level unavailable for the sanity gate")
@@ -829,11 +953,15 @@ def compute_metrics(
     own = [v for k, v in state.iv_samples.get(ticker, {}).items() if k != today.isoformat()]
     rank = iv_rank(iv30, own[-cfg.rank_samples :]) if len(own) >= cfg.rank_samples else None
     zero = data.zero_dte(ticker, spot, today) if ticker in ZERO_DTE else None
+    rv_fc = har_rv_forecast(closes) if cfg.rv_forecast else None
+    basis = rv_fc if rv_fc is not None else rv20
     return {
         "spot": round(spot, 2),
         "iv30": round(iv30, 2),
         "rv20": None if rv20 is None else round(rv20, 2),
-        "spread": None if rv20 is None else round(iv30 - rv20, 2),
+        "rv_fc": None if rv_fc is None else round(rv_fc, 2),
+        "spread_basis": "har" if rv_fc is not None else "rv20",
+        "spread": None if basis is None else round(iv30 - basis, 2),
         "skew": None if chain["skew"] is None else round(float(chain["skew"]), 2),
         "iv_rank": None if rank is None else round(rank, 1),
         "iv_rank_samples": len(own),
@@ -860,6 +988,11 @@ def run_chain_pass(
         log.warning("VIX level failed: %s", exc)
         vix_level = None
     for ticker in cfg.watchlist:
+        if ticker in cfg.no_signal:
+            # VIX options are on VIX futures; their iv30 against the spot index's rv20 is not a
+            # like-for-like gap (79 to 178 in the 2026-11-04 backtest), so no VIX vol cards
+            log.info("skip %s: no vol signal for this name", ticker)
+            continue
         try:
             metrics = compute_metrics(ticker, data, state, cfg, today, vix_level)
         except SkipTicker as exc:
@@ -870,7 +1003,7 @@ def run_chain_pass(
             continue
         state.last_metrics[ticker] = metrics
         log.info(
-            "%s spot %s iv30 %s rv20 %s spread %s rank %s (%s/%s samples) skew25 %s%s",
+            "%s spot %s iv30 %s rv20 %s spread %s rank %s (%s/%s samples) skew25 %s rvf %s%s",
             ticker,
             metrics["spot"],
             metrics["iv30"],
@@ -880,6 +1013,7 @@ def run_chain_pass(
             metrics["iv_rank_samples"],
             cfg.rank_samples,
             "n/a" if metrics["skew"] is None else metrics["skew"],
+            "n/a" if metrics.get("rv_fc") is None else metrics["rv_fc"],
             f" | {zero_dte_line(metrics['zero_dte'])}" if ticker in ZERO_DTE else "",
         )
         for alert in crossings(ticker, metrics, state, cfg, now):
